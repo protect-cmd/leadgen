@@ -22,7 +22,9 @@ nixPkgs = [
   "libxcb",
   "pango",
   "cairo",
-  "alsa-lib"
+  "alsa-lib",
+  "at-spi2-core",
+  "at-spi2-atk"
 ]
 
 [phases.install]
