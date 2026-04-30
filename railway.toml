@@ -1,0 +1,8 @@
+[[cron]]
+schedule = "0 6 * * *"
+command = "python jobs/run_california.py"
+
+# Uncomment as each county is implemented and tested:
+# [[cron]]
+# schedule = "0 6 * * *"
+# command = "python jobs/run_texas.py"
