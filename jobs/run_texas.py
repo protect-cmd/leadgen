@@ -1,3 +1,4 @@
+"""Railway cron entry point for Texas eviction scraping."""
 from __future__ import annotations
 import asyncio
 import logging
@@ -15,32 +16,33 @@ logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
-
 log = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    from scrapers.california.los_angeles import LosAngelesScraper
     from pipeline.runner import run
+    from scrapers.texas.harris import HarrisCountyScraper
 
-    log.info("Starting California scrape job")
+    log.info("Starting Texas scrape job")
 
-    scrapers = [
-        ("Los Angeles", LosAngelesScraper()),
+    counties = [
+        ("Harris", HarrisCountyScraper(lookback_days=3)),
     ]
 
-    for county, scraper in scrapers:
-        log.info(f"Scraping {county} County")
+    for name, scraper in counties:
+        log.info(f"=== Texas / {name} County ===")
         try:
             filings = await scraper.scrape()
-            log.info(f"{county}: {len(filings)} filings scraped")
+            if not filings:
+                log.info(f"{name}: no filings found (normal if no cases filed today)")
+                continue
             await run(filings)
         except NotImplementedError as e:
-            log.warning(f"{county} scraper not yet implemented: {e}")
+            log.warning(f"{name}: scraper not yet implemented — {e}")
         except Exception as e:
-            log.error(f"{county} scrape failed: {e}", exc_info=True)
+            log.error(f"{name}: unexpected error — {e}", exc_info=True)
 
-    log.info("California scrape job complete")
+    log.info("Texas scrape job complete")
 
 
 if __name__ == "__main__":

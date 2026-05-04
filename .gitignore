@@ -1,10 +1,29 @@
-__pycache__/
+# Python
+**/__pycache__/
 *.pyc
 *.pyo
+*.pyd
 .pytest_cache/
 *.egg-info/
 dist/
 build/
+
+# Environment
 .env
+.env.local
+
+# Logs
 *.log
-scratch_la_discover.py
+
+# Scratch / debug artifacts
+scratch_*.py
+debug_*.png
+batchdata_response.json
+sniff_log.json
+
+# Tools
+.firecrawl/
+
+# Docs / binaries not for source control
+*.docx
+*.xlsx

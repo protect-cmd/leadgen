@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EC · Lead Queue</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Barlow:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:           #08090d;
+    --surface:      #0d0f16;
+    --surface-2:    #111520;
+    --border:       #1a2030;
+    --border-2:     #242d40;
+    --amber:        #c8861e;
+    --amber-bright: #e09624;
+    --amber-dim:    #7a5210;
+    --text:         #bfbbb0;
+    --text-bright:  #dcd8cc;
+    --text-dim:     #424d62;
+    --green:        #3a8f5e;
+    --green-dim:    #1e3d2b;
+    --red:          #8f3a3a;
+    --red-dim:      #3d1e1e;
+    --blue:         #3a6b8f;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Barlow', sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* ── HEADER ── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    height: 52px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .header-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .header-logo {
+    width: 28px;
+    height: 28px;
+    background: var(--amber);
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  }
+
+  .header-title {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--text-bright);
+    text-transform: uppercase;
+  }
+
+  .header-title span {
+    color: var(--amber);
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .header-clock {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    letter-spacing: 0.05em;
+  }
+
+  .btn-refresh {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    background: none;
+    border: 1px solid var(--border-2);
+    padding: 5px 14px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .btn-refresh:hover { color: var(--text-bright); border-color: var(--text-dim); }
+
+  /* ── METRICS STRIP ── */
+  .metrics-strip {
+    display: flex;
+    align-items: stretch;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    overflow-x: auto;
+  }
+
+  .metric {
+    padding: 12px 24px;
+    border-right: 1px solid var(--border);
+    flex-shrink: 0;
+    min-width: 110px;
+  }
+
+  .metric-value {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--amber-bright);
+    line-height: 1;
+    margin-bottom: 3px;
+  }
+
+  .metric-value.neutral { color: var(--text-bright); }
+  .metric-value.dim     { color: var(--text-dim); }
+  .metric-value.green   { color: var(--green); }
+
+  .metric-label {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .metrics-run-time {
+    padding: 12px 24px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    margin-left: auto;
+  }
+
+  .metrics-run-label {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .metrics-run-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text);
+    margin-top: 2px;
+  }
+
+  /* ── TOOLBAR ── */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+
+  .toolbar-label {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-right: 4px;
+  }
+
+  .filter-input {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-bright);
+    padding: 5px 10px;
+    outline: none;
+    width: 200px;
+    transition: border-color 0.15s;
+  }
+  .filter-input:focus { border-color: var(--border-2); }
+  .filter-input::placeholder { color: var(--text-dim); }
+
+  .queue-count {
+    margin-left: auto;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+  }
+  .queue-count strong { color: var(--amber-bright); font-size: 16px; }
+
+  /* ── TABLE ── */
+  .table-wrap {
+    overflow-x: auto;
+    padding: 0 0 80px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 900px;
+  }
+
+  thead {
+    position: sticky;
+    top: 52px;
+    z-index: 5;
+  }
+
+  thead th {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    text-align: left;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  thead th:first-child { padding-left: 24px; }
+  thead th:last-child  { padding-right: 24px; text-align: right; }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+  }
+
+  tbody tr:hover { background: var(--surface-2); }
+
+  tbody td {
+    padding: 13px 16px;
+    vertical-align: middle;
+  }
+
+  tbody td:first-child { padding-left: 24px; }
+  tbody td:last-child  { padding-right: 24px; }
+
+  .td-case {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--amber);
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+  }
+
+  .td-name {
+    font-size: 14px;
+    color: var(--text-bright);
+    font-weight: 500;
+  }
+
+  .td-sub {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 1px;
+  }
+
+  .td-address {
+    font-size: 12px;
+    color: var(--text);
+    max-width: 220px;
+    line-height: 1.4;
+  }
+
+  .td-phone {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .td-phone.has-phone  { color: var(--text-bright); }
+  .td-phone.no-phone   { color: var(--text-dim); }
+
+  .badge {
+    display: inline-block;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 2px;
+  }
+
+  .badge-residential { background: var(--green-dim);  color: var(--green);  }
+  .badge-commercial  { background: var(--blue);        color: #7abce0;       }
+  .badge-unknown     { background: transparent;        color: var(--text-dim); border: 1px solid var(--border-2); }
+
+  .td-date {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .td-date.overdue { color: #c05050; }
+
+  /* ── ACTION BUTTONS ── */
+  .actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+
+  .btn-approve, .btn-skip {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    border: none;
+    padding: 6px 18px;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+    white-space: nowrap;
+  }
+
+  .btn-approve {
+    background: var(--amber);
+    color: #0a0804;
+  }
+  .btn-approve:hover { background: var(--amber-bright); }
+  .btn-approve:active { transform: scale(0.97); }
+
+  .btn-skip {
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--border-2);
+  }
+  .btn-skip:hover { color: var(--text); border-color: var(--text-dim); }
+
+  .btn-approve:disabled, .btn-skip:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .action-status {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 4px 10px;
+  }
+  .action-status.triggered { color: var(--green); }
+  .action-status.skipped   { color: var(--text-dim); }
+  .action-status.error     { color: #c05050; }
+
+  /* ── EMPTY / LOADING ── */
+  .state-full {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 80px 24px;
+    gap: 12px;
+    color: var(--text-dim);
+  }
+
+  .state-icon {
+    font-size: 36px;
+    line-height: 1;
+  }
+
+  .state-title {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .state-sub {
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+
+  /* ── SPINNER ── */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner {
+    width: 20px; height: 20px;
+    border: 2px solid var(--border-2);
+    border-top-color: var(--amber);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+
+  /* ── TOAST ── */
+  .toast-wrap {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 100;
+  }
+
+  .toast {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    padding: 10px 18px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-2);
+    border-left: 3px solid var(--amber);
+    color: var(--text-bright);
+    animation: toast-in 0.2s ease;
+  }
+
+  .toast.error { border-left-color: #c05050; }
+  .toast.success { border-left-color: var(--green); }
+
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateX(12px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border-2); }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="header-brand">
+    <div class="header-logo"></div>
+    <div class="header-title"><span>EC</span> · LEAD QUEUE</div>
+  </div>
+  <div class="header-right">
+    <div class="header-clock" id="clock">--:--:--</div>
+    <button class="btn-refresh" onclick="loadAll()">↻ REFRESH</button>
+  </div>
+</header>
+
+<!-- METRICS STRIP -->
+<div class="metrics-strip" id="metrics-strip">
+  <div class="metric">
+    <div class="metric-value neutral" id="m-pending">—</div>
+    <div class="metric-label">Pending</div>
+  </div>
+  <div class="metric">
+    <div class="metric-value" id="m-received">—</div>
+    <div class="metric-label">Last Scraped</div>
+  </div>
+  <div class="metric">
+    <div class="metric-value dim" id="m-dupes">—</div>
+    <div class="metric-label">Dupes Skipped</div>
+  </div>
+  <div class="metric">
+    <div class="metric-value" id="m-batchdata">—</div>
+    <div class="metric-label">BatchData Calls</div>
+  </div>
+  <div class="metric">
+    <div class="metric-value green" id="m-phones">—</div>
+    <div class="metric-label">Phones Found</div>
+  </div>
+  <div class="metric">
+    <div class="metric-value dim" id="m-addr-skip">—</div>
+    <div class="metric-label">Addr Skipped</div>
+  </div>
+  <div class="metrics-run-time">
+    <div class="metrics-run-label">Last Run</div>
+    <div class="metrics-run-value" id="m-run-time">—</div>
+  </div>
+</div>
+
+<!-- TOOLBAR -->
+<div class="toolbar">
+  <span class="toolbar-label">Filter</span>
+  <input class="filter-input" id="filter-input" type="text" placeholder="case, name, address…" oninput="filterRows()">
+  <div class="queue-count" id="queue-count"></div>
+</div>
+
+<!-- TABLE -->
+<div class="table-wrap">
+  <table id="leads-table">
+    <thead>
+      <tr>
+        <th>Case #</th>
+        <th>Tenant</th>
+        <th>Landlord</th>
+        <th>Address</th>
+        <th>Phone</th>
+        <th>Type</th>
+        <th>Court Date</th>
+        <th style="text-align:right">Action</th>
+      </tr>
+    </thead>
+    <tbody id="leads-body">
+      <tr><td colspan="8"><div class="state-full"><div class="spinner"></div><div class="state-sub">Loading leads…</div></div></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script>
+  // ── CLOCK ──
+  function updateClock() {
+    const now = new Date();
+    document.getElementById('clock').textContent =
+      now.toLocaleTimeString('en-US', { hour12: false });
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+  // ── STATE ──
+  let allLeads = [];
+
+  // ── LOAD ──
+  async function loadAll() {
+    await Promise.all([loadMetrics(), loadLeads()]);
+  }
+
+  async function loadMetrics() {
+    try {
+      const res = await fetch('/api/metrics');
+      const rows = await res.json();
+      if (!rows.length) return;
+      const latest = rows[0];
+      document.getElementById('m-received').textContent  = latest.filings_received ?? '—';
+      document.getElementById('m-dupes').textContent     = latest.duplicates_skipped ?? '—';
+      document.getElementById('m-batchdata').textContent = latest.batchdata_calls ?? '—';
+      document.getElementById('m-phones').textContent    = latest.phones_found ?? '—';
+      document.getElementById('m-addr-skip').textContent = latest.address_skipped ?? '—';
+      document.getElementById('m-run-time').textContent  = latest.run_at
+        ? new Date(latest.run_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true })
+        : '—';
+    } catch(e) { console.error('metrics error', e); }
+  }
+
+  async function loadLeads() {
+    const tbody = document.getElementById('leads-body');
+    tbody.innerHTML = `<tr><td colspan="8"><div class="state-full"><div class="spinner"></div><div class="state-sub">Loading…</div></div></td></tr>`;
+    try {
+      const res = await fetch('/api/leads?track=ec');
+      allLeads = await res.json();
+      renderLeads(allLeads);
+      document.getElementById('m-pending').textContent = allLeads.length;
+    } catch(e) {
+      tbody.innerHTML = `<tr><td colspan="8"><div class="state-full"><div class="state-icon">⚠</div><div class="state-title">Failed to load</div><div class="state-sub">${e.message}</div></div></td></tr>`;
+    }
+  }
+
+  // ── RENDER ──
+  function renderLeads(leads) {
+    const tbody = document.getElementById('leads-body');
+    document.getElementById('queue-count').innerHTML = `<strong>${leads.length}</strong> leads`;
+
+    if (!leads.length) {
+      tbody.innerHTML = `<tr><td colspan="8"><div class="state-full">
+        <div class="state-icon">✓</div>
+        <div class="state-title">Queue Clear</div>
+        <div class="state-sub">No pending leads — check back after the next scrape run.</div>
+      </div></td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = leads.map(lead => {
+      const hasPhone = lead.phone && lead.phone !== 'None';
+      const phone = hasPhone ? formatPhone(lead.phone) : '—';
+      const type = lead.property_type || 'unknown';
+      const courtDate = lead.court_date ? formatDate(lead.court_date) : '—';
+      const isOverdue = lead.court_date && new Date(lead.court_date) < new Date();
+
+      return `<tr data-case="${esc(lead.case_number)}" data-search="${esc([lead.case_number, lead.tenant_name, lead.landlord_name, lead.property_address].join(' ').toLowerCase())}">
+        <td class="td-case">${esc(lead.case_number)}</td>
+        <td>
+          <div class="td-name">${esc(lead.tenant_name)}</div>
+          <div class="td-sub">${esc(lead.county)}, ${esc(lead.state)}</div>
+        </td>
+        <td>
+          <div class="td-name">${esc(lead.landlord_name || '—')}</div>
+          <div class="td-sub">${lead.filing_date ? formatDate(lead.filing_date) : ''}</div>
+        </td>
+        <td class="td-address">${esc(lead.property_address)}</td>
+        <td class="td-phone ${hasPhone ? 'has-phone' : 'no-phone'}">${phone}</td>
+        <td><span class="badge badge-${type}">${type}</span></td>
+        <td class="td-date ${isOverdue ? 'overdue' : ''}">${courtDate}</td>
+        <td>
+          <div class="actions" id="actions-${esc(lead.case_number)}">
+            ${hasPhone
+              ? `<button class="btn-approve" onclick="approve('${esc(lead.case_number)}')">APPROVE</button>`
+              : `<button class="btn-approve" disabled title="No phone number">APPROVE</button>`
+            }
+            <button class="btn-skip" onclick="skip('${esc(lead.case_number)}')">SKIP</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ── FILTER ──
+  function filterRows() {
+    const q = document.getElementById('filter-input').value.toLowerCase().trim();
+    if (!q) { renderLeads(allLeads); return; }
+    const filtered = allLeads.filter(l =>
+      [l.case_number, l.tenant_name, l.landlord_name, l.property_address]
+        .join(' ').toLowerCase().includes(q)
+    );
+    renderLeads(filtered);
+  }
+
+  // ── ACTIONS ──
+  async function approve(caseNumber) {
+    const el = document.getElementById(`actions-${caseNumber}`);
+    setActionsLoading(el);
+    try {
+      const res = await fetch(`/api/leads/${encodeURIComponent(caseNumber)}/approve?track=ec`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed');
+      el.innerHTML = `<span class="action-status triggered">✓ TRIGGERED</span>`;
+      allLeads = allLeads.filter(l => l.case_number !== caseNumber);
+      document.getElementById('m-pending').textContent = allLeads.length;
+      document.getElementById('queue-count').innerHTML = `<strong>${allLeads.length}</strong> leads`;
+      toast(`Call dispatched — ${caseNumber}`, 'success');
+    } catch(e) {
+      el.innerHTML = `<span class="action-status error">✗ ERROR</span>`;
+      toast(`Approve failed: ${e.message}`, 'error');
+    }
+  }
+
+  async function skip(caseNumber) {
+    const el = document.getElementById(`actions-${caseNumber}`);
+    setActionsLoading(el);
+    try {
+      await fetch(`/api/leads/${encodeURIComponent(caseNumber)}/skip?track=ec`, { method: 'POST' });
+      el.innerHTML = `<span class="action-status skipped">SKIPPED</span>`;
+      allLeads = allLeads.filter(l => l.case_number !== caseNumber);
+      document.getElementById('m-pending').textContent = allLeads.length;
+      document.getElementById('queue-count').innerHTML = `<strong>${allLeads.length}</strong> leads`;
+    } catch(e) {
+      toast(`Skip failed: ${e.message}`, 'error');
+      loadLeads();
+    }
+  }
+
+  function setActionsLoading(el) {
+    el.querySelectorAll('button').forEach(b => b.disabled = true);
+  }
+
+  // ── TOAST ──
+  function toast(msg, type = '') {
+    const wrap = document.getElementById('toast-wrap');
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.textContent = msg;
+    wrap.appendChild(el);
+    setTimeout(() => el.remove(), 3500);
+  }
+
+  // ── UTILS ──
+  function esc(s) {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function formatPhone(p) {
+    const d = String(p).replace(/\D/g, '');
+    if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+    if (d.length === 11 && d[0] === '1') return `+1 (${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`;
+    return p;
+  }
+
+  function formatDate(s) {
+    const d = new Date(s + 'T00:00:00');
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  // ── INIT ──
+  loadAll();
+</script>
+</body>
+</html>

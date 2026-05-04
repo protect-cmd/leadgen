@@ -14,3 +14,7 @@ class Filing(BaseModel):
     county: str
     notice_type: str
     source_url: str
+    # Optional fields pre-populated by scrapers that provide them directly,
+    # avoiding unnecessary BatchData calls for data we already have.
+    claim_amount: float | None = None       # rent from CSV (TX)
+    property_type_hint: str | None = None   # "residential" | "commercial" from CSV (TX)

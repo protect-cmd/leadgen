@@ -15,15 +15,25 @@ class BaseScraper(ABC):
 
     async def _launch_browser(self) -> Page:
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=self.headless)
+        self._browser = await self._playwright.chromium.launch(
+            headless=self.headless,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
         context = await self._browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/124.0.0.0 Safari/537.36"
-            )
+            ),
+            extra_http_headers={
+                "Accept-Language": "en-US,en;q=0.9",
+            },
         )
-        return await context.new_page()
+        page = await context.new_page()
+        await page.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        )
+        return page
 
     async def _close_browser(self) -> None:
         if self._browser:
