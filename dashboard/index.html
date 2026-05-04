@@ -52,175 +52,163 @@
     z-index: 10;
   }
 
-  .header-brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
+  .header-brand { display: flex; align-items: center; gap: 10px; }
 
   .header-logo {
-    width: 28px;
-    height: 28px;
+    width: 28px; height: 28px;
     background: var(--amber);
     clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
   }
 
   .header-title {
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 17px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
+    font-size: 17px; font-weight: 700;
+    letter-spacing: 0.12em; text-transform: uppercase;
     color: var(--text-bright);
-    text-transform: uppercase;
   }
+  .header-title span { color: var(--amber); }
 
-  .header-title span {
-    color: var(--amber);
-  }
-
-  .header-right {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-  }
+  .header-right { display: flex; align-items: center; gap: 16px; }
 
   .header-clock {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: var(--text-dim);
-    letter-spacing: 0.05em;
+    font-size: 12px; color: var(--text-dim); letter-spacing: 0.05em;
   }
 
   .btn-refresh {
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-    background: none;
-    border: 1px solid var(--border-2);
-    padding: 5px 14px;
-    cursor: pointer;
+    font-size: 13px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-dim); background: none;
+    border: 1px solid var(--border-2); padding: 5px 14px; cursor: pointer;
     transition: color 0.15s, border-color 0.15s;
   }
   .btn-refresh:hover { color: var(--text-bright); border-color: var(--text-dim); }
 
   /* ── METRICS STRIP ── */
   .metrics-strip {
-    display: flex;
-    align-items: stretch;
+    display: flex; align-items: stretch;
     border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    overflow-x: auto;
+    background: var(--surface); overflow-x: auto;
   }
 
   .metric {
-    padding: 12px 24px;
-    border-right: 1px solid var(--border);
-    flex-shrink: 0;
-    min-width: 110px;
+    padding: 12px 24px; border-right: 1px solid var(--border);
+    flex-shrink: 0; min-width: 110px;
   }
 
   .metric-value {
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 24px;
-    font-weight: 700;
-    color: var(--amber-bright);
-    line-height: 1;
-    margin-bottom: 3px;
+    font-size: 24px; font-weight: 700;
+    color: var(--amber-bright); line-height: 1; margin-bottom: 3px;
   }
-
   .metric-value.neutral { color: var(--text-bright); }
   .metric-value.dim     { color: var(--text-dim); }
   .metric-value.green   { color: var(--green); }
 
   .metric-label {
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-dim);
+    font-size: 11px; font-weight: 600; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--text-dim);
   }
 
   .metrics-run-time {
-    padding: 12px 24px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    margin-left: auto;
+    padding: 12px 24px; display: flex; flex-direction: column;
+    justify-content: center; margin-left: auto;
   }
-
   .metrics-run-label {
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 11px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-dim);
+    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim);
   }
-
   .metrics-run-value {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: var(--text);
-    margin-top: 2px;
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text); margin-top: 2px;
   }
 
   /* ── TOOLBAR ── */
   .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 24px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg);
+    display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+    padding: 10px 24px; border-bottom: 1px solid var(--border); background: var(--bg);
   }
 
   .toolbar-label {
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 12px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-    margin-right: 4px;
+    font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim);
   }
 
   .filter-input {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text-bright);
-    padding: 5px 10px;
-    outline: none;
-    width: 200px;
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text-bright); padding: 5px 10px; outline: none; width: 200px;
     transition: border-color 0.15s;
   }
   .filter-input:focus { border-color: var(--border-2); }
   .filter-input::placeholder { color: var(--text-dim); }
 
+  .toolbar-sep {
+    width: 1px; height: 20px; background: var(--border-2); flex-shrink: 0;
+  }
+
+  /* filter chips */
+  .chip {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 4px 12px; border: 1px solid var(--border-2);
+    background: transparent; color: var(--text-dim); cursor: pointer;
+    transition: all 0.15s; white-space: nowrap;
+  }
+  .chip:hover { color: var(--text); border-color: var(--text-dim); }
+  .chip.active { background: var(--amber-dim); border-color: var(--amber); color: var(--amber-bright); }
+  .chip.active-green { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+  .chip.active-red { background: var(--red-dim); border-color: var(--red); color: #c05050; }
+
   .queue-count {
     margin-left: auto;
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    color: var(--text-dim);
+    font-size: 13px; font-weight: 600; letter-spacing: 0.08em; color: var(--text-dim);
   }
   .queue-count strong { color: var(--amber-bright); font-size: 16px; }
 
-  /* ── TABLE ── */
-  .table-wrap {
-    overflow-x: auto;
-    padding: 0 0 80px;
+  /* ── BULK ACTION BAR ── */
+  .bulk-bar {
+    display: none; align-items: center; gap: 12px;
+    padding: 8px 24px; background: var(--surface-2);
+    border-bottom: 1px solid var(--amber-dim);
+    animation: slide-in 0.15s ease;
+  }
+  .bulk-bar.visible { display: flex; }
+
+  @keyframes slide-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
 
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    min-width: 900px;
+  .bulk-count {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 13px; font-weight: 600; letter-spacing: 0.08em; color: var(--amber);
   }
+
+  .btn-bulk {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    border: none; padding: 5px 16px; cursor: pointer; transition: opacity 0.15s;
+  }
+  .btn-bulk-approve { background: var(--amber); color: #0a0804; }
+  .btn-bulk-approve:hover { background: var(--amber-bright); }
+  .btn-bulk-skip { background: transparent; color: var(--text-dim); border: 1px solid var(--border-2); }
+  .btn-bulk-skip:hover { color: var(--text); border-color: var(--text-dim); }
+  .btn-bulk:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .bulk-bar-deselect {
+    margin-left: auto;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px; letter-spacing: 0.08em; color: var(--text-dim);
+    background: none; border: none; cursor: pointer; padding: 4px 8px;
+  }
+  .bulk-bar-deselect:hover { color: var(--text); }
+
+  /* ── TABLE ── */
+  .table-wrap { overflow-x: auto; padding: 0 0 80px; }
+
+  table { width: 100%; border-collapse: collapse; min-width: 980px; }
 
   thead {
     position: sticky;
@@ -230,94 +218,60 @@
 
   thead th {
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-    text-align: left;
-    padding: 10px 16px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--text-dim); text-align: left; padding: 10px 16px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    white-space: nowrap; user-select: none;
   }
+  thead th.sortable { cursor: pointer; }
+  thead th.sortable:hover { color: var(--text); }
+  thead th.sort-asc::after  { content: ' ↑'; color: var(--amber); }
+  thead th.sort-desc::after { content: ' ↓'; color: var(--amber); }
 
-  thead th:first-child { padding-left: 24px; }
+  thead th:first-child { padding-left: 16px; width: 40px; }
+  thead th:nth-child(2) { padding-left: 8px; }
   thead th:last-child  { padding-right: 24px; text-align: right; }
 
-  tbody tr {
-    border-bottom: 1px solid var(--border);
-    transition: background 0.1s;
-  }
-
+  tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
   tbody tr:hover { background: var(--surface-2); }
+  tbody tr.selected { background: #151a27; }
 
-  tbody td {
-    padding: 13px 16px;
-    vertical-align: middle;
-  }
-
-  tbody td:first-child { padding-left: 24px; }
+  tbody td { padding: 13px 16px; vertical-align: middle; }
+  tbody td:first-child { padding-left: 16px; width: 40px; }
+  tbody td:nth-child(2) { padding-left: 8px; }
   tbody td:last-child  { padding-right: 24px; }
 
+  /* focused row for keyboard nav */
+  tbody tr.kb-focus { outline: 1px solid var(--amber-dim); outline-offset: -1px; }
+
+  /* checkbox */
+  .row-check {
+    width: 16px; height: 16px; cursor: pointer; accent-color: var(--amber);
+    border: 1px solid var(--border-2); background: var(--surface);
+  }
+
   .td-case {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: var(--amber);
-    white-space: nowrap;
-    letter-spacing: 0.02em;
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    color: var(--amber); white-space: nowrap; letter-spacing: 0.02em;
   }
-
-  .td-name {
-    font-size: 14px;
-    color: var(--text-bright);
-    font-weight: 500;
-  }
-
-  .td-sub {
-    font-size: 12px;
-    color: var(--text-dim);
-    margin-top: 1px;
-  }
-
-  .td-address {
-    font-size: 12px;
-    color: var(--text);
-    max-width: 220px;
-    line-height: 1.4;
-  }
-
-  .td-phone {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    white-space: nowrap;
-  }
-
-  .td-phone.has-phone  { color: var(--text-bright); }
-  .td-phone.no-phone   { color: var(--text-dim); }
+  .td-name  { font-size: 14px; color: var(--text-bright); font-weight: 500; }
+  .td-sub   { font-size: 12px; color: var(--text-dim); margin-top: 1px; }
+  .td-address { font-size: 12px; color: var(--text); max-width: 220px; line-height: 1.4; }
+  .td-phone { font-family: 'JetBrains Mono', monospace; font-size: 12px; white-space: nowrap; }
+  .td-phone.has-phone { color: var(--text-bright); }
+  .td-phone.no-phone  { color: var(--text-dim); }
 
   .badge {
     display: inline-block;
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    padding: 2px 8px;
-    border-radius: 2px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 2px 8px; border-radius: 2px;
   }
+  .badge-residential { background: var(--green-dim);  color: var(--green); }
+  .badge-commercial  { background: var(--blue);        color: #7abce0; }
+  .badge-unknown     { background: transparent; color: var(--text-dim); border: 1px solid var(--border-2); }
 
-  .badge-residential { background: var(--green-dim);  color: var(--green);  }
-  .badge-commercial  { background: var(--blue);        color: #7abce0;       }
-  .badge-unknown     { background: transparent;        color: var(--text-dim); border: 1px solid var(--border-2); }
-
-  .td-date {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: var(--text);
-    white-space: nowrap;
-  }
-
+  .td-date { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text); white-space: nowrap; }
   .td-date.overdue { color: #c05050; }
 
   /* ── ACTION BUTTONS ── */
@@ -325,44 +279,20 @@
 
   .btn-approve, .btn-skip {
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    border: none;
-    padding: 6px 18px;
-    cursor: pointer;
-    transition: opacity 0.15s, transform 0.1s;
-    white-space: nowrap;
+    font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    border: none; padding: 6px 18px; cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s; white-space: nowrap;
   }
-
-  .btn-approve {
-    background: var(--amber);
-    color: #0a0804;
-  }
+  .btn-approve { background: var(--amber); color: #0a0804; }
   .btn-approve:hover { background: var(--amber-bright); }
   .btn-approve:active { transform: scale(0.97); }
-
-  .btn-skip {
-    background: transparent;
-    color: var(--text-dim);
-    border: 1px solid var(--border-2);
-  }
+  .btn-skip { background: transparent; color: var(--text-dim); border: 1px solid var(--border-2); }
   .btn-skip:hover { color: var(--text); border-color: var(--text-dim); }
-
-  .btn-approve:disabled, .btn-skip:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-    transform: none;
-  }
+  .btn-approve:disabled, .btn-skip:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
 
   .action-status {
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    padding: 4px 10px;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; padding: 4px 10px;
   }
   .action-status.triggered { color: var(--green); }
   .action-status.skipped   { color: var(--text-dim); }
@@ -370,69 +300,34 @@
 
   /* ── EMPTY / LOADING ── */
   .state-full {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 80px 24px;
-    gap: 12px;
-    color: var(--text-dim);
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; padding: 80px 24px; gap: 12px; color: var(--text-dim);
   }
-
-  .state-icon {
-    font-size: 36px;
-    line-height: 1;
-  }
-
+  .state-icon { font-size: 36px; line-height: 1; }
   .state-title {
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 18px;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-dim);
+    font-size: 18px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim);
   }
-
-  .state-sub {
-    font-size: 13px;
-    color: var(--text-dim);
-  }
+  .state-sub { font-size: 13px; color: var(--text-dim); }
 
   /* ── SPINNER ── */
   @keyframes spin { to { transform: rotate(360deg); } }
   .spinner {
-    width: 20px; height: 20px;
-    border: 2px solid var(--border-2);
-    border-top-color: var(--amber);
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
+    width: 20px; height: 20px; border: 2px solid var(--border-2);
+    border-top-color: var(--amber); border-radius: 50%; animation: spin 0.7s linear infinite;
   }
 
   /* ── TOAST ── */
-  .toast-wrap {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    z-index: 100;
-  }
+  .toast-wrap { position: fixed; bottom: 24px; right: 24px; display: flex; flex-direction: column; gap: 8px; z-index: 100; }
 
   .toast {
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 14px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    padding: 10px 18px;
-    background: var(--surface-2);
-    border: 1px solid var(--border-2);
-    border-left: 3px solid var(--amber);
-    color: var(--text-bright);
+    font-size: 14px; font-weight: 600; letter-spacing: 0.08em;
+    padding: 10px 18px; background: var(--surface-2); border: 1px solid var(--border-2);
+    border-left: 3px solid var(--amber); color: var(--text-bright);
     animation: toast-in 0.2s ease;
   }
-
-  .toast.error { border-left-color: #c05050; }
+  .toast.error   { border-left-color: #c05050; }
   .toast.success { border-left-color: var(--green); }
 
   @keyframes toast-in {
@@ -444,6 +339,17 @@
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
   ::-webkit-scrollbar-thumb { background: var(--border-2); }
+
+  /* ── KEYBOARD HINT ── */
+  .kb-hint {
+    position: fixed; bottom: 24px; left: 24px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim);
+    display: flex; gap: 12px;
+  }
+  .kb-hint kbd {
+    background: var(--surface); border: 1px solid var(--border-2);
+    padding: 1px 5px; border-radius: 2px; color: var(--text-dim);
+  }
 </style>
 </head>
 <body>
@@ -495,8 +401,21 @@
 <!-- TOOLBAR -->
 <div class="toolbar">
   <span class="toolbar-label">Filter</span>
-  <input class="filter-input" id="filter-input" type="text" placeholder="case, name, address…" oninput="filterRows()">
+  <input class="filter-input" id="filter-input" type="text" placeholder="case, name, address…" oninput="applyFilters()">
+  <div class="toolbar-sep"></div>
+  <button class="chip" id="chip-phone"     onclick="toggleChip('phone')">Has Phone</button>
+  <button class="chip" id="chip-residential" onclick="toggleChip('residential')">Residential</button>
+  <button class="chip" id="chip-commercial"  onclick="toggleChip('commercial')">Commercial</button>
+  <button class="chip" id="chip-overdue"   onclick="toggleChip('overdue')">Overdue</button>
   <div class="queue-count" id="queue-count"></div>
+</div>
+
+<!-- BULK ACTION BAR -->
+<div class="bulk-bar" id="bulk-bar">
+  <span class="bulk-count" id="bulk-count">0 selected</span>
+  <button class="btn-bulk btn-bulk-approve" id="btn-bulk-approve" onclick="bulkApprove()">Approve Selected</button>
+  <button class="btn-bulk btn-bulk-skip"    onclick="bulkSkip()">Skip Selected</button>
+  <button class="bulk-bar-deselect"         onclick="clearSelection()">✕ Deselect All</button>
 </div>
 
 <!-- TABLE -->
@@ -504,20 +423,30 @@
   <table id="leads-table">
     <thead>
       <tr>
+        <th><input type="checkbox" class="row-check" id="check-all" onchange="toggleAll(this.checked)" title="Select all visible"></th>
         <th>Case #</th>
         <th>Tenant</th>
         <th>Landlord</th>
         <th>Address</th>
         <th>Phone</th>
         <th>Type</th>
-        <th>Court Date</th>
+        <th class="sortable" id="th-court"  onclick="setSort('court_date')">Court Date</th>
+        <th class="sortable" id="th-filing" onclick="setSort('filing_date')">Filed</th>
         <th style="text-align:right">Action</th>
       </tr>
     </thead>
     <tbody id="leads-body">
-      <tr><td colspan="8"><div class="state-full"><div class="spinner"></div><div class="state-sub">Loading leads…</div></div></td></tr>
+      <tr><td colspan="10"><div class="state-full"><div class="spinner"></div><div class="state-sub">Loading leads…</div></div></td></tr>
     </tbody>
   </table>
+</div>
+
+<!-- KEYBOARD HINT -->
+<div class="kb-hint">
+  <span><kbd>j</kbd>/<kbd>k</kbd> navigate</span>
+  <span><kbd>a</kbd> approve</span>
+  <span><kbd>s</kbd> skip</span>
+  <span><kbd>space</kbd> select</span>
 </div>
 
 <!-- TOAST CONTAINER -->
@@ -526,15 +455,20 @@
 <script>
   // ── CLOCK ──
   function updateClock() {
-    const now = new Date();
     document.getElementById('clock').textContent =
-      now.toLocaleTimeString('en-US', { hour12: false });
+      new Date().toLocaleTimeString('en-US', { hour12: false });
   }
   setInterval(updateClock, 1000);
   updateClock();
 
   // ── STATE ──
   let allLeads = [];
+  let visibleLeads = [];
+  let selectedCases = new Set();
+  let sortKey = null;
+  let sortDir = 1; // 1 = asc, -1 = desc
+  let chips = { phone: false, residential: false, commercial: false, overdue: false };
+  let kbIndex = -1;
 
   // ── LOAD ──
   async function loadAll() {
@@ -546,29 +480,81 @@
       const res = await fetch('/api/metrics');
       const rows = await res.json();
       if (!rows.length) return;
-      const latest = rows[0];
-      document.getElementById('m-received').textContent  = latest.filings_received ?? '—';
-      document.getElementById('m-dupes').textContent     = latest.duplicates_skipped ?? '—';
-      document.getElementById('m-batchdata').textContent = latest.batchdata_calls ?? '—';
-      document.getElementById('m-phones').textContent    = latest.phones_found ?? '—';
-      document.getElementById('m-addr-skip').textContent = latest.address_skipped ?? '—';
-      document.getElementById('m-run-time').textContent  = latest.run_at
-        ? new Date(latest.run_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true })
+      const m = rows[0];
+      document.getElementById('m-received').textContent  = m.filings_received ?? '—';
+      document.getElementById('m-dupes').textContent     = m.duplicates_skipped ?? '—';
+      document.getElementById('m-batchdata').textContent = m.batchdata_calls ?? '—';
+      document.getElementById('m-phones').textContent    = m.phones_found ?? '—';
+      document.getElementById('m-addr-skip').textContent = m.address_skipped ?? '—';
+      document.getElementById('m-run-time').textContent  = m.run_at
+        ? new Date(m.run_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true })
         : '—';
     } catch(e) { console.error('metrics error', e); }
   }
 
   async function loadLeads() {
     const tbody = document.getElementById('leads-body');
-    tbody.innerHTML = `<tr><td colspan="8"><div class="state-full"><div class="spinner"></div><div class="state-sub">Loading…</div></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10"><div class="state-full"><div class="spinner"></div><div class="state-sub">Loading…</div></div></td></tr>`;
     try {
       const res = await fetch('/api/leads?track=ec');
       allLeads = await res.json();
-      renderLeads(allLeads);
+      selectedCases.clear();
+      kbIndex = -1;
+      applyFilters();
       document.getElementById('m-pending').textContent = allLeads.length;
     } catch(e) {
-      tbody.innerHTML = `<tr><td colspan="8"><div class="state-full"><div class="state-icon">⚠</div><div class="state-title">Failed to load</div><div class="state-sub">${e.message}</div></div></td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10"><div class="state-full"><div class="state-icon">⚠</div><div class="state-title">Failed to load</div><div class="state-sub">${e.message}</div></div></td></tr>`;
     }
+  }
+
+  // ── FILTERS + SORT ──
+  function toggleChip(name) {
+    chips[name] = !chips[name];
+    const el = document.getElementById(`chip-${name}`);
+    const activeClass = name === 'overdue' ? 'active-red' : name === 'phone' ? 'active-green' : 'active';
+    el.classList.toggle(activeClass, chips[name]);
+    applyFilters();
+  }
+
+  function setSort(key) {
+    if (sortKey === key) {
+      sortDir *= -1;
+    } else {
+      sortKey = key;
+      sortDir = 1;
+    }
+    document.querySelectorAll('thead th').forEach(th => th.classList.remove('sort-asc', 'sort-desc'));
+    const thId = key === 'court_date' ? 'th-court' : 'th-filing';
+    document.getElementById(thId).classList.add(sortDir === 1 ? 'sort-asc' : 'sort-desc');
+    applyFilters();
+  }
+
+  function applyFilters() {
+    const q = document.getElementById('filter-input').value.toLowerCase().trim();
+    const today = new Date(); today.setHours(0,0,0,0);
+
+    let leads = allLeads.filter(l => {
+      if (q && !([l.case_number, l.tenant_name, l.landlord_name, l.property_address].join(' ').toLowerCase().includes(q))) return false;
+      if (chips.phone && !(l.phone && l.phone !== 'None')) return false;
+      if (chips.residential && l.property_type !== 'residential') return false;
+      if (chips.commercial  && l.property_type !== 'commercial')  return false;
+      if (chips.overdue && !(l.court_date && new Date(l.court_date + 'T00:00:00') < today)) return false;
+      return true;
+    });
+
+    if (sortKey) {
+      leads = [...leads].sort((a, b) => {
+        const av = a[sortKey] || '';
+        const bv = b[sortKey] || '';
+        return av < bv ? -sortDir : av > bv ? sortDir : 0;
+      });
+    }
+
+    visibleLeads = leads;
+    kbIndex = -1;
+    renderLeads(leads);
+    updateBulkBar();
+    syncSelectAll();
   }
 
   // ── RENDER ──
@@ -577,35 +563,41 @@
     document.getElementById('queue-count').innerHTML = `<strong>${leads.length}</strong> leads`;
 
     if (!leads.length) {
-      tbody.innerHTML = `<tr><td colspan="8"><div class="state-full">
+      tbody.innerHTML = `<tr><td colspan="10"><div class="state-full">
         <div class="state-icon">✓</div>
         <div class="state-title">Queue Clear</div>
-        <div class="state-sub">No pending leads — check back after the next scrape run.</div>
+        <div class="state-sub">No pending leads match the current filters.</div>
       </div></td></tr>`;
       return;
     }
 
-    tbody.innerHTML = leads.map(lead => {
+    const today = new Date(); today.setHours(0,0,0,0);
+
+    tbody.innerHTML = leads.map((lead, i) => {
       const hasPhone = lead.phone && lead.phone !== 'None';
       const phone = hasPhone ? formatPhone(lead.phone) : '—';
       const type = lead.property_type || 'unknown';
       const courtDate = lead.court_date ? formatDate(lead.court_date) : '—';
-      const isOverdue = lead.court_date && new Date(lead.court_date) < new Date();
+      const filedDate = lead.filing_date ? formatDate(lead.filing_date) : '—';
+      const isOverdue = lead.court_date && new Date(lead.court_date + 'T00:00:00') < today;
+      const checked = selectedCases.has(lead.case_number) ? 'checked' : '';
+      const selClass = selectedCases.has(lead.case_number) ? ' selected' : '';
 
-      return `<tr data-case="${esc(lead.case_number)}" data-search="${esc([lead.case_number, lead.tenant_name, lead.landlord_name, lead.property_address].join(' ').toLowerCase())}">
+      return `<tr data-case="${esc(lead.case_number)}" data-idx="${i}" class="${selClass}">
+        <td><input type="checkbox" class="row-check" ${checked} onchange="toggleRow('${esc(lead.case_number)}', this.checked)"></td>
         <td class="td-case">${esc(lead.case_number)}</td>
         <td>
-          <div class="td-name">${esc(lead.tenant_name)}</div>
-          <div class="td-sub">${esc(lead.county)}, ${esc(lead.state)}</div>
+          <div class="td-name">${esc(lead.tenant_name || '—')}</div>
+          <div class="td-sub">${esc(lead.county || '')}, ${esc(lead.state || '')}</div>
         </td>
         <td>
           <div class="td-name">${esc(lead.landlord_name || '—')}</div>
-          <div class="td-sub">${lead.filing_date ? formatDate(lead.filing_date) : ''}</div>
         </td>
-        <td class="td-address">${esc(lead.property_address)}</td>
+        <td class="td-address">${esc(lead.property_address || '—')}</td>
         <td class="td-phone ${hasPhone ? 'has-phone' : 'no-phone'}">${phone}</td>
         <td><span class="badge badge-${type}">${type}</span></td>
         <td class="td-date ${isOverdue ? 'overdue' : ''}">${courtDate}</td>
+        <td class="td-date">${filedDate}</td>
         <td>
           <div class="actions" id="actions-${esc(lead.case_number)}">
             ${hasPhone
@@ -619,18 +611,99 @@
     }).join('');
   }
 
-  // ── FILTER ──
-  function filterRows() {
-    const q = document.getElementById('filter-input').value.toLowerCase().trim();
-    if (!q) { renderLeads(allLeads); return; }
-    const filtered = allLeads.filter(l =>
-      [l.case_number, l.tenant_name, l.landlord_name, l.property_address]
-        .join(' ').toLowerCase().includes(q)
-    );
-    renderLeads(filtered);
+  // ── SELECTION ──
+  function toggleRow(caseNumber, checked) {
+    if (checked) selectedCases.add(caseNumber);
+    else selectedCases.delete(caseNumber);
+    const row = document.querySelector(`tr[data-case="${CSS.escape(caseNumber)}"]`);
+    if (row) row.classList.toggle('selected', checked);
+    updateBulkBar();
+    syncSelectAll();
   }
 
-  // ── ACTIONS ──
+  function toggleAll(checked) {
+    visibleLeads.forEach(l => {
+      if (checked) selectedCases.add(l.case_number);
+      else selectedCases.delete(l.case_number);
+    });
+    document.querySelectorAll('tbody .row-check').forEach((cb, i) => {
+      cb.checked = checked;
+      cb.closest('tr').classList.toggle('selected', checked);
+    });
+    updateBulkBar();
+  }
+
+  function clearSelection() {
+    selectedCases.clear();
+    document.querySelectorAll('tbody .row-check').forEach(cb => { cb.checked = false; cb.closest('tr').classList.remove('selected'); });
+    document.getElementById('check-all').checked = false;
+    updateBulkBar();
+  }
+
+  function syncSelectAll() {
+    const visible = visibleLeads.length;
+    const selVisible = visibleLeads.filter(l => selectedCases.has(l.case_number)).length;
+    const ca = document.getElementById('check-all');
+    ca.checked = visible > 0 && selVisible === visible;
+    ca.indeterminate = selVisible > 0 && selVisible < visible;
+  }
+
+  function updateBulkBar() {
+    const n = selectedCases.size;
+    const bar = document.getElementById('bulk-bar');
+    bar.classList.toggle('visible', n > 0);
+    document.getElementById('bulk-count').textContent = `${n} selected`;
+    // disable approve if any selected lack a phone
+    const anyNoPhone = [...selectedCases].some(cn => {
+      const lead = allLeads.find(l => l.case_number === cn);
+      return !lead || !lead.phone || lead.phone === 'None';
+    });
+    document.getElementById('btn-bulk-approve').disabled = anyNoPhone;
+    if (anyNoPhone) document.getElementById('btn-bulk-approve').title = 'Some selected leads have no phone';
+    else document.getElementById('btn-bulk-approve').title = '';
+  }
+
+  // ── BULK ACTIONS ──
+  async function bulkApprove() {
+    const cases = [...selectedCases];
+    toast(`Approving ${cases.length} leads…`);
+    document.getElementById('btn-bulk-approve').disabled = true;
+    let ok = 0, fail = 0;
+    await Promise.all(cases.map(async cn => {
+      try {
+        const res = await fetch(`/api/leads/${encodeURIComponent(cn)}/approve?track=ec`, { method: 'POST' });
+        if (!res.ok) throw new Error();
+        removeLeadFromState(cn);
+        ok++;
+      } catch { fail++; }
+    }));
+    selectedCases.clear();
+    applyFilters();
+    document.getElementById('m-pending').textContent = allLeads.length;
+    if (ok) toast(`${ok} call${ok>1?'s':''} dispatched`, 'success');
+    if (fail) toast(`${fail} failed`, 'error');
+  }
+
+  async function bulkSkip() {
+    const cases = [...selectedCases];
+    await Promise.all(cases.map(async cn => {
+      try {
+        await fetch(`/api/leads/${encodeURIComponent(cn)}/skip?track=ec`, { method: 'POST' });
+        removeLeadFromState(cn);
+      } catch {}
+    }));
+    selectedCases.clear();
+    applyFilters();
+    document.getElementById('m-pending').textContent = allLeads.length;
+    toast(`${cases.length} leads skipped`);
+  }
+
+  function removeLeadFromState(caseNumber) {
+    allLeads = allLeads.filter(l => l.case_number !== caseNumber);
+    selectedCases.delete(caseNumber);
+  }
+
+  // ── SINGLE ACTIONS ──
   async function approve(caseNumber) {
     const el = document.getElementById(`actions-${caseNumber}`);
     setActionsLoading(el);
@@ -639,9 +712,9 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Failed');
       el.innerHTML = `<span class="action-status triggered">✓ TRIGGERED</span>`;
-      allLeads = allLeads.filter(l => l.case_number !== caseNumber);
+      removeLeadFromState(caseNumber);
       document.getElementById('m-pending').textContent = allLeads.length;
-      document.getElementById('queue-count').innerHTML = `<strong>${allLeads.length}</strong> leads`;
+      document.getElementById('queue-count').innerHTML = `<strong>${visibleLeads.filter(l=>l.case_number!==caseNumber).length}</strong> leads`;
       toast(`Call dispatched — ${caseNumber}`, 'success');
     } catch(e) {
       el.innerHTML = `<span class="action-status error">✗ ERROR</span>`;
@@ -655,9 +728,9 @@
     try {
       await fetch(`/api/leads/${encodeURIComponent(caseNumber)}/skip?track=ec`, { method: 'POST' });
       el.innerHTML = `<span class="action-status skipped">SKIPPED</span>`;
-      allLeads = allLeads.filter(l => l.case_number !== caseNumber);
+      removeLeadFromState(caseNumber);
       document.getElementById('m-pending').textContent = allLeads.length;
-      document.getElementById('queue-count').innerHTML = `<strong>${allLeads.length}</strong> leads`;
+      document.getElementById('queue-count').innerHTML = `<strong>${visibleLeads.filter(l=>l.case_number!==caseNumber).length}</strong> leads`;
     } catch(e) {
       toast(`Skip failed: ${e.message}`, 'error');
       loadLeads();
@@ -666,6 +739,43 @@
 
   function setActionsLoading(el) {
     el.querySelectorAll('button').forEach(b => b.disabled = true);
+  }
+
+  // ── KEYBOARD NAVIGATION ──
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
+    const rows = document.querySelectorAll('tbody tr[data-idx]');
+    if (!rows.length) return;
+
+    if (e.key === 'j' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      kbIndex = Math.min(kbIndex + 1, rows.length - 1);
+      setKbFocus(rows, kbIndex);
+    } else if (e.key === 'k' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      kbIndex = Math.max(kbIndex - 1, 0);
+      setKbFocus(rows, kbIndex);
+    } else if (e.key === 'a' && kbIndex >= 0) {
+      const caseNumber = rows[kbIndex].dataset.case;
+      const btn = document.querySelector(`#actions-${CSS.escape(caseNumber)} .btn-approve`);
+      if (btn && !btn.disabled) approve(caseNumber);
+    } else if (e.key === 's' && kbIndex >= 0) {
+      const caseNumber = rows[kbIndex].dataset.case;
+      skip(caseNumber);
+    } else if (e.key === ' ' && kbIndex >= 0) {
+      e.preventDefault();
+      const caseNumber = rows[kbIndex].dataset.case;
+      const newState = !selectedCases.has(caseNumber);
+      toggleRow(caseNumber, newState);
+      const cb = rows[kbIndex].querySelector('.row-check');
+      if (cb) cb.checked = newState;
+    }
+  });
+
+  function setKbFocus(rows, idx) {
+    rows.forEach(r => r.classList.remove('kb-focus'));
+    rows[idx].classList.add('kb-focus');
+    rows[idx].scrollIntoView({ block: 'nearest' });
   }
 
   // ── TOAST ──
