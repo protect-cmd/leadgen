@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EC · Lead Queue</title>
+<title>Grant Ellis Group Lead Queue</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Barlow:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -358,7 +358,7 @@
 <header class="header">
   <div class="header-brand">
     <div class="header-logo"></div>
-    <div class="header-title"><span>EC</span> · LEAD QUEUE</div>
+    <div class="header-title"><span>GEG</span> · LEAD QUEUE</div>
   </div>
   <div class="header-right">
     <div class="header-clock" id="clock">--:--:--</div>
@@ -400,6 +400,12 @@
 
 <!-- TOOLBAR -->
 <div class="toolbar">
+  <span class="toolbar-label">View</span>
+  <button class="chip active" id="view-residential_approved" onclick="setView('residential_approved')">Residential</button>
+  <button class="chip" id="view-commercial" onclick="setView('commercial')">Commercial</button>
+  <button class="chip" id="view-held" onclick="setView('held')">Held</button>
+  <button class="chip" id="view-discarded" onclick="setView('discarded')">Discarded</button>
+  <div class="toolbar-sep"></div>
   <span class="toolbar-label">Filter</span>
   <input class="filter-input" id="filter-input" type="text" placeholder="case, name, address…" oninput="applyFilters()">
   <div class="toolbar-sep"></div>
@@ -429,6 +435,7 @@
         <th>Landlord</th>
         <th>Address</th>
         <th>Phone</th>
+        <th>DNC</th>
         <th>Type</th>
         <th class="sortable" id="th-court"  onclick="setSort('court_date')">Court Date</th>
         <th class="sortable" id="th-filing" onclick="setSort('filing_date')">Filed</th>
@@ -436,7 +443,7 @@
       </tr>
     </thead>
     <tbody id="leads-body">
-      <tr><td colspan="10"><div class="state-full"><div class="spinner"></div><div class="state-sub">Loading leads…</div></div></td></tr>
+      <tr><td colspan="11"><div class="state-full"><div class="spinner"></div><div class="state-sub">Loading leads...</div></div></td></tr>
     </tbody>
   </table>
 </div>
@@ -469,10 +476,28 @@
   let sortDir = 1; // 1 = asc, -1 = desc
   let chips = { phone: false, residential: false, commercial: false, overdue: false };
   let kbIndex = -1;
+  let activeView = 'residential_approved';
+  const viewLabels = {
+    residential_approved: 'Residential Approved',
+    commercial: 'Commercial',
+    held: 'Held',
+    discarded: 'Discarded'
+  };
 
   // ── LOAD ──
   async function loadAll() {
-    await Promise.all([loadMetrics(), loadLeads()]);
+    await Promise.all([loadMetrics(), loadLeadCounts(), loadLeads()]);
+  }
+
+  async function loadLeadCounts() {
+    try {
+      const res = await fetch('/api/lead-counts');
+      const counts = await res.json();
+      document.getElementById('view-residential_approved').textContent = `Residential (${counts.residential_approved ?? 0})`;
+      document.getElementById('view-commercial').textContent = `Commercial (${counts.commercial ?? 0})`;
+      document.getElementById('view-held').textContent = `Held (${counts.held ?? 0})`;
+      document.getElementById('view-discarded').textContent = `Discarded (${counts.discarded ?? 0})`;
+    } catch(e) { console.error('lead counts error', e); }
   }
 
   async function loadMetrics() {
@@ -494,20 +519,33 @@
 
   async function loadLeads() {
     const tbody = document.getElementById('leads-body');
-    tbody.innerHTML = `<tr><td colspan="10"><div class="state-full"><div class="spinner"></div><div class="state-sub">Loading…</div></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11"><div class="state-full"><div class="spinner"></div><div class="state-sub">Loading...</div></div></td></tr>`;
     try {
-      const res = await fetch('/api/leads?track=ec');
+      const res = await fetch(`/api/leads?view=${encodeURIComponent(activeView)}`);
       allLeads = await res.json();
       selectedCases.clear();
       kbIndex = -1;
       applyFilters();
       document.getElementById('m-pending').textContent = allLeads.length;
     } catch(e) {
-      tbody.innerHTML = `<tr><td colspan="10"><div class="state-full"><div class="state-icon">⚠</div><div class="state-title">Failed to load</div><div class="state-sub">${e.message}</div></div></td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="11"><div class="state-full"><div class="state-icon">!</div><div class="state-title">Failed to load</div><div class="state-sub">${e.message}</div></div></td></tr>`;
     }
   }
 
   // ── FILTERS + SORT ──
+  function setView(name) {
+    activeView = name;
+    selectedCases.clear();
+    kbIndex = -1;
+    document.querySelectorAll('[id^="view-"]').forEach(el => {
+      el.classList.remove('active', 'active-green', 'active-red');
+    });
+    const active = document.getElementById(`view-${name}`);
+    const activeClass = name === 'discarded' ? 'active-red' : name === 'commercial' ? 'active-green' : 'active';
+    active.classList.add(activeClass);
+    loadLeads();
+  }
+
   function toggleChip(name) {
     chips[name] = !chips[name];
     const el = document.getElementById(`chip-${name}`);
@@ -560,12 +598,12 @@
   // ── RENDER ──
   function renderLeads(leads) {
     const tbody = document.getElementById('leads-body');
-    document.getElementById('queue-count').innerHTML = `<strong>${leads.length}</strong> leads`;
+    document.getElementById('queue-count').innerHTML = `<strong>${leads.length}</strong> ${esc(viewLabels[activeView] || 'Leads')}`;
 
     if (!leads.length) {
-      tbody.innerHTML = `<tr><td colspan="10"><div class="state-full">
-        <div class="state-icon">✓</div>
-        <div class="state-title">Queue Clear</div>
+      tbody.innerHTML = `<tr><td colspan="11"><div class="state-full">
+        <div class="state-icon">OK</div>
+        <div class="state-title">No Records</div>
         <div class="state-sub">No pending leads match the current filters.</div>
       </div></td></tr>`;
       return;
@@ -576,7 +614,10 @@
     tbody.innerHTML = leads.map((lead, i) => {
       const hasPhone = lead.phone && lead.phone !== 'None';
       const phone = hasPhone ? formatPhone(lead.phone) : '—';
-      const type = lead.property_type || 'unknown';
+      const dncStatus = lead.dnc_status || 'unknown';
+      const dncClear = dncStatus === 'clear';
+      const type = lead.property_type || lead.lead_bucket || 'unknown';
+      const reason = lead.discard_reason || lead.qualification_notes || lead.lead_bucket || '';
       const courtDate = lead.court_date ? formatDate(lead.court_date) : '—';
       const filedDate = lead.filing_date ? formatDate(lead.filing_date) : '—';
       const isOverdue = lead.court_date && new Date(lead.court_date + 'T00:00:00') < today;
@@ -593,18 +634,24 @@
         <td>
           <div class="td-name">${esc(lead.landlord_name || '—')}</div>
         </td>
-        <td class="td-address">${esc(lead.property_address || '—')}</td>
+        <td class="td-address">${esc(lead.property_address || '—')}
+          <div class="td-sub">${esc(lead.property_zip || '')}${lead.property_zip ? ' - ' : ''}${esc(reason)}</div>
+        </td>
         <td class="td-phone ${hasPhone ? 'has-phone' : 'no-phone'}">${phone}</td>
+        <td><span class="badge badge-${dncClear ? 'residential' : 'unknown'}">${esc(dncStatus)}</span></td>
         <td><span class="badge badge-${type}">${type}</span></td>
         <td class="td-date ${isOverdue ? 'overdue' : ''}">${courtDate}</td>
         <td class="td-date">${filedDate}</td>
         <td>
           <div class="actions" id="actions-${esc(lead.case_number)}">
-            ${hasPhone
+            ${hasPhone && dncClear && activeView !== 'discarded'
               ? `<button class="btn-approve" onclick="approve('${esc(lead.case_number)}')">APPROVE</button>`
-              : `<button class="btn-approve" disabled title="No phone number">APPROVE</button>`
+              : `<button class="btn-approve" disabled title="${activeView === 'discarded' ? 'Discarded leads are not called' : !hasPhone ? 'No phone number' : 'DNC not clear'}">APPROVE</button>`
             }
-            <button class="btn-skip" onclick="skip('${esc(lead.case_number)}')">SKIP</button>
+            ${activeView === 'discarded'
+              ? `<span class="action-status skipped">NO CALL</span>`
+              : `<button class="btn-skip" onclick="skip('${esc(lead.case_number)}')">SKIP</button>`
+            }
           </div>
         </td>
       </tr>`;
@@ -653,13 +700,13 @@
     const bar = document.getElementById('bulk-bar');
     bar.classList.toggle('visible', n > 0);
     document.getElementById('bulk-count').textContent = `${n} selected`;
-    // disable approve if any selected lack a phone
-    const anyNoPhone = [...selectedCases].some(cn => {
+    // disable approve if any selected lack a phone or are not DNC clear
+    const anyNotCallable = [...selectedCases].some(cn => {
       const lead = allLeads.find(l => l.case_number === cn);
-      return !lead || !lead.phone || lead.phone === 'None';
+      return !lead || !lead.phone || lead.phone === 'None' || lead.dnc_status !== 'clear';
     });
-    document.getElementById('btn-bulk-approve').disabled = anyNoPhone;
-    if (anyNoPhone) document.getElementById('btn-bulk-approve').title = 'Some selected leads have no phone';
+    document.getElementById('btn-bulk-approve').disabled = anyNotCallable;
+    if (anyNotCallable) document.getElementById('btn-bulk-approve').title = 'Some selected leads are missing phone or DNC clearance';
     else document.getElementById('btn-bulk-approve').title = '';
   }
 

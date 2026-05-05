@@ -1,8 +1,7 @@
-import pytest
 from datetime import date
 from models.filing import Filing
-from models.contact import EnrichedContact, RoutingOutcome
-from pipeline.router import route
+from models.contact import EnrichedContact
+from pipeline.router import route_ec, route_ng
 
 
 def _make_contact(**kwargs) -> EnrichedContact:
@@ -30,15 +29,23 @@ def _make_contact(**kwargs) -> EnrichedContact:
 
 def test_commercial_routes_to_ng():
     contact = _make_contact(property_type="commercial", estimated_rent=5000.0)
-    outcome = route(contact)
+    outcome = route_ng(contact)
     assert outcome.action == "proceed"
     assert outcome.tag == "NG-New-Filing"
     assert outcome.pipeline == "commercial"
 
 
+def test_commercial_routes_to_commercial_pipeline_for_ec():
+    contact = _make_contact(property_type="commercial", estimated_rent=5000.0)
+    outcome = route_ec(contact)
+    assert outcome.action == "proceed"
+    assert outcome.tag == "Commercial"
+    assert outcome.pipeline == "commercial"
+
+
 def test_residential_above_threshold_routes_to_ec():
     contact = _make_contact(property_type="residential", estimated_rent=2000.0)
-    outcome = route(contact)
+    outcome = route_ec(contact)
     assert outcome.action == "proceed"
     assert outcome.tag == "EC-New-Filing"
     assert outcome.pipeline == "residential"
@@ -46,27 +53,37 @@ def test_residential_above_threshold_routes_to_ec():
 
 def test_residential_at_threshold_routes_to_ec():
     contact = _make_contact(property_type="residential", estimated_rent=1800.0)
-    outcome = route(contact)
+    outcome = route_ec(contact)
     assert outcome.action == "proceed"
     assert outcome.tag == "EC-New-Filing"
 
 
 def test_residential_below_threshold_skipped():
     contact = _make_contact(property_type="residential", estimated_rent=1200.0)
-    outcome = route(contact)
+    outcome = route_ec(contact)
     assert outcome.action == "skip"
     assert outcome.tag == "Below-Threshold"
 
 
-def test_missing_rent_flagged():
+def test_missing_rent_uses_zip_fallback_after_qualification():
     contact = _make_contact(property_type="residential", estimated_rent=None)
-    outcome = route(contact)
-    assert outcome.action == "flag"
-    assert outcome.tag == "Missing-Data"
+    outcome = route_ec(contact)
+    assert outcome.action == "proceed"
+    assert outcome.tag == "EC-New-Filing"
+    assert outcome.pipeline == "residential"
 
 
-def test_missing_property_type_flagged():
+def test_missing_property_type_uses_zip_fallback_after_qualification():
     contact = _make_contact(property_type=None, estimated_rent=2000.0)
-    outcome = route(contact)
-    assert outcome.action == "flag"
-    assert outcome.tag == "Missing-Data"
+    outcome = route_ec(contact)
+    assert outcome.action == "proceed"
+    assert outcome.tag == "EC-New-Filing"
+    assert outcome.pipeline == "residential"
+
+
+def test_residential_routes_to_ng_residential_pipeline():
+    contact = _make_contact(property_type="residential", estimated_rent=2000.0)
+    outcome = route_ng(contact)
+    assert outcome.action == "proceed"
+    assert outcome.tag == "NG-New-Filing"
+    assert outcome.pipeline == "residential"

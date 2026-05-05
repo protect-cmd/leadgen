@@ -1,9 +1,9 @@
-# Bland.ai — EvictionCommand EC Setup Guide
+# Bland.ai — Grant Ellis Group EC Setup Guide
 
 ## Status Check Before Anything Else
 
 - **Credits:** Account shows -0.81 credits — **top up before testing or calls will fail silently.**
-- **Existing pathway:** "EvictionCommand" pathway already exists in Bland — ID starts with `efedc52f`. Use this, don't create a new one.
+- **Existing pathway:** "Grant Ellis Group" pathway already exists in Bland — ID starts with `efedc52f`. Use this, don't create a new one.
 - **Phone number:** None purchased yet — see Step 3.
 
 ---
@@ -14,9 +14,9 @@ A voicemail-drop pipeline. When our code runs, it triggers an outbound call to t
 
 ---
 
-## Step 1 — Configure the EvictionCommand Pathway
+## Step 1 — Configure the Grant Ellis Group Pathway
 
-Go to: **app.bland.ai/dashboard/convo-pathways** → click **EvictionCommand**
+Go to: **app.bland.ai/dashboard/convo-pathways** → click **Grant Ellis Group**
 
 ### Pathway structure (very simple — this is a voicemail drop, not a conversation)
 
@@ -26,12 +26,12 @@ Build two nodes:
 - Type: `Default`
 - Prompt (set as static text, not AI-generated):
 ```
-Hi, this message is for {{first_name}}. My name is Alex calling from EvictionCommand. 
-We noticed a recent unlawful detainer filing in {{county}} County associated with your 
-property at {{property_address}}. We specialize in preparing county-specific eviction 
-documents — notices, UD packages, and serving instructions — delivered in 24 hours 
-starting at $297. If you still need documents for your case, call us back at 
-{{ec_phone}} or visit evictioncommand.com. Again that number is {{ec_phone}}. 
+Hi, this message is for {{first_name}}. My name is Alex calling from Grant Ellis Group.
+We noticed a recent unlawful detainer filing in {{county}} County associated with your
+property at {{property_address}}. We specialize in preparing county-specific eviction
+documents — notices, UD packages, and serving instructions — delivered in 24 hours
+starting at $297. If you still need documents for your case, call us back at
+{{ec_phone}}. Again that number is {{ec_phone}}.
 Have a great day.
 ```
 - Set this node as the **Start Node**
@@ -42,25 +42,25 @@ Have a great day.
 
 ### Global Pathway Settings
 - **Voice:** Choose a professional male voice (e.g., `mason` or `derek` — preview in Voices tab)
-- **Global Prompt:** "You are Alex, a professional representative from EvictionCommand. Speak clearly and professionally. If someone answers and interrupts, pause politely, then continue the message."
+- **Global Prompt:** "You are Alex, a professional representative from Grant Ellis Group. Speak clearly and professionally. If someone answers and interrupts, pause politely, then continue the message."
 
 ### Get the Full Pathway ID
-- In the pathway list, click the copy icon next to "EvictionCommand"
+- In the pathway list, click the copy icon next to "Grant Ellis Group"
 - Full ID goes into `.env` as `BLAND_EC_AGENT_ID`
 
 ### Easiest Alternative — Use the AI Builder
 Instead of manually building nodes, click **"+ Create Pathway"** → paste this prompt:
 
 ```
-Build an outbound voicemail-drop pathway for a legal document company called EvictionCommand. 
+Build an outbound voicemail-drop pathway for a legal document company called Grant Ellis Group.
 The agent's name is Alex. When the call is answered (live or voicemail), deliver this exact script:
 
-"Hi, this message is for {{first_name}}. My name is Alex calling from EvictionCommand. 
-We noticed a recent unlawful detainer filing in {{county}} County associated with your 
-property at {{property_address}}. We specialize in preparing county-specific eviction 
-documents — notices, UD packages, and serving instructions — delivered in 24 hours 
-starting at $297. If you still need documents for your case, call us back at {{ec_phone}} 
-or visit evictioncommand.com. Again that number is {{ec_phone}}. Have a great day."
+"Hi, this message is for {{first_name}}. My name is Alex calling from Grant Ellis Group.
+We noticed a recent unlawful detainer filing in {{county}} County associated with your
+property at {{property_address}}. We specialize in preparing county-specific eviction
+documents — notices, UD packages, and serving instructions — delivered in 24 hours
+starting at $297. If you still need documents for your case, call us back at {{ec_phone}}.
+Again that number is {{ec_phone}}. Have a great day."
 
 After the message, end the call. If interrupted politely by a live person, acknowledge briefly 
 and offer to let them call back, then end the call. Do not engage in extended conversation.
@@ -168,7 +168,7 @@ These are the `request_data` keys our code sends. Reference them in Bland as `{{
 
 ## Remaining NG Setup (deferred)
 
-NG (Nobles & Greyson) needs its own:
+NG (Vantage Defense Group) needs its own:
 - Separate Bland.ai workspace or separate pathway ("NG-Tenant-Outreach")
 - Warm empathetic female voice
 - Different script (tenant-facing)

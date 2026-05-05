@@ -17,21 +17,20 @@ _EC_PHONE_NUMBER = os.getenv("BLAND_EC_PHONE_NUMBER", "")
 _NG_PHONE_NUMBER = os.getenv("BLAND_NG_PHONE_NUMBER", "")
 
 _EC_VOICEMAIL_SCRIPT = (
-    "Hi, this message is for {first_name}. My name is Alex calling from EvictionCommand. "
+    "Hi, this message is for {first_name}. My name is Alex calling from Grant Ellis Group. "
     "We noticed a recent unlawful detainer filing in {county} County associated with your "
     "property at {property_address}. We specialize in preparing county-specific eviction "
-    "documents — notices, UD packages, and serving instructions — delivered in 24 hours "
+    "documents - notices, UD packages, and serving instructions - delivered in 24 hours "
     "starting at $297. If you still need documents for your case, call us back at "
-    "{ec_phone} or visit evictioncommand.com. Again that number is {ec_phone}. "
-    "Have a great day."
+    "{ec_phone}. Again that number is {ec_phone}. Have a great day."
 )
 
 _NG_VOICEMAIL_SCRIPT = (
-    "Hi, this message is for {first_name}. My name is calling from Nobles and Greyson. "
+    "Hi, this message is for {first_name}. My name is calling from Vantage Defense Group. "
     "We understand you may have recently received an eviction notice at {property_address}. "
     "We help tenants respond to eviction filings and in most cases we can keep you in your "
     "home for four to five months while your case works through the court. There is no "
-    "obligation to speak with us — we just want to make sure you know your options before "
+    "obligation to speak with us - we just want to make sure you know your options before "
     "your response deadline. Please call us back at {ng_phone} for a free consultation. "
     "That number again is {ng_phone}. We are here to help."
 )
@@ -44,10 +43,34 @@ def _headers() -> dict[str, str]:
     return {"authorization": key, "Content-Type": "application/json"}
 
 
+def _phone_number_for_track(track: str) -> str:
+    return _EC_PHONE_NUMBER if track == "ec" else _NG_PHONE_NUMBER
+
+
+def render_voicemail_script(contact: EnrichedContact) -> str:
+    filing = contact.filing
+    first_name = contact.contact_first_name
+    from_number = _phone_number_for_track(contact.track) or "[PHONE_NUMBER]"
+
+    if contact.track == "ec":
+        return _EC_VOICEMAIL_SCRIPT.format(
+            first_name=first_name,
+            county=filing.county,
+            property_address=filing.property_address,
+            ec_phone=from_number,
+        )
+
+    return _NG_VOICEMAIL_SCRIPT.format(
+        first_name=first_name,
+        property_address=filing.property_address,
+        ng_phone=from_number,
+    )
+
+
 async def trigger_voicemail(contact: EnrichedContact) -> str:
     """Dispatch an outbound call via Bland.ai. Returns the Bland call_id."""
     if not contact.phone:
-        raise ValueError("No phone number on contact — cannot trigger voicemail")
+        raise ValueError("No phone number on contact - cannot trigger voicemail")
 
     filing = contact.filing
     is_ec = contact.track == "ec"
@@ -65,20 +88,7 @@ async def trigger_voicemail(contact: EnrichedContact) -> str:
         )
 
     first_name = contact.contact_first_name
-
-    if is_ec:
-        voicemail_text = _EC_VOICEMAIL_SCRIPT.format(
-            first_name=first_name,
-            county=filing.county,
-            property_address=filing.property_address,
-            ec_phone=from_number,
-        )
-    else:
-        voicemail_text = _NG_VOICEMAIL_SCRIPT.format(
-            first_name=first_name,
-            property_address=filing.property_address,
-            ng_phone=from_number,
-        )
+    voicemail_text = render_voicemail_script(contact)
 
     payload: dict = {
         "phone_number": contact.phone,
@@ -93,10 +103,10 @@ async def trigger_voicemail(contact: EnrichedContact) -> str:
         "voicemail": {
             "action": "leave_message",
             "message": voicemail_text,
-            # LLM-based detection — more accurate for IVRs and ambiguous pickups
+            # LLM-based detection is more accurate for IVRs and ambiguous pickups.
             "sensitive": True,
         },
-        # Retry once after 4 hours if first attempt goes to voicemail
+        # Retry once after 4 hours if first attempt goes to voicemail.
         "retry": {
             "wait": 14400,
             "voicemail_action": "leave_message",

@@ -1,10 +1,12 @@
 from __future__ import annotations
 import asyncio
 import os
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from models.filing import Filing
 from models.contact import EnrichedContact, RoutingOutcome
+from pipeline.qualification import QualificationOutcome
 
 load_dotenv()
 
@@ -38,15 +40,34 @@ async def insert_filing(filing: Filing) -> None:
     await asyncio.to_thread(_insert)
 
 
+def _enrichment_payload(contact: EnrichedContact) -> dict:
+    return {
+        "phone": contact.phone,
+        "email": contact.email,
+        "secondary_address": contact.secondary_address,
+        "estimated_rent": contact.estimated_rent,
+        "property_type": contact.property_type,
+        "dnc_status": contact.dnc_status,
+        "dnc_source": contact.dnc_source,
+        "dnc_checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 async def update_enrichment(contact: EnrichedContact) -> None:
     def _update() -> None:
+        _client.table("filings").update(_enrichment_payload(contact)).eq("case_number", contact.filing.case_number).execute()
+    await asyncio.to_thread(_update)
+
+
+async def update_classification(case_number: str, outcome: QualificationOutcome) -> None:
+    def _update() -> None:
         _client.table("filings").update({
-            "phone": contact.phone,
-            "email": contact.email,
-            "secondary_address": contact.secondary_address,
-            "estimated_rent": contact.estimated_rent,
-            "property_type": contact.property_type,
-        }).eq("case_number", contact.filing.case_number).execute()
+            "property_zip": outcome.property_zip,
+            "lead_bucket": outcome.lead_bucket,
+            "discard_reason": outcome.discard_reason,
+            "qualification_notes": outcome.qualification_notes,
+            "classified_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("case_number", case_number).execute()
     await asyncio.to_thread(_update)
 
 
@@ -103,7 +124,7 @@ async def get_pending_leads(track: str = "ec", limit: int = 200) -> list[dict]:
             .select(
                 "case_number,tenant_name,landlord_name,property_address,"
                 "state,county,filing_date,court_date,phone,email,"
-                f"property_type,{col_status},{col_ghl}"
+                f"property_type,dnc_status,dnc_source,{col_status},{col_ghl}"
             )
             .eq(col_status, "pending")
             .not_.is_(col_ghl, "null")
@@ -112,6 +133,77 @@ async def get_pending_leads(track: str = "ec", limit: int = 200) -> list[dict]:
             .execute()
         )
         return result.data
+    return await asyncio.to_thread(_query)
+
+
+_DASHBOARD_SELECT = (
+    "case_number,tenant_name,landlord_name,property_address,"
+    "state,county,filing_date,court_date,phone,email,"
+    "property_type,estimated_rent,property_zip,lead_bucket,"
+    "discard_reason,qualification_notes,dnc_status,dnc_source,bland_status,ghl_contact_id"
+)
+
+
+async def get_dashboard_leads(view: str = "residential_approved", limit: int = 500) -> list[dict]:
+    def _query() -> list[dict]:
+        query = _client.table("filings").select(_DASHBOARD_SELECT)
+
+        if view == "commercial":
+            query = query.eq("lead_bucket", "commercial")
+        elif view == "held":
+            query = query.eq("lead_bucket", "held")
+        elif view == "discarded":
+            query = query.eq("lead_bucket", "discarded")
+        else:
+            query = query.or_(
+                "lead_bucket.eq.residential_approved,"
+                "and(lead_bucket.is.null,bland_status.eq.pending,ghl_contact_id.not.is.null)"
+            )
+
+        result = (
+            query
+            .order("filing_date", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return result.data
+    return await asyncio.to_thread(_query)
+
+
+async def get_dashboard_counts() -> dict:
+    def _query() -> dict:
+        rows = (
+            _client.table("filings")
+            .select("lead_bucket,property_type,bland_status,ghl_contact_id")
+            .execute()
+            .data
+        )
+
+        counts = {
+            "residential_approved": 0,
+            "commercial": 0,
+            "held": 0,
+            "discarded": 0,
+        }
+        for row in rows:
+            bucket = row.get("lead_bucket")
+            property_type = (row.get("property_type") or "").strip().lower()
+            if bucket == "residential_approved":
+                counts["residential_approved"] += 1
+            elif bucket == "commercial":
+                counts["commercial"] += 1
+            elif bucket == "held":
+                counts["held"] += 1
+            elif bucket == "discarded":
+                counts["discarded"] += 1
+            elif (
+                bucket is None
+                and row.get("bland_status") == "pending"
+                and row.get("ghl_contact_id")
+            ):
+                counts["residential_approved"] += 1
+
+        return counts
     return await asyncio.to_thread(_query)
 
 

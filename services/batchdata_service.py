@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 
 import httpx
 
@@ -13,6 +14,19 @@ log = logging.getLogger(__name__)
 BASE = "https://api.batchdata.com"
 SKIP_TRACE_EP = "/api/v1/property/skip-trace"
 LOOKUP_EP = "/api/v1/property/lookup/all-attributes"
+
+
+@dataclass(frozen=True)
+class PhoneSelection:
+    number: str | None
+    dnc_status: str = "unknown"
+    dnc_source: str | None = None
+
+
+def _dnc_status(phone: dict) -> str:
+    if "dnc" not in phone or phone.get("dnc") is None:
+        return "unknown"
+    return "blocked" if phone.get("dnc") else "clear"
 
 
 def _headers() -> dict[str, str]:
@@ -57,18 +71,30 @@ def _split_address(address: str) -> dict[str, str]:
     }
 
 
-def _best_phone(phone_list: list[dict]) -> str | None:
+def _best_phone_result(phone_list: list[dict]) -> PhoneSelection:
     if not phone_list:
-        return None
-    # Prefer mobile, then highest score; exclude DNC numbers if alternatives exist
-    non_dnc = [p for p in phone_list if not p.get("dnc")]
-    pool = non_dnc if non_dnc else phone_list
+        return PhoneSelection(None)
+    # Prefer confirmed-clear numbers, then unknowns, and only use DNC hits if no alternative exists.
+    pool = [p for p in phone_list if _dnc_status(p) == "clear"]
+    if not pool:
+        pool = [p for p in phone_list if _dnc_status(p) == "unknown"]
+    if not pool:
+        pool = phone_list
     ranked = sorted(
         pool,
         key=lambda p: (p.get("type", "") == "Mobile", p.get("score", 0)),
         reverse=True,
     )
-    return ranked[0].get("number")
+    selected = ranked[0]
+    return PhoneSelection(
+        selected.get("number"),
+        _dnc_status(selected),
+        "batchdata",
+    )
+
+
+def _best_phone(phone_list: list[dict]) -> str | None:
+    return _best_phone_result(phone_list).number
 
 
 def _best_email(email_list: list) -> str | None:
@@ -84,6 +110,8 @@ async def enrich(filing: Filing) -> EnrichedContact:
     headers = _headers()
 
     phone: str | None = None
+    dnc_status = "unknown"
+    dnc_source: str | None = None
     email: str | None = None
     secondary_address: str | None = None
     property_type: str | None = filing.property_type_hint
@@ -100,7 +128,10 @@ async def enrich(filing: Filing) -> EnrichedContact:
             persons = r.json().get("results", {}).get("persons", [])
             if persons:
                 p = persons[0]
-                phone = _best_phone(p.get("phoneNumbers", []))
+                phone_selection = _best_phone_result(p.get("phoneNumbers", []))
+                phone = phone_selection.number
+                dnc_status = phone_selection.dnc_status
+                dnc_source = phone_selection.dnc_source
                 email = _best_email(p.get("emails", []))
         else:
             log.warning(f"Skip-trace {r.status_code} for {filing.case_number}: {r.text[:200]}")
@@ -154,6 +185,8 @@ async def enrich(filing: Filing) -> EnrichedContact:
         secondary_address=secondary_address,
         estimated_rent=estimated_rent,
         property_type=property_type,
+        dnc_status=dnc_status,
+        dnc_source=dnc_source,
     )
 
 
@@ -163,6 +196,8 @@ async def enrich_tenant(filing: Filing) -> EnrichedContact:
     headers = _headers()
 
     phone: str | None = None
+    dnc_status = "unknown"
+    dnc_source: str | None = None
     email: str | None = None
     property_type: str | None = filing.property_type_hint
     estimated_rent: float | None = filing.claim_amount
@@ -188,7 +223,10 @@ async def enrich_tenant(filing: Filing) -> EnrichedContact:
             persons = r.json().get("results", {}).get("persons", [])
             if persons:
                 p = persons[0]
-                phone = _best_phone(p.get("phoneNumbers", []))
+                phone_selection = _best_phone_result(p.get("phoneNumbers", []))
+                phone = phone_selection.number
+                dnc_status = phone_selection.dnc_status
+                dnc_source = phone_selection.dnc_source
                 email = _best_email(p.get("emails", []))
         else:
             log.warning(
@@ -233,4 +271,6 @@ async def enrich_tenant(filing: Filing) -> EnrichedContact:
         email=email,
         estimated_rent=estimated_rent,
         property_type=property_type,
+        dnc_status=dnc_status,
+        dnc_source=dnc_source,
     )

@@ -13,12 +13,18 @@ load_dotenv()
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 
-from services import dedup_service, bland_service
-from services.dedup_service import get_pending_leads, get_recent_metrics, set_bland_status
+from services import bland_service, dnc_service
+from services.dedup_service import (
+    get_dashboard_counts,
+    get_dashboard_leads,
+    get_pending_leads,
+    get_recent_metrics,
+    set_bland_status,
+)
 from models.filing import Filing
 from models.contact import EnrichedContact
 
-app = FastAPI(title="EvictionCommand Lead Queue")
+app = FastAPI(title="Grant Ellis Group Lead Queue")
 
 _HTML = Path(__file__).parent / "index.html"
 
@@ -29,9 +35,17 @@ async def dashboard():
 
 
 @app.get("/api/leads")
-async def leads(track: str = "ec"):
+async def leads(track: str = "ec", view: str = "residential_approved"):
+    if view:
+        rows = await get_dashboard_leads(view=view)
+        return JSONResponse(rows)
     rows = await get_pending_leads(track=track)
     return JSONResponse(rows)
+
+
+@app.get("/api/lead-counts")
+async def lead_counts():
+    return JSONResponse(await get_dashboard_counts())
 
 
 @app.get("/api/metrics")
@@ -71,7 +85,15 @@ async def approve(case_number: str, track: str = "ec"):
         phone=phone,
         email=row.get("email"),
         property_type=row.get("property_type"),
+        dnc_status=row.get("dnc_status", "unknown"),
+        dnc_source=row.get("dnc_source"),
     )
+
+    dnc_decision = dnc_service.can_call(contact)
+    if not dnc_decision.allowed:
+        status = "blocked_dnc" if dnc_decision.status == "blocked" else "pending_dnc_review"
+        await set_bland_status(case_number, track, status)
+        raise HTTPException(400, f"DNC gate blocked Bland: {dnc_decision.reason}")
 
     try:
         call_id = await bland_service.trigger_voicemail(contact)

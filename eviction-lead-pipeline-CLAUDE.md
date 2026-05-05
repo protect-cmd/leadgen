@@ -1,14 +1,14 @@
 # Eviction Lead Pipeline — Automation Service
 ## CLAUDE.md — Living Project Context
 
-> This is a separate service from the Eviction Command document generator. Do not mix concerns.
+> This is a separate service from the Grant Ellis Group document generator. Do not mix concerns.
 > Update this file whenever architecture decisions change or open items are resolved.
 
 ---
 
 ## What This Is
 
-A Python automation service hosted on Railway that replaces Make.com as the lead acquisition pipeline for Eviction Command (and Nobles & Greyson). It:
+A Python automation service hosted on Railway that replaces Make.com as the lead acquisition pipeline for Grant Ellis Group (and Vantage Defense Group). It:
 
 1. Scrapes public court portals daily for new eviction filings
 2. Deduplicates filings against Supabase to avoid reprocessing
@@ -262,7 +262,7 @@ Every BatchData call writes a row to Supabase `batchdata_cost_log` table:
 | `phone_returned` | boolean |
 | `email_returned` | boolean |
 
-Budget: $847/month across both EvictionCommand and Nobles & Greyson combined.
+Budget: $847/month across both Grant Ellis Group and Vantage Defense Group combined.
 
 ---
 
@@ -273,7 +273,7 @@ After BatchData enrichment, apply this router before touching GHL:
 ```
 if property_type == "commercial":
     tag: NG-New-Filing, Commercial
-    pipeline: Nobles & Greyson Commercial
+    pipeline: Vantage Defense Group Commercial
     priority: HIGH
     → proceed to GHL
 
@@ -285,14 +285,14 @@ elif property_type == "residential" and estimated_rent < 1800:
 
 elif property_type == "residential" and estimated_rent >= 1800:
     tag: EC-New-Filing
-    pipeline: Eviction Command
+    pipeline: Grant Ellis Group
     → proceed to GHL pipeline
 ```
 
 **Business assignment rule:**
-- Residential filings → Eviction Command (EC) only
-- Commercial filings → Nobles & Greyson (NG) only
-- One BatchData lookup per filing. One GHL contact per filing. $0.07/filing.
+- Residential filings → Grant Ellis Group (EC) only
+- Commercial filings → Vantage Defense Group (NG) only
+- Current enrichment can make one landlord skip-trace plus one property lookup per filing. When Vantage Defense Group tenant outreach is enabled for an individual tenant, it can also make one tenant people-search plus one additional property lookup. Optimize this before scaling if BatchData costs become a constraint.
 
 **Note:** `estimated_rent` and `property_type` come from BatchData response. If BatchData does not return these fields, flag as open item — routing cannot function without them.
 
@@ -378,7 +378,7 @@ BATCHDATA_API_KEY=
 GHL_API_KEY=
 GHL_LOCATION_ID=
 GHL_NEW_FILING_STAGE_ID=          # EC pipeline "New Filing" stage
-GHL_NG_COMMERCIAL_STAGE_ID=       # Nobles & Greyson Commercial pipeline stage
+GHL_NG_COMMERCIAL_STAGE_ID=       # Vantage Defense Group Commercial pipeline stage
 
 # Bland.ai
 BLAND_API_KEY=
@@ -519,4 +519,4 @@ pytest tests/ -v
 
 *Last updated: 2026-04-30*
 *Owner: Zee*
-*Client: Eviction Command / Nobles & Greyson*
+*Client: Grant Ellis Group / Vantage Defense Group*

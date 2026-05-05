@@ -12,6 +12,8 @@ class EnrichedContact:
     secondary_address: str | None = None
     estimated_rent: float | None = None
     property_type: str | None = None  # "residential" | "commercial"
+    dnc_status: str = "unknown"       # "clear" | "blocked" | "unknown"
+    dnc_source: str | None = None
 
     @property
     def contact_name(self) -> str:

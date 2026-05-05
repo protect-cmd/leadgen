@@ -1,21 +1,32 @@
 from __future__ import annotations
+
 import asyncio
 import logging
 import os
 import re
 from datetime import datetime, timezone
-from models.filing import Filing
+
 from models.contact import EnrichedContact
+from models.filing import Filing
 from pipeline import router
-from services import dedup_service, batchdata_service, ghl_service, geocode_service
+from pipeline.qualification import classify_lead
+from services import (
+    batchdata_service,
+    bland_service,
+    dedup_service,
+    dnc_service,
+    geocode_service,
+    ghl_service,
+)
 
 log = logging.getLogger(__name__)
 
 GHL_EC_STAGE_ID = os.getenv("GHL_NEW_FILING_STAGE_ID", "")
+GHL_EC_REVIEW_STAGE_ID = os.getenv("GHL_EC_REVIEW_STAGE_ID", "")
 GHL_NG_RESIDENTIAL_STAGE_ID = os.getenv("GHL_NG_NEW_FILING_STAGE_ID", "")
 GHL_NG_COMMERCIAL_STAGE_ID = os.getenv("GHL_NG_COMMERCIAL_STAGE_ID", "")
 _NG_ENABLED = bool(os.getenv("GHL_NG_LOCATION_ID", ""))
-_BLAND_ENABLED = os.getenv("BLAND_ENABLED", "false").lower() == "true"
+_AUTO_BLAND_CALLS_ENABLED = os.getenv("AUTO_BLAND_CALLS_ENABLED", "false").lower() == "true"
 
 _BUSINESS_RE = re.compile(
     r"\b(LLC|INC|CORP|LTD|LP|LLP|PLLC|PROPERTIES|PROPERTY|MANAGEMENT|MGMT|"
@@ -32,39 +43,103 @@ def _is_usable_address(address: str) -> bool:
     return bool(address and address.strip().lower() not in {"unknown", ""})
 
 
-async def _process_track(contact: EnrichedContact) -> None:
-    """Route, push to GHL, and trigger Bland for one track (EC or NG)."""
+async def _process_track(contact: EnrichedContact) -> bool:
+    """Route, push to GHL, and queue/trigger Bland for one EC or NG track."""
     filing = contact.filing
     is_ec = contact.track == "ec"
-
     outcome = router.route_ec(contact) if is_ec else router.route_ng(contact)
+
     log.info(
         f"{filing.case_number} [{contact.track.upper()}] routed: "
         f"action={outcome.action} tag={outcome.tag}"
     )
 
-    if outcome.action != "proceed":
-        return
+    if outcome.action == "skip":
+        return False
 
-    if is_ec:
-        stage_id = GHL_EC_STAGE_ID
-    elif outcome.pipeline == "commercial":
+    if outcome.action == "flag" and is_ec:
+        if GHL_EC_REVIEW_STAGE_ID and contact.phone:
+            try:
+                ghl_id = await ghl_service.create_contact(
+                    contact,
+                    [outcome.tag],
+                    GHL_EC_REVIEW_STAGE_ID,
+                )
+                await dedup_service.update_ghl_id(filing.case_number, ghl_id, contact.track)
+                log.info(f"GHL review contact created [{contact.track.upper()}]: {ghl_id}")
+                return True
+            except Exception as e:
+                log.warning(
+                    f"GHL review failed [{contact.track.upper()}] "
+                    f"{filing.case_number}: {e}"
+                )
+        return False
+
+    if outcome.pipeline == "commercial":
         stage_id = GHL_NG_COMMERCIAL_STAGE_ID
+        tags = [outcome.tag, "High-Priority"]
+    elif is_ec:
+        stage_id = GHL_EC_STAGE_ID
+        tags = [outcome.tag]
     else:
         stage_id = GHL_NG_RESIDENTIAL_STAGE_ID
+        tags = [outcome.tag]
 
     try:
-        ghl_id = await ghl_service.create_contact(contact, [outcome.tag], stage_id)
+        ghl_id = await ghl_service.create_contact(contact, tags, stage_id)
         await dedup_service.update_ghl_id(filing.case_number, ghl_id, contact.track)
         log.info(f"GHL contact created [{contact.track.upper()}]: {ghl_id}")
     except Exception as e:
         log.warning(f"GHL failed [{contact.track.upper()}] {filing.case_number}: {e}")
-        return
+        return False
 
-    # Bland is never auto-fired — leads queue as 'pending' for manual approval in dashboard.
     if contact.phone:
-        await dedup_service.set_bland_status(filing.case_number, contact.track, "pending")
-        log.info(f"{filing.case_number} [{contact.track.upper()}] queued for Bland review")
+        dnc_decision = dnc_service.can_call(contact)
+        if not dnc_decision.allowed:
+            await dedup_service.set_bland_status(
+                filing.case_number,
+                contact.track,
+                "blocked_dnc" if dnc_decision.status == "blocked" else "pending_dnc_review",
+            )
+            log.info(
+                f"{filing.case_number} [{contact.track.upper()}] Bland blocked: "
+                f"{dnc_decision.reason}"
+            )
+            return True
+
+        if _AUTO_BLAND_CALLS_ENABLED:
+            try:
+                call_id = await bland_service.trigger_voicemail(contact)
+                await dedup_service.set_bland_status(
+                    filing.case_number,
+                    contact.track,
+                    "triggered",
+                    call_id=call_id,
+                )
+                log.info(f"Bland auto-call triggered [{contact.track.upper()}]: {call_id}")
+            except Exception as e:
+                await dedup_service.set_bland_status(filing.case_number, contact.track, "pending")
+                log.warning(
+                    f"Bland auto-call failed [{contact.track.upper()}] "
+                    f"{filing.case_number}: {e}"
+                )
+        else:
+            await dedup_service.set_bland_status(filing.case_number, contact.track, "pending")
+            log.info(f"{filing.case_number} [{contact.track.upper()}] queued for Bland review")
+
+    return True
+
+
+async def _classify_and_store(filing: Filing, contact: EnrichedContact | None = None) -> str:
+    outcome = classify_lead(
+        state=filing.state,
+        property_address=filing.property_address,
+        filing_date=filing.filing_date,
+        property_type=contact.property_type if contact else filing.property_type_hint,
+        estimated_rent=contact.estimated_rent if contact else filing.claim_amount,
+    )
+    await dedup_service.update_classification(filing.case_number, outcome)
+    return outcome.lead_bucket
 
 
 async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
@@ -88,28 +163,32 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         log.info(f"Processing {filing.case_number}")
 
         if await dedup_service.is_duplicate(filing.case_number):
-            log.info(f"Duplicate — skipping: {filing.case_number}")
+            log.info(f"Duplicate skipped: {filing.case_number}")
             m["duplicates_skipped"] += 1
             continue
 
         await dedup_service.insert_filing(filing)
 
-        # Normalize address; gate on result to avoid wasting BatchData credits.
         normalized = await geocode_service.normalize_address(filing.property_address)
         if normalized:
             log.debug(f"{filing.case_number} address normalized: {normalized}")
             filing.property_address = normalized
         elif not _is_usable_address(filing.property_address):
-            log.warning(f"{filing.case_number} skipped — unusable address: {filing.property_address!r}")
+            log.warning(f"{filing.case_number} skipped: unusable address {filing.property_address!r}")
+            await _classify_and_store(filing)
             m["address_skipped"] += 1
             continue
 
-        # Skip NG enrichment if tenant name looks like a business entity.
+        lead_bucket = await _classify_and_store(filing)
+        if lead_bucket == "discarded":
+            log.info(f"{filing.case_number} discarded before enrichment")
+            m["address_skipped"] += 1
+            continue
+
         enrich_ng = _NG_ENABLED and not _is_business_name(filing.tenant_name)
         if _NG_ENABLED and not enrich_ng:
-            log.info(f"{filing.case_number} NG skipped — tenant looks like business: {filing.tenant_name!r}")
+            log.info(f"{filing.case_number} NG skipped: tenant looks like business")
 
-        # Enrich EC always; NG only when tenant is a real person.
         try:
             if enrich_ng:
                 ec_contact, ng_contact = await asyncio.gather(
@@ -128,21 +207,27 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         if ec_contact.phone:
             m["phones_found"] += 1
 
-        # EC enrichment has rent/property_type — store it as the canonical record.
         await dedup_service.update_enrichment(ec_contact)
+
+        lead_bucket = await _classify_and_store(filing, ec_contact)
+        if lead_bucket == "discarded":
+            log.info(f"{filing.case_number} discarded after enrichment")
+            m["address_skipped"] += 1
+            continue
 
         tasks = [_process_track(ec_contact)]
         if ng_contact is not None:
             tasks.append(_process_track(ng_contact))
-        await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks)
+        m["ghl_created"] += sum(1 for created in results if created)
 
     elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
     m["elapsed_seconds"] = elapsed
     log.info(
-        f"Run complete in {elapsed:.1f}s — "
+        f"Run complete in {elapsed:.1f}s: "
         f"received={m['filings_received']} dupes={m['duplicates_skipped']} "
-        f"addr_skip={m['address_skipped']} batchdata={m['batchdata_calls']} "
-        f"phones={m['phones_found']}"
+        f"discarded={m['address_skipped']} batchdata={m['batchdata_calls']} "
+        f"phones={m['phones_found']} ghl={m['ghl_created']}"
     )
     try:
         await dedup_service.write_run_metrics(m)
