@@ -38,6 +38,15 @@
     line-height: 1.5;
   }
 
+  /* ── LAYOUT ── */
+  .dashboard-top {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+
   /* ── HEADER ── */
   .header {
     display: flex;
@@ -47,9 +56,6 @@
     height: 52px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    position: sticky;
-    top: 0;
-    z-index: 10;
   }
 
   .header-brand { display: flex; align-items: center; gap: 10px; }
@@ -125,8 +131,9 @@
 
   /* ── TOOLBAR ── */
   .toolbar {
-    display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
-    padding: 10px 24px; border-bottom: 1px solid var(--border); background: var(--bg);
+    display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
+    padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--bg);
+    min-height: 48px;
   }
 
   .toolbar-label {
@@ -208,38 +215,49 @@
   /* ── TABLE ── */
   .table-wrap { overflow-x: auto; padding: 0 0 80px; }
 
-  table { width: 100%; border-collapse: collapse; min-width: 980px; }
-
-  thead {
-    position: sticky;
-    top: 52px;
-    z-index: 5;
-  }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 1100px; table-layout: fixed; }
 
   thead th {
     font-family: 'Barlow Condensed', sans-serif;
     font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
-    color: var(--text-dim); text-align: left; padding: 10px 16px;
-    background: var(--surface); border-bottom: 1px solid var(--border);
+    color: var(--text-dim); text-align: left; padding: 12px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
     white-space: nowrap; user-select: none;
   }
+  thead th:last-child { border-right: none; }
+
   thead th.sortable { cursor: pointer; }
-  thead th.sortable:hover { color: var(--text); }
+  thead th.sortable:hover { color: var(--text); background: var(--surface-2); }
   thead th.sort-asc::after  { content: ' ↑'; color: var(--amber); }
   thead th.sort-desc::after { content: ' ↓'; color: var(--amber); }
 
-  thead th:first-child { padding-left: 16px; width: 40px; }
-  thead th:nth-child(2) { padding-left: 8px; }
-  thead th:last-child  { padding-right: 24px; text-align: right; }
+  /* column widths */
+  th.col-check { width: 50px; text-align: center; padding: 0; }
+  th.col-case  { width: 110px; }
+  th.col-tenant { width: 180px; }
+  th.col-landlord { width: 180px; }
+  th.col-address { width: auto; }
+  th.col-phone { width: 135px; }
+  th.col-dnc { width: 100px; }
+  th.col-type { width: 150px; }
+  th.col-date { width: 130px; }
+  th.col-action { width: 215px; text-align: right; }
 
-  tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
+  tbody tr { transition: background 0.1s; }
   tbody tr:hover { background: var(--surface-2); }
   tbody tr.selected { background: #151a27; }
 
-  tbody td { padding: 13px 16px; vertical-align: middle; }
-  tbody td:first-child { padding-left: 16px; width: 40px; }
-  tbody td:nth-child(2) { padding-left: 8px; }
-  tbody td:last-child  { padding-right: 24px; }
+  tbody td {
+    padding: 13px 16px; vertical-align: middle;
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border-2);
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  tbody td:last-child { border-right: none; }
+
+  tbody td:first-child { text-align: center; padding: 0; }
 
   /* focused row for keyboard nav */
   tbody tr.kb-focus { outline: 1px solid var(--amber-dim); outline-offset: -1px; }
@@ -354,76 +372,79 @@
 </head>
 <body>
 
-<!-- HEADER -->
-<header class="header">
-  <div class="header-brand">
-    <div class="header-logo"></div>
-    <div class="header-title"><span>GEG</span> · LEAD QUEUE</div>
-  </div>
-  <div class="header-right">
-    <div class="header-clock" id="clock">--:--:--</div>
-    <button class="btn-refresh" onclick="loadAll()">↻ REFRESH</button>
-  </div>
-</header>
+<!-- STICKY TOP SECTION -->
+<div class="dashboard-top">
+  <!-- HEADER -->
+  <header class="header">
+    <div class="header-brand">
+      <div class="header-logo"></div>
+      <div class="header-title"><span>GEG</span> · LEAD QUEUE</div>
+    </div>
+    <div class="header-right">
+      <div class="header-clock" id="clock">--:--:--</div>
+      <button class="btn-refresh" onclick="loadAll()">↻ REFRESH</button>
+    </div>
+  </header>
 
-<!-- METRICS STRIP -->
-<div class="metrics-strip" id="metrics-strip">
-  <div class="metric">
-    <div class="metric-value neutral" id="m-pending">—</div>
-    <div class="metric-label">Pending</div>
+  <!-- METRICS STRIP -->
+  <div class="metrics-strip" id="metrics-strip">
+    <div class="metric">
+      <div class="metric-value neutral" id="m-pending">—</div>
+      <div class="metric-label">Pending</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value" id="m-received">—</div>
+      <div class="metric-label">Last Scraped</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value dim" id="m-dupes">—</div>
+      <div class="metric-label">Dupes Skipped</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value" id="m-batchdata">—</div>
+      <div class="metric-label">BatchData Calls</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value green" id="m-phones">—</div>
+      <div class="metric-label">Phones Found</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value dim" id="m-addr-skip">—</div>
+      <div class="metric-label">Addr Skipped</div>
+    </div>
+    <div class="metrics-run-time">
+      <div class="metrics-run-label">Last Run</div>
+      <div class="metrics-run-value" id="m-run-time">—</div>
+    </div>
   </div>
-  <div class="metric">
-    <div class="metric-value" id="m-received">—</div>
-    <div class="metric-label">Last Scraped</div>
-  </div>
-  <div class="metric">
-    <div class="metric-value dim" id="m-dupes">—</div>
-    <div class="metric-label">Dupes Skipped</div>
-  </div>
-  <div class="metric">
-    <div class="metric-value" id="m-batchdata">—</div>
-    <div class="metric-label">BatchData Calls</div>
-  </div>
-  <div class="metric">
-    <div class="metric-value green" id="m-phones">—</div>
-    <div class="metric-label">Phones Found</div>
-  </div>
-  <div class="metric">
-    <div class="metric-value dim" id="m-addr-skip">—</div>
-    <div class="metric-label">Addr Skipped</div>
-  </div>
-  <div class="metrics-run-time">
-    <div class="metrics-run-label">Last Run</div>
-    <div class="metrics-run-value" id="m-run-time">—</div>
-  </div>
-</div>
 
-<!-- TOOLBAR -->
-<div class="toolbar">
-  <span class="toolbar-label">View</span>
-  <button class="chip active" id="view-residential_approved" onclick="setView('residential_approved')">Residential</button>
-  <button class="chip" id="view-commercial" onclick="setView('commercial')">Commercial</button>
-  <button class="chip" id="view-spanish_residential" onclick="setView('spanish_residential')">Spanish Residential</button>
-  <button class="chip" id="view-spanish_commercial" onclick="setView('spanish_commercial')">Spanish Commercial</button>
-  <button class="chip" id="view-held" onclick="setView('held')">Held</button>
-  <button class="chip" id="view-discarded" onclick="setView('discarded')">Discarded</button>
-  <div class="toolbar-sep"></div>
-  <span class="toolbar-label">Filter</span>
-  <input class="filter-input" id="filter-input" type="text" placeholder="case, name, address…" oninput="applyFilters()">
-  <div class="toolbar-sep"></div>
-  <button class="chip" id="chip-phone"     onclick="toggleChip('phone')">Has Phone</button>
-  <button class="chip" id="chip-residential" onclick="toggleChip('residential')">Residential</button>
-  <button class="chip" id="chip-commercial"  onclick="toggleChip('commercial')">Commercial</button>
-  <button class="chip" id="chip-overdue"   onclick="toggleChip('overdue')">Overdue</button>
-  <div class="queue-count" id="queue-count"></div>
-</div>
+  <!-- TOOLBAR -->
+  <div class="toolbar">
+    <span class="toolbar-label">View</span>
+    <button class="chip active" id="view-residential_approved" onclick="setView('residential_approved')">Residential</button>
+    <button class="chip" id="view-commercial" onclick="setView('commercial')">Commercial</button>
+    <button class="chip" id="view-spanish_residential" onclick="setView('spanish_residential')">Spanish Residential</button>
+    <button class="chip" id="view-spanish_commercial" onclick="setView('spanish_commercial')">Spanish Commercial</button>
+    <button class="chip" id="view-held" onclick="setView('held')">Held</button>
+    <button class="chip" id="view-discarded" onclick="setView('discarded')">Discarded</button>
+    <div class="toolbar-sep"></div>
+    <span class="toolbar-label">Filter</span>
+    <input class="filter-input" id="filter-input" type="text" placeholder="case, name, address…" oninput="applyFilters()">
+    <div class="toolbar-sep"></div>
+    <button class="chip" id="chip-phone"     onclick="toggleChip('phone')">Has Phone</button>
+    <button class="chip" id="chip-residential" onclick="toggleChip('residential')">Residential</button>
+    <button class="chip" id="chip-commercial"  onclick="toggleChip('commercial')">Commercial</button>
+    <button class="chip" id="chip-overdue"   onclick="toggleChip('overdue')">Overdue</button>
+    <div class="queue-count" id="queue-count"></div>
+  </div>
 
-<!-- BULK ACTION BAR -->
-<div class="bulk-bar" id="bulk-bar">
-  <span class="bulk-count" id="bulk-count">0 selected</span>
-  <button class="btn-bulk btn-bulk-approve" id="btn-bulk-approve" onclick="bulkApprove()">Approve Selected</button>
-  <button class="btn-bulk btn-bulk-skip"    onclick="bulkSkip()">Skip Selected</button>
-  <button class="bulk-bar-deselect"         onclick="clearSelection()">✕ Deselect All</button>
+  <!-- BULK ACTION BAR -->
+  <div class="bulk-bar" id="bulk-bar">
+    <span class="bulk-count" id="bulk-count">0 selected</span>
+    <button class="btn-bulk btn-bulk-approve" id="btn-bulk-approve" onclick="bulkApprove()">Approve Selected</button>
+    <button class="btn-bulk btn-bulk-skip"    onclick="bulkSkip()">Skip Selected</button>
+    <button class="bulk-bar-deselect"         onclick="clearSelection()">✕ Deselect All</button>
+  </div>
 </div>
 
 <!-- TABLE -->
@@ -431,17 +452,17 @@
   <table id="leads-table">
     <thead>
       <tr>
-        <th><input type="checkbox" class="row-check" id="check-all" onchange="toggleAll(this.checked)" title="Select all visible"></th>
-        <th>Case #</th>
-        <th>Tenant</th>
-        <th>Landlord</th>
-        <th>Address</th>
-        <th>Phone</th>
-        <th>DNC</th>
-        <th>Type</th>
-        <th class="sortable" id="th-court"  onclick="setSort('court_date')">Court Date</th>
-        <th class="sortable" id="th-filing" onclick="setSort('filing_date')">Filed</th>
-        <th style="text-align:right">Action</th>
+        <th class="col-check"><input type="checkbox" class="row-check" id="check-all" onchange="toggleAll(this.checked)" title="Select all visible"></th>
+        <th class="col-case">Case #</th>
+        <th class="col-tenant">Tenant</th>
+        <th class="col-landlord">Landlord</th>
+        <th class="col-address">Address</th>
+        <th class="col-phone">Phone</th>
+        <th class="col-dnc">DNC</th>
+        <th class="col-type">Type</th>
+        <th class="col-date sortable" id="th-court"  onclick="setSort('court_date')">Court Date</th>
+        <th class="col-date sortable" id="th-filing" onclick="setSort('filing_date')">Filed</th>
+        <th class="col-action">Action</th>
       </tr>
     </thead>
     <tbody id="leads-body">
