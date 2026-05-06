@@ -17,7 +17,7 @@ def main() -> None:
     log.info("Starting Tennessee scrape job")
 
     scrapers = [
-        ("Davidson County", DavidsonTNScraper(lookback_days=7)),
+        ("Davidson County", DavidsonTNScraper(lookback_days=2)),
     ]
 
     for label, scraper in scrapers:

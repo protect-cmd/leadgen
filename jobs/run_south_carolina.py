@@ -18,7 +18,7 @@ async def main() -> None:
     log.info("Starting South Carolina scrape job")
 
     scrapers = [
-        ("Richland County", RichlandSCScraper(lookback_days=7)),
+        ("Richland County", RichlandSCScraper(lookback_days=2)),
     ]
 
     for label, scraper in scrapers:

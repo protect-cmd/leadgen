@@ -18,7 +18,7 @@ async def main() -> None:
     log.info("Starting Georgia scrape job")
 
     scrapers = [
-        ("re:SearchGA", ReSearchGAScraper(lookback_days=7)),
+        ("re:SearchGA", ReSearchGAScraper(lookback_days=2)),
     ]
 
     for label, scraper in scrapers:
