@@ -18,6 +18,7 @@ from services import (
     geocode_service,
     ghl_service,
     notification_service,
+    rent_estimate_service,
 )
 
 log = logging.getLogger(__name__)
@@ -158,6 +159,48 @@ async def _classify_and_store(filing: Filing, contact: EnrichedContact | None = 
     return outcome.lead_bucket
 
 
+def _should_precheck_rent(filing: Filing) -> bool:
+    property_type = (filing.property_type_hint or "").strip().lower()
+    return (
+        rent_estimate_service.is_enabled()
+        and filing.claim_amount is None
+        and property_type == "residential"
+    )
+
+
+async def _apply_rent_precheck(filing: Filing) -> bool:
+    if not _should_precheck_rent(filing):
+        return False
+
+    estimated_rent = await rent_estimate_service.estimate_rent(filing)
+    if estimated_rent is None:
+        return False
+
+    outcome = classify_lead(
+        state=filing.state,
+        property_address=filing.property_address,
+        filing_date=filing.filing_date,
+        property_type=filing.property_type_hint,
+        estimated_rent=estimated_rent,
+    )
+    await dedup_service.update_classification(filing.case_number, outcome)
+
+    if outcome.lead_bucket == "discarded":
+        log.info(
+            "%s discarded by rent precheck before BatchData: estimated_rent=%.2f",
+            filing.case_number,
+            estimated_rent,
+        )
+        return True
+
+    log.info(
+        "%s passed rent precheck before BatchData: estimated_rent=%.2f",
+        filing.case_number,
+        estimated_rent,
+    )
+    return False
+
+
 async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
     started_at = datetime.now(timezone.utc)
     log.info(f"Runner received {len(filings)} filings")
@@ -198,6 +241,10 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         lead_bucket = await _classify_and_store(filing)
         if lead_bucket == "discarded":
             log.info(f"{filing.case_number} discarded before enrichment")
+            m["address_skipped"] += 1
+            continue
+
+        if await _apply_rent_precheck(filing):
             m["address_skipped"] += 1
             continue
 
