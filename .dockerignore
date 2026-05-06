@@ -1,0 +1,9 @@
+.env
+.git
+.pytest_cache
+.firecrawl
+__pycache__
+*.pyc
+debug_*.png
+scratch_*.py
+batchdata_response.json
