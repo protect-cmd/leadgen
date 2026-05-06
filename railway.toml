@@ -2,6 +2,9 @@
 schedule = "0 13 * * *"
 command = "python jobs/run_texas.py"
 
+[deploy]
+startCommand = "sh scripts/start_dashboard.sh"
+
 # Fixed 13:00 UTC = 6 AM PDT.
 # Add each state after Texas is verified with the shared qualification pipeline:
 # [[cron]]
