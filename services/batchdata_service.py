@@ -23,6 +23,12 @@ class PhoneSelection:
     dnc_source: str | None = None
 
 
+@dataclass(frozen=True)
+class PropertyInfo:
+    property_type: str | None = None
+    secondary_address: str | None = None
+
+
 def _dnc_status(phone: dict) -> str:
     if "dnc" not in phone or phone.get("dnc") is None:
         return "unknown"
@@ -104,7 +110,64 @@ def _best_email(email_list: list) -> str | None:
     return first.get("email") if isinstance(first, dict) else first
 
 
-async def enrich(filing: Filing) -> EnrichedContact:
+def _property_info_from_property(prop: dict) -> PropertyInfo:
+    property_type = None
+    cat = prop.get("propertyTypeCategory", "").lower()
+    if "commercial" in cat:
+        property_type = "commercial"
+    elif "residential" in cat:
+        property_type = "residential"
+
+    secondary_address = None
+    mailing = prop.get("owner", {}).get("mailingAddress", {})
+    if mailing.get("street"):
+        secondary_address = (
+            f"{mailing['street']}, "
+            f"{mailing.get('city', '')}, "
+            f"{mailing.get('state', '')} {mailing.get('zip', '')}"
+        ).strip(", ")
+
+    return PropertyInfo(property_type=property_type, secondary_address=secondary_address)
+
+
+async def lookup_property_info(filing: Filing) -> PropertyInfo:
+    addr = _split_address(filing.property_address)
+    headers = _headers()
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(
+            f"{BASE}{LOOKUP_EP}",
+            json={"requests": [{"address": addr}]},
+            headers=headers,
+        )
+    if r.status_code != 200:
+        log.warning(f"Property lookup {r.status_code} for {filing.case_number}: {r.text[:200]}")
+        return PropertyInfo()
+
+    properties = r.json().get("results", {}).get("properties", [])
+    if not properties:
+        return PropertyInfo()
+    return _property_info_from_property(properties[0])
+
+
+def _apply_property_info(
+    property_type: str | None,
+    secondary_address: str | None,
+    property_info: PropertyInfo | None,
+) -> tuple[str | None, str | None]:
+    if property_info is None:
+        return property_type, secondary_address
+    return (
+        property_type or property_info.property_type,
+        secondary_address or property_info.secondary_address,
+    )
+
+
+async def enrich(
+    filing: Filing,
+    property_info: PropertyInfo | None = None,
+    lookup_property_if_missing: bool = True,
+) -> EnrichedContact:
     """EC track — skip-traces the property to find the landlord/owner."""
     addr = _split_address(filing.property_address)
     headers = _headers()
@@ -136,38 +199,13 @@ async def enrich(filing: Filing) -> EnrichedContact:
         else:
             log.warning(f"Skip-trace {r.status_code} for {filing.case_number}: {r.text[:200]}")
 
-        # Property lookup: only needed when the scraper didn't supply type/rent
-        if property_type is None or estimated_rent is None:
-            r = await client.post(
-                f"{BASE}{LOOKUP_EP}",
-                json={"requests": [{"address": addr}]},
-                headers=headers,
-            )
-            if r.status_code == 200:
-                properties = r.json().get("results", {}).get("properties", [])
-                if properties:
-                    prop = properties[0]
-
-                    if property_type is None:
-                        cat = prop.get("propertyTypeCategory", "").lower()
-                        if "commercial" in cat:
-                            property_type = "commercial"
-                        elif "residential" in cat:
-                            property_type = "residential"
-
-                    # Owner mailing address (where landlord receives mail)
-                    mailing = prop.get("owner", {}).get("mailingAddress", {})
-                    if mailing.get("street"):
-                        secondary_address = (
-                            f"{mailing['street']}, "
-                            f"{mailing.get('city', '')}, "
-                            f"{mailing.get('state', '')} {mailing.get('zip', '')}"
-                        ).strip(", ")
-
-                    # BatchData has no rent estimate; estimated_rent stays None
-                    # for counties that don't provide claim_amount
-            else:
-                log.warning(f"Property lookup {r.status_code} for {filing.case_number}: {r.text[:200]}")
+    if property_info is None and lookup_property_if_missing and property_type is None:
+        property_info = await lookup_property_info(filing)
+    property_type, secondary_address = _apply_property_info(
+        property_type,
+        secondary_address,
+        property_info,
+    )
 
     log.info(
         f"BatchData enriched {filing.case_number}: "
@@ -190,7 +228,11 @@ async def enrich(filing: Filing) -> EnrichedContact:
     )
 
 
-async def enrich_tenant(filing: Filing) -> EnrichedContact:
+async def enrich_tenant(
+    filing: Filing,
+    property_info: PropertyInfo | None = None,
+    lookup_property_if_missing: bool = True,
+) -> EnrichedContact:
     """NG track — skip-traces the tenant by name at the property address."""
     addr = _split_address(filing.property_address)
     headers = _headers()
@@ -234,28 +276,13 @@ async def enrich_tenant(filing: Filing) -> EnrichedContact:
                 f"{r.text[:200]}"
             )
 
-        # Reuse property lookup for type/rent — same property either way
-        if property_type is None or estimated_rent is None:
-            r = await client.post(
-                f"{BASE}{LOOKUP_EP}",
-                json={"requests": [{"address": addr}]},
-                headers=headers,
-            )
-            if r.status_code == 200:
-                properties = r.json().get("results", {}).get("properties", [])
-                if properties:
-                    prop = properties[0]
-                    if property_type is None:
-                        cat = prop.get("propertyTypeCategory", "").lower()
-                        if "commercial" in cat:
-                            property_type = "commercial"
-                        elif "residential" in cat:
-                            property_type = "residential"
-            else:
-                log.warning(
-                    f"Property lookup {r.status_code} for {filing.case_number}: "
-                    f"{r.text[:200]}"
-                )
+    if property_info is None and lookup_property_if_missing and property_type is None:
+        property_info = await lookup_property_info(filing)
+    property_type, _ = _apply_property_info(
+        property_type,
+        None,
+        property_info,
+    )
 
     log.info(
         f"BatchData (tenant) enriched {filing.case_number}: "

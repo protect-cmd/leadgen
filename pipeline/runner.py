@@ -190,16 +190,34 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
             log.info(f"{filing.case_number} NG skipped: tenant looks like business")
 
         try:
+            property_info = None
+            property_lookup_calls = 0
+            if filing.property_type_hint is None:
+                property_info = await batchdata_service.lookup_property_info(filing)
+                property_lookup_calls = 1
+
             if enrich_ng:
                 ec_contact, ng_contact = await asyncio.gather(
-                    batchdata_service.enrich(filing),
-                    batchdata_service.enrich_tenant(filing),
+                    batchdata_service.enrich(
+                        filing,
+                        property_info=property_info,
+                        lookup_property_if_missing=False,
+                    ),
+                    batchdata_service.enrich_tenant(
+                        filing,
+                        property_info=property_info,
+                        lookup_property_if_missing=False,
+                    ),
                 )
-                m["batchdata_calls"] += 2
+                m["batchdata_calls"] += property_lookup_calls + 2
             else:
-                ec_contact = await batchdata_service.enrich(filing)
+                ec_contact = await batchdata_service.enrich(
+                    filing,
+                    property_info=property_info,
+                    lookup_property_if_missing=False,
+                )
                 ng_contact = None
-                m["batchdata_calls"] += 1
+                m["batchdata_calls"] += property_lookup_calls + 1
         except Exception as e:
             log.warning(f"Enrichment failed for {filing.case_number}: {e}")
             continue
