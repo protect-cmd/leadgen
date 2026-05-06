@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 
 from models.filing import Filing
 from scrapers.base_scraper import BaseScraper
+from scrapers.dates import court_today
 
 log = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ LOGIN_URL = "https://researchga.tylerhost.net/CourtRecordsSearch/ui/login"
 CASE_DETAIL_BASE = "https://researchga.tylerhost.net/CourtRecordsSearch/ui/case"
 
 STATE = "GA"
+COURT_TIMEZONE = "America/New_York"
 
 # Posted from browser context to reuse session cookies (auth required)
 _JS_SEARCH = """
@@ -71,7 +73,7 @@ class ReSearchGAScraper(BaseScraper):
         page = await self._launch_browser()
         filings: list[Filing] = []
 
-        today = date.today()
+        today = court_today(COURT_TIMEZONE)
         cutoff = today - timedelta(days=self.lookback_days)
 
         try:
@@ -230,7 +232,7 @@ class ReSearchGAScraper(BaseScraper):
         jurisdiction = hit.get("jurisdiction", "")
         county = jurisdiction.split(" ")[0] if jurisdiction else "Clayton"
 
-        filing_date = self._parse_date_str(hit.get("dateFiled", "")) or date.today()
+        filing_date = self._parse_date_str(hit.get("dateFiled", "")) or court_today(COURT_TIMEZONE)
 
         return Filing(
             case_number=case_number,

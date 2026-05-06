@@ -11,6 +11,7 @@ from playwright.async_api import Download
 
 from models.filing import Filing
 from scrapers.base_scraper import BaseScraper
+from scrapers.dates import court_today
 
 log = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ SOURCE_URL = PORTAL_URL
 
 STATE = "TX"
 COUNTY = "Harris"
+COURT_TIMEZONE = "America/Chicago"
 
 # ---------------------------------------------------------------------------
 # Confirmed form selectors (verified 2026-05-01 via scratch_harris_discover.py)
@@ -80,7 +82,7 @@ class HarrisCountyScraper(BaseScraper):
         page = await self._launch_browser()
         filings: list[Filing] = []
 
-        today = date.today()
+        today = court_today(COURT_TIMEZONE)
         start = today - timedelta(days=self.lookback_days)
         start_str = start.strftime("%m/%d/%Y")
         end_str = today.strftime("%m/%d/%Y")

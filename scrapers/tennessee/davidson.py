@@ -9,11 +9,13 @@ import pdfplumber
 import requests
 
 from models.filing import Filing
+from scrapers.dates import court_today
 
 log = logging.getLogger(__name__)
 
 STATE = "TN"
 COUNTY = "Davidson"
+COURT_TIMEZONE = "America/Chicago"
 
 _API_URL = "https://caselink.nashville.gov/cgi-bin/webshell.asp"
 _PDF_BASE = "https://caselink.nashville.gov"
@@ -47,7 +49,7 @@ class DavidsonTNScraper:
 
     def scrape(self) -> list[Filing]:
         self.last_error = None
-        today = date.today()
+        today = court_today(COURT_TIMEZONE)
         cutoff = today - timedelta(days=self.lookback_days)
 
         try:

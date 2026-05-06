@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 
 from models.filing import Filing
 from scrapers.base_scraper import BaseScraper
+from scrapers.dates import court_today
 
 log = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ CASE_DETAIL_URL = "https://public.courts.in.gov/mycase/Case/CaseSummary"
 STATE = "IN"
 COUNTY = "Marion"
 MARION_COUNTY_CODE = "49"
+COURT_TIMEZONE = "America/Indiana/Indianapolis"
 
 # Iterate A-Z + 0-9 to cover all party last names (incl. corporate names)
 _PREFIXES = list("abcdefghijklmnopqrstuvwxyz0123456789")
@@ -77,7 +79,7 @@ class MarionCountyScraper(BaseScraper):
         page = await self._launch_browser()
         filings: list[Filing] = []
 
-        today = date.today()
+        today = court_today(COURT_TIMEZONE)
         start = today - timedelta(days=self.lookback_days)
         start_str = start.strftime("%m/%d/%Y")
         end_str = today.strftime("%m/%d/%Y")
@@ -175,7 +177,7 @@ class MarionCountyScraper(BaseScraper):
         plaintiff, defendant, def_address = self._parse_parties(parties, style)
 
         court_date = self._first_event_date(events)
-        filing_date = self._parse_date(file_date_raw) if file_date_raw else date.today()
+        filing_date = self._parse_date(file_date_raw) if file_date_raw else court_today(COURT_TIMEZONE)
 
         if not defendant:
             log.warning(f"No defendant found for {case_number}")
