@@ -32,6 +32,30 @@ def _contact(dnc_status: str) -> EnrichedContact:
     )
 
 
+def _ng_spanish_contact() -> EnrichedContact:
+    filing = Filing(
+        case_number="TEST-SPANISH-TAG",
+        tenant_name="Maria Garcia",
+        property_address="123 Main St, Houston, TX 77002",
+        landlord_name="Grant Owner",
+        filing_date=date(2026, 5, 6),
+        state="TX",
+        county="Harris",
+        notice_type="Eviction",
+        source_url="https://example.test",
+    )
+    return EnrichedContact(
+        filing=filing,
+        track="ng",
+        phone="+12135550100",
+        estimated_rent=1800,
+        property_type="residential",
+        dnc_status="clear",
+        dnc_source="test",
+        language_hint="spanish_likely",
+    )
+
+
 @pytest.mark.asyncio
 async def test_process_track_blocks_bland_when_dnc_not_clear(monkeypatch):
     monkeypatch.setattr(runner, "_AUTO_BLAND_CALLS_ENABLED", True)
@@ -73,6 +97,26 @@ async def test_process_track_triggers_bland_when_dnc_clear(monkeypatch):
 
     assert created is True
     assert statuses == [("TEST-DNC-clear", "ec", "triggered", "call-123")]
+
+
+@pytest.mark.asyncio
+async def test_process_track_adds_spanish_likely_tag_to_ng_contacts(monkeypatch):
+    captured_tags: list[str] = []
+
+    async def create_contact(contact: EnrichedContact, tags: list[str], pipeline_stage_id: str):
+        captured_tags.extend(tags)
+        return "ghl-123"
+
+    monkeypatch.setattr(runner, "_AUTO_BLAND_CALLS_ENABLED", False)
+    monkeypatch.setattr(runner.ghl_service, "create_contact", create_contact)
+    monkeypatch.setattr(runner.dedup_service, "update_ghl_id", _async_none)
+    monkeypatch.setattr(runner.dedup_service, "set_bland_status", _async_none)
+
+    created = await runner._process_track(_ng_spanish_contact())
+
+    assert created is True
+    assert "NG-New-Filing" in captured_tags
+    assert "Spanish-Likely" in captured_tags
 
 
 def _async_return(value):

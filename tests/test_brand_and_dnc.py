@@ -48,6 +48,32 @@ def test_bland_scripts_use_new_brand_names_only():
     assert "Nobles and Greyson" not in combined
 
 
+def test_bland_renders_spanish_vdg_script_for_spanish_likely_contacts():
+    script = bland_service.render_voicemail_script(
+        EnrichedContact(
+            filing=Filing(
+                case_number="TEST-SPANISH-SCRIPT",
+                tenant_name="Maria Garcia",
+                property_address="123 Main St, Houston, TX 77002",
+                landlord_name="Grant Owner",
+                filing_date=date(2026, 5, 6),
+                state="TX",
+                county="Harris",
+                notice_type="Eviction",
+                source_url="https://example.test",
+            ),
+            track="ng",
+            phone="+12135550100",
+            dnc_status="clear",
+            language_hint="spanish_likely",
+        )
+    )
+
+    assert "Hola, este mensaje es para Maria." in script
+    assert "Vantage Defense Group" in script
+    assert "consulta es completamente gratuita" in script
+
+
 def test_batchdata_phone_selection_preserves_clear_dnc_status():
     result = batchdata_service._best_phone_result(
         [
@@ -112,3 +138,15 @@ def test_enrichment_payload_includes_dnc_metadata():
     assert payload["dnc_status"] == "clear"
     assert payload["dnc_source"] == "batchdata"
     assert "dnc_checked_at" in payload
+
+
+def test_enrichment_payload_includes_language_hint():
+    contact = EnrichedContact(
+        filing=_filing(),
+        phone="+12135550100",
+        language_hint="spanish_likely",
+    )
+
+    payload = dedup_service._enrichment_payload(contact)
+
+    assert payload["language_hint"] == "spanish_likely"

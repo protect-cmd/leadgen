@@ -17,6 +17,7 @@ from services import (
     dnc_service,
     geocode_service,
     ghl_service,
+    language_service,
     notification_service,
     rent_estimate_service,
 )
@@ -36,6 +37,8 @@ _BUSINESS_RE = re.compile(
     re.IGNORECASE,
 )
 
+SPANISH_LIKELY_TAG = "Spanish-Likely"
+
 
 def _is_business_name(name: str) -> bool:
     return bool(_BUSINESS_RE.search(name))
@@ -43,6 +46,12 @@ def _is_business_name(name: str) -> bool:
 
 def _is_usable_address(address: str) -> bool:
     return bool(address and address.strip().lower() not in {"unknown", ""})
+
+
+def _language_tags(contact: EnrichedContact) -> list[str]:
+    if contact.track == "ng" and contact.language_hint == language_service.SPANISH_LIKELY:
+        return [SPANISH_LIKELY_TAG]
+    return []
 
 
 async def _process_track(contact: EnrichedContact) -> bool:
@@ -91,6 +100,7 @@ async def _process_track(contact: EnrichedContact) -> bool:
     else:
         stage_id = GHL_NG_RESIDENTIAL_STAGE_ID
         tags = [outcome.tag]
+    tags.extend(_language_tags(contact))
 
     try:
         ghl_id = await ghl_service.create_contact(contact, tags, stage_id)
@@ -228,6 +238,10 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
 
         await dedup_service.insert_filing(filing)
 
+        language_hint = language_service.language_hint_for_name(filing.tenant_name)
+        if language_hint:
+            await dedup_service.update_language_hint(filing.case_number, language_hint)
+
         normalized = await geocode_service.normalize_address(filing.property_address)
         if normalized:
             log.debug(f"{filing.case_number} address normalized: {normalized}")
@@ -289,6 +303,10 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
                 error=e,
             )
             continue
+
+        ec_contact.language_hint = language_hint
+        if ng_contact is not None:
+            ng_contact.language_hint = language_hint
 
         if ec_contact.phone:
             m["phones_found"] += 1

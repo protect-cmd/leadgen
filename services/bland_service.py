@@ -13,8 +13,10 @@ BASE = "https://api.bland.ai"
 
 _EC_AGENT_ID = os.getenv("BLAND_EC_AGENT_ID", "")
 _NG_AGENT_ID = os.getenv("BLAND_NG_AGENT_ID", "")
+_NG_SPANISH_AGENT_ID = os.getenv("BLAND_NG_SPANISH_AGENT_ID", "")
 _EC_PHONE_NUMBER = os.getenv("BLAND_EC_PHONE_NUMBER", "")
 _NG_PHONE_NUMBER = os.getenv("BLAND_NG_PHONE_NUMBER", "")
+_NG_SPANISH_PHONE_NUMBER = os.getenv("BLAND_NG_SPANISH_PHONE_NUMBER", "")
 
 _EC_VOICEMAIL_SCRIPT = (
     "Hi, this message is for {first_name}. My name is Alex calling from Grant Ellis Group. "
@@ -35,6 +37,16 @@ _NG_VOICEMAIL_SCRIPT = (
     "That number again is {ng_phone}. We are here to help."
 )
 
+_NG_SPANISH_VOICEMAIL_SCRIPT = (
+    "Hola, este mensaje es para {first_name}. Le llamo de Vantage Defense Group. "
+    "Entendemos que usted pudo haber recibido papeles legales sobre su hogar en "
+    "{property_address}. Nosotros ayudamos a inquilinos a responder a estos documentos "
+    "y en la mayoria de los casos podemos ayudarle a permanecer en su hogar por cuatro "
+    "a cinco meses. La consulta es completamente gratuita y sin obligacion. Por favor "
+    "llamenos al {ng_phone} para hablar con alguien hoy. Ese numero es {ng_phone}. "
+    "Estamos aqui para ayudarle."
+)
+
 
 def _headers() -> dict[str, str]:
     key = os.environ.get("BLAND_API_KEY", "")
@@ -43,14 +55,22 @@ def _headers() -> dict[str, str]:
     return {"authorization": key, "Content-Type": "application/json"}
 
 
-def _phone_number_for_track(track: str) -> str:
-    return _EC_PHONE_NUMBER if track == "ec" else _NG_PHONE_NUMBER
+def _is_spanish_likely(contact: EnrichedContact) -> bool:
+    return contact.track == "ng" and contact.language_hint == "spanish_likely"
+
+
+def _phone_number_for_contact(contact: EnrichedContact) -> str:
+    if contact.track == "ec":
+        return _EC_PHONE_NUMBER
+    if _is_spanish_likely(contact):
+        return _NG_SPANISH_PHONE_NUMBER or _NG_PHONE_NUMBER
+    return _NG_PHONE_NUMBER
 
 
 def render_voicemail_script(contact: EnrichedContact) -> str:
     filing = contact.filing
     first_name = contact.contact_first_name
-    from_number = _phone_number_for_track(contact.track) or "[PHONE_NUMBER]"
+    from_number = _phone_number_for_contact(contact) or "[PHONE_NUMBER]"
 
     if contact.track == "ec":
         return _EC_VOICEMAIL_SCRIPT.format(
@@ -60,7 +80,8 @@ def render_voicemail_script(contact: EnrichedContact) -> str:
             ec_phone=from_number,
         )
 
-    return _NG_VOICEMAIL_SCRIPT.format(
+    script = _NG_SPANISH_VOICEMAIL_SCRIPT if _is_spanish_likely(contact) else _NG_VOICEMAIL_SCRIPT
+    return script.format(
         first_name=first_name,
         property_address=filing.property_address,
         ng_phone=from_number,
@@ -75,12 +96,18 @@ async def trigger_voicemail(contact: EnrichedContact) -> str:
     filing = contact.filing
     is_ec = contact.track == "ec"
 
-    pathway_id = _EC_AGENT_ID if is_ec else _NG_AGENT_ID
-    from_number = _EC_PHONE_NUMBER if is_ec else _NG_PHONE_NUMBER
+    is_spanish = _is_spanish_likely(contact)
+    pathway_id = _EC_AGENT_ID if is_ec else (_NG_SPANISH_AGENT_ID if is_spanish else _NG_AGENT_ID)
+    from_number = _EC_PHONE_NUMBER if is_ec else (
+        _NG_SPANISH_PHONE_NUMBER if is_spanish and _NG_SPANISH_PHONE_NUMBER else _NG_PHONE_NUMBER
+    )
 
     if not pathway_id:
+        agent_var = "BLAND_EC_AGENT_ID" if is_ec else (
+            "BLAND_NG_SPANISH_AGENT_ID" if is_spanish else "BLAND_NG_AGENT_ID"
+        )
         raise RuntimeError(
-            f"{'BLAND_EC_AGENT_ID' if is_ec else 'BLAND_NG_AGENT_ID'} not set"
+            f"{agent_var} not set"
         )
     if not from_number:
         raise RuntimeError(
@@ -99,6 +126,7 @@ async def trigger_voicemail(contact: EnrichedContact) -> str:
             "county": filing.county,
             "property_address": filing.property_address,
             "ec_phone" if is_ec else "ng_phone": from_number,
+            "language_hint": contact.language_hint or "",
         },
         "voicemail": {
             "action": "leave_message",

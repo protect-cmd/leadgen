@@ -403,6 +403,8 @@
   <span class="toolbar-label">View</span>
   <button class="chip active" id="view-residential_approved" onclick="setView('residential_approved')">Residential</button>
   <button class="chip" id="view-commercial" onclick="setView('commercial')">Commercial</button>
+  <button class="chip" id="view-spanish_residential" onclick="setView('spanish_residential')">Spanish Residential</button>
+  <button class="chip" id="view-spanish_commercial" onclick="setView('spanish_commercial')">Spanish Commercial</button>
   <button class="chip" id="view-held" onclick="setView('held')">Held</button>
   <button class="chip" id="view-discarded" onclick="setView('discarded')">Discarded</button>
   <div class="toolbar-sep"></div>
@@ -478,8 +480,10 @@
   let kbIndex = -1;
   let activeView = 'residential_approved';
   const viewLabels = {
-    residential_approved: 'Residential Approved',
-    commercial: 'Commercial',
+    residential_approved: 'English Residential Approved',
+    commercial: 'Commercial High Priority',
+    spanish_residential: 'Spanish Residential Approved',
+    spanish_commercial: 'Spanish Commercial High Priority',
     held: 'Held',
     discarded: 'Discarded'
   };
@@ -495,6 +499,8 @@
       const counts = await res.json();
       document.getElementById('view-residential_approved').textContent = `Residential (${counts.residential_approved ?? 0})`;
       document.getElementById('view-commercial').textContent = `Commercial (${counts.commercial ?? 0})`;
+      document.getElementById('view-spanish_residential').textContent = `Spanish Residential (${counts.spanish_residential ?? 0})`;
+      document.getElementById('view-spanish_commercial').textContent = `Spanish Commercial (${counts.spanish_commercial ?? 0})`;
       document.getElementById('view-held').textContent = `Held (${counts.held ?? 0})`;
       document.getElementById('view-discarded').textContent = `Discarded (${counts.discarded ?? 0})`;
     } catch(e) { console.error('lead counts error', e); }
@@ -541,7 +547,7 @@
       el.classList.remove('active', 'active-green', 'active-red');
     });
     const active = document.getElementById(`view-${name}`);
-    const activeClass = name === 'discarded' ? 'active-red' : name === 'commercial' ? 'active-green' : 'active';
+    const activeClass = name === 'discarded' ? 'active-red' : (name === 'commercial' || name === 'spanish_commercial') ? 'active-green' : 'active';
     active.classList.add(activeClass);
     loadLeads();
   }
@@ -617,6 +623,7 @@
       const dncStatus = lead.dnc_status || 'unknown';
       const dncClear = dncStatus === 'clear';
       const type = lead.property_type || lead.lead_bucket || 'unknown';
+      const language = lead.language_hint === 'spanish_likely' ? 'Spanish-Likely' : '';
       const reason = lead.discard_reason || lead.qualification_notes || lead.lead_bucket || '';
       const courtDate = lead.court_date ? formatDate(lead.court_date) : '—';
       const filedDate = lead.filing_date ? formatDate(lead.filing_date) : '—';
@@ -629,7 +636,7 @@
         <td class="td-case">${esc(lead.case_number)}</td>
         <td>
           <div class="td-name">${esc(lead.tenant_name || '—')}</div>
-          <div class="td-sub">${esc(lead.county || '')}, ${esc(lead.state || '')}</div>
+          <div class="td-sub">${esc(lead.county || '')}, ${esc(lead.state || '')}${language ? ' - ' + esc(language) : ''}</div>
         </td>
         <td>
           <div class="td-name">${esc(lead.landlord_name || '—')}</div>

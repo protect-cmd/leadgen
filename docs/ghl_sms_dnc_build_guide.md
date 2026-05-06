@@ -10,10 +10,14 @@ Use Grant Ellis Group for landlord-facing outreach and Vantage Defense Group for
 |---|---|
 | Grant Ellis Group Bland voicemail copy in code | Done |
 | Vantage Defense Group Bland voicemail copy in code | Done |
+| Vantage Defense Group Spanish Bland voicemail copy in code | Done |
+| Spanish-Likely tenant surname detection in code | Done |
+| Spanish-Likely dashboard views | Done |
 | DNC metadata stored from BatchData selected phone | Done |
 | Auto Bland gate blocks non-clear DNC status | Done |
 | Dashboard approval blocks non-clear DNC status | Done |
-| GHL SMS workflows built in HighLevel | Not Done - requires GHL UI/plugin access |
+| GHL English SMS workflows built in HighLevel | Not Done - requires GHL UI/plugin access |
+| GHL Spanish SMS workflow built in HighLevel | Not Done - HighLevel connector returned 401 in Codex |
 | A2P registration submitted | Not Done - requires GHL Trust Center |
 | Instantly.ai sequence connected | Not Done - no Instantly credentials/API in this repo |
 
@@ -22,6 +26,7 @@ Use Grant Ellis Group for landlord-facing outreach and Vantage Defense Group for
 No GHL SMS or Bland-trigger workflow should fire unless all conditions are true:
 
 - Contact has the correct brand tag: `EC-New-Filing` for Grant Ellis Group, `NG-New-Filing` for Vantage Defense Group.
+- Spanish-language VDG contacts also have the `Spanish-Likely` tag.
 - Contact is not tagged `Below-Threshold`.
 - Contact has a usable phone number.
 - `DNC Cleared` is checked.
@@ -74,11 +79,36 @@ SMS 3 - Day 5, final:
 Final message from Vantage Defense Group. Your eviction response window may be closing. Call us now at {{custom_values.vdg_phone}} for a free consultation, no obligation. Reply STOP to opt out.
 ```
 
+## Vantage Defense Group Spanish SMS Sequence
+
+Trigger: 2 hours after Spanish voicemail drop, only when all are true: contact is tagged `NG-New-Filing`, contact is tagged `Spanish-Likely`, and DNC Cleared is true.
+
+SMS 1 - Day 1:
+
+```text
+Hola {{contact.first_name}}, le habla Vantage Defense Group. Le dejamos un mensaje sobre los papeles legales de su hogar en {{contact.property_address}}. Podemos ayudarle a quedarse en su hogar hasta 4 o 5 meses. Consulta gratis hoy - llame al {{custom_values.vdg_spanish_phone}} o responda SI para programar. Responda ALTO o STOP para no recibir mas mensajes.
+```
+
+SMS 2 - Day 3, if no response:
+
+```text
+Hola {{contact.first_name}} - Vantage Defense Group. Tiene una fecha limite para responder a su caso legal. Si no responde a tiempo la corte puede fallar automaticamente en su contra. Llamenos hoy al {{custom_values.vdg_spanish_phone}} - consulta gratis, sin obligacion. Responda ALTO o STOP para cancelar.
+```
+
+SMS 3 - Day 5, final:
+
+```text
+ULTIMO MENSAJE - Vantage Defense Group. Su tiempo para responder al caso legal de su hogar se esta terminando. Una vez que pase no podra presentarse en la corte. Llamenos ahora al {{custom_values.vdg_spanish_phone}} - consulta gratis. Responda ALTO o STOP para cancelar.
+```
+
 ## Required Workflow Rules
 
 - STOP reply: unsubscribe contact immediately.
+- ALTO reply: unsubscribe Spanish-language contacts immediately.
 - YES reply: create a task and notification for the correct closer.
+- SI reply: pause Spanish automation and notify Sofia immediately.
 - Any reply: pause the automated sequence and move contact to `Responded`.
+- Contacts tagged `Spanish-Likely` route to Sofia only.
 - After-hours reply: send the approved after-hours auto-reply and create an 8 AM next-day task.
 - Never share sender numbers between Grant Ellis Group and Vantage Defense Group.
 

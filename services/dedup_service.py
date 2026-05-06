@@ -50,6 +50,7 @@ def _enrichment_payload(contact: EnrichedContact) -> dict:
         "dnc_status": contact.dnc_status,
         "dnc_source": contact.dnc_source,
         "dnc_checked_at": datetime.now(timezone.utc).isoformat(),
+        "language_hint": contact.language_hint,
     }
 
 
@@ -67,6 +68,14 @@ async def update_classification(case_number: str, outcome: QualificationOutcome)
             "discard_reason": outcome.discard_reason,
             "qualification_notes": outcome.qualification_notes,
             "classified_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("case_number", case_number).execute()
+    await asyncio.to_thread(_update)
+
+
+async def update_language_hint(case_number: str, language_hint: str | None) -> None:
+    def _update() -> None:
+        _client.table("filings").update({
+            "language_hint": language_hint,
         }).eq("case_number", case_number).execute()
     await asyncio.to_thread(_update)
 
@@ -140,25 +149,33 @@ _DASHBOARD_SELECT = (
     "case_number,tenant_name,landlord_name,property_address,"
     "state,county,filing_date,court_date,phone,email,"
     "property_type,estimated_rent,property_zip,lead_bucket,"
-    "discard_reason,qualification_notes,dnc_status,dnc_source,bland_status,ghl_contact_id"
+    "discard_reason,qualification_notes,dnc_status,dnc_source,language_hint,"
+    "bland_status,ghl_contact_id"
 )
+
+
+def _filter_dashboard_query(query, view: str):
+    if view == "commercial":
+        return query.eq("lead_bucket", "commercial").or_(
+            "language_hint.is.null,language_hint.neq.spanish_likely"
+        )
+    if view == "spanish_residential":
+        return query.eq("lead_bucket", "residential_approved").eq("language_hint", "spanish_likely")
+    if view == "spanish_commercial":
+        return query.eq("lead_bucket", "commercial").eq("language_hint", "spanish_likely")
+    if view == "held":
+        return query.eq("lead_bucket", "held")
+    if view == "discarded":
+        return query.eq("lead_bucket", "discarded")
+    return query.eq("lead_bucket", "residential_approved").or_(
+        "language_hint.is.null,language_hint.neq.spanish_likely"
+    )
 
 
 async def get_dashboard_leads(view: str = "residential_approved", limit: int = 500) -> list[dict]:
     def _query() -> list[dict]:
         query = _client.table("filings").select(_DASHBOARD_SELECT)
-
-        if view == "commercial":
-            query = query.eq("lead_bucket", "commercial")
-        elif view == "held":
-            query = query.eq("lead_bucket", "held")
-        elif view == "discarded":
-            query = query.eq("lead_bucket", "discarded")
-        else:
-            query = query.or_(
-                "lead_bucket.eq.residential_approved,"
-                "and(lead_bucket.is.null,bland_status.eq.pending,ghl_contact_id.not.is.null)"
-            )
+        query = _filter_dashboard_query(query, view)
 
         result = (
             query
@@ -170,40 +187,51 @@ async def get_dashboard_leads(view: str = "residential_approved", limit: int = 5
     return await asyncio.to_thread(_query)
 
 
+def _dashboard_counts_from_rows(rows: list[dict]) -> dict:
+    counts = {
+        "residential_approved": 0,
+        "commercial": 0,
+        "held": 0,
+        "discarded": 0,
+        "spanish_residential": 0,
+        "spanish_commercial": 0,
+    }
+    for row in rows:
+        bucket = row.get("lead_bucket")
+        spanish_likely = row.get("language_hint") == "spanish_likely"
+        if bucket == "residential_approved":
+            if spanish_likely:
+                counts["spanish_residential"] += 1
+            else:
+                counts["residential_approved"] += 1
+        elif bucket == "commercial":
+            if spanish_likely:
+                counts["spanish_commercial"] += 1
+            else:
+                counts["commercial"] += 1
+        elif bucket == "held":
+            counts["held"] += 1
+        elif bucket == "discarded":
+            counts["discarded"] += 1
+        elif (
+            bucket is None
+            and row.get("bland_status") == "pending"
+            and row.get("ghl_contact_id")
+        ):
+            counts["residential_approved"] += 1
+    return counts
+
+
 async def get_dashboard_counts() -> dict:
     def _query() -> dict:
         rows = (
             _client.table("filings")
-            .select("lead_bucket,property_type,bland_status,ghl_contact_id")
+            .select("lead_bucket,property_type,language_hint,bland_status,ghl_contact_id")
             .execute()
             .data
         )
 
-        counts = {
-            "residential_approved": 0,
-            "commercial": 0,
-            "held": 0,
-            "discarded": 0,
-        }
-        for row in rows:
-            bucket = row.get("lead_bucket")
-            property_type = (row.get("property_type") or "").strip().lower()
-            if bucket == "residential_approved":
-                counts["residential_approved"] += 1
-            elif bucket == "commercial":
-                counts["commercial"] += 1
-            elif bucket == "held":
-                counts["held"] += 1
-            elif bucket == "discarded":
-                counts["discarded"] += 1
-            elif (
-                bucket is None
-                and row.get("bland_status") == "pending"
-                and row.get("ghl_contact_id")
-            ):
-                counts["residential_approved"] += 1
-
-        return counts
+        return _dashboard_counts_from_rows(rows)
     return await asyncio.to_thread(_query)
 
 

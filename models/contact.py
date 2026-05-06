@@ -14,6 +14,7 @@ class EnrichedContact:
     property_type: str | None = None  # "residential" | "commercial"
     dnc_status: str = "unknown"       # "clear" | "blocked" | "unknown"
     dnc_source: str | None = None
+    language_hint: str | None = None  # "spanish_likely" language-routing hint
 
     @property
     def contact_name(self) -> str:
