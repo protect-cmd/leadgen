@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import sys
@@ -5,6 +6,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scrapers.tennessee.davidson import DavidsonTNScraper
+from pipeline import runner
 
 logging.basicConfig(
     level=logging.INFO,
@@ -13,7 +15,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def main() -> None:
+async def main() -> None:
     log.info("Starting Tennessee scrape job")
 
     scrapers = [
@@ -23,12 +25,9 @@ def main() -> None:
     for label, scraper in scrapers:
         log.info(f"=== Tennessee / {label} ===")
         filings = scraper.scrape()
+        log.info(f"{label}: {len(filings)} filings scraped")
         if filings:
-            log.info(f"{label}: {len(filings)} filings")
-            for f in filings[:5]:
-                log.info(
-                    f"  {f.case_number} | {f.tenant_name} | {f.court_date} | {f.property_address[:40]}"
-                )
+            await runner.run(filings, state="TN", county=label)
         else:
             log.info(f"{label}: no filings found")
 
@@ -36,4 +35,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
