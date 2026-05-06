@@ -150,3 +150,17 @@ def test_enrichment_payload_includes_language_hint():
     payload = dedup_service._enrichment_payload(contact)
 
     assert payload["language_hint"] == "spanish_likely"
+
+
+def test_manual_dnc_payload_includes_audit_fields():
+    payload = dedup_service._manual_dnc_payload(
+        source="business_record",
+        notes="Reviewed public filing context",
+    )
+
+    assert payload["dnc_status"] == "clear"
+    assert payload["dnc_source"] == "manual_override:business_record"
+    assert payload["dnc_override_source"] == "business_record"
+    assert payload["dnc_override_notes"] == "Reviewed public filing context"
+    assert "dnc_checked_at" in payload
+    assert "dnc_override_at" in payload

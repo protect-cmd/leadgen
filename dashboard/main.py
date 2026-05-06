@@ -12,9 +12,11 @@ load_dotenv()
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 
 from services import bland_service, dnc_service
 from services.dedup_service import (
+    clear_dnc_status,
     get_dashboard_counts,
     get_dashboard_leads,
     get_pending_leads,
@@ -27,6 +29,11 @@ from models.contact import EnrichedContact
 app = FastAPI(title="Grant Ellis Group Lead Queue")
 
 _HTML = Path(__file__).parent / "index.html"
+
+
+class DncClearRequest(BaseModel):
+    source: str = "manual_review"
+    notes: str | None = None
 
 
 @app.get("/", response_class=FileResponse)
@@ -108,6 +115,17 @@ async def approve(case_number: str, track: str = "ec"):
 async def skip(case_number: str, track: str = "ec"):
     await set_bland_status(case_number, track, "skipped")
     return {"status": "skipped"}
+
+
+@app.post("/api/leads/{case_number}/dnc-clear")
+async def clear_dnc(case_number: str, request: DncClearRequest, track: str = "ec"):
+    await clear_dnc_status(
+        case_number,
+        track=track,
+        source=request.source,
+        notes=request.notes,
+    )
+    return {"status": "clear", "source": request.source}
 
 
 if __name__ == "__main__":

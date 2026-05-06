@@ -295,7 +295,7 @@
   /* ── ACTION BUTTONS ── */
   .actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 
-  .btn-approve, .btn-skip {
+  .btn-approve, .btn-skip, .btn-dnc {
     font-family: 'Barlow Condensed', sans-serif;
     font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
     border: none; padding: 6px 18px; cursor: pointer;
@@ -304,6 +304,8 @@
   .btn-approve { background: var(--amber); color: #0a0804; }
   .btn-approve:hover { background: var(--amber-bright); }
   .btn-approve:active { transform: scale(0.97); }
+  .btn-dnc { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+  .btn-dnc:hover { background: var(--green); color: #07110c; }
   .btn-skip { background: transparent; color: var(--text-dim); border: 1px solid var(--border-2); }
   .btn-skip:hover { color: var(--text); border-color: var(--text-dim); }
   .btn-approve:disabled, .btn-skip:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
@@ -643,6 +645,7 @@
       const phone = hasPhone ? formatPhone(lead.phone) : '—';
       const dncStatus = lead.dnc_status || 'unknown';
       const dncClear = dncStatus === 'clear';
+      const canManualClearDnc = hasPhone && !dncClear && dncStatus !== 'blocked' && activeView !== 'discarded';
       const type = lead.property_type || lead.lead_bucket || 'unknown';
       const language = lead.language_hint === 'spanish_likely' ? 'Spanish-Likely' : '';
       const reason = lead.discard_reason || lead.qualification_notes || lead.lead_bucket || '';
@@ -675,6 +678,10 @@
             ${hasPhone && dncClear && activeView !== 'discarded'
               ? `<button class="btn-approve" onclick="approve('${esc(lead.case_number)}')">APPROVE</button>`
               : `<button class="btn-approve" disabled title="${activeView === 'discarded' ? 'Discarded leads are not called' : !hasPhone ? 'No phone number' : 'DNC not clear'}">APPROVE</button>`
+            }
+            ${canManualClearDnc
+              ? `<button class="btn-skip btn-dnc" onclick="clearDnc('${esc(lead.case_number)}')">DNC CLEAR</button>`
+              : ''
             }
             ${activeView === 'discarded'
               ? `<span class="action-status skipped">NO CALL</span>`
@@ -794,6 +801,35 @@
     } catch(e) {
       el.innerHTML = `<span class="action-status error">✗ ERROR</span>`;
       toast(`Approve failed: ${e.message}`, 'error');
+    }
+  }
+
+  async function clearDnc(caseNumber) {
+    const el = document.getElementById(`actions-${caseNumber}`);
+    setActionsLoading(el);
+    const notes = window.prompt('DNC clear reason/source?', 'manual_scrub');
+    if (!notes) {
+      loadLeads();
+      return;
+    }
+    try {
+      const res = await fetch(`/api/leads/${encodeURIComponent(caseNumber)}/dnc-clear?track=ec`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: notes.trim(), notes: notes.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed');
+      const lead = allLeads.find(l => l.case_number === caseNumber);
+      if (lead) {
+        lead.dnc_status = 'clear';
+        lead.dnc_source = `manual_override:${data.source}`;
+      }
+      applyFilters();
+      toast(`DNC marked clear — ${caseNumber}`, 'success');
+    } catch(e) {
+      toast(`DNC clear failed: ${e.message}`, 'error');
+      loadLeads();
     }
   }
 

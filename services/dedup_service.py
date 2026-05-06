@@ -80,6 +80,36 @@ async def update_language_hint(case_number: str, language_hint: str | None) -> N
     await asyncio.to_thread(_update)
 
 
+def _manual_dnc_payload(source: str, notes: str | None = None) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    clean_source = (source or "manual_review").strip() or "manual_review"
+    return {
+        "dnc_status": "clear",
+        "dnc_source": f"manual_override:{clean_source}",
+        "dnc_checked_at": now,
+        "dnc_override_source": clean_source,
+        "dnc_override_notes": notes,
+        "dnc_override_at": now,
+    }
+
+
+async def clear_dnc_status(
+    case_number: str,
+    track: str = "ec",
+    source: str = "manual_review",
+    notes: str | None = None,
+) -> None:
+    payload = _manual_dnc_payload(source=source, notes=notes)
+    if track != "ec":
+        payload["ng_dnc_status"] = payload.pop("dnc_status")
+        payload["ng_dnc_source"] = payload.pop("dnc_source")
+        payload["ng_dnc_checked_at"] = payload.pop("dnc_checked_at")
+
+    def _update() -> None:
+        _client.table("filings").update(payload).eq("case_number", case_number).execute()
+    await asyncio.to_thread(_update)
+
+
 async def update_routing(case_number: str, outcome: RoutingOutcome) -> None:
     def _update() -> None:
         _client.table("filings").update({
