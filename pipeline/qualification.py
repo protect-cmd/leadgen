@@ -6,7 +6,17 @@ from datetime import date
 from decimal import Decimal
 
 
-RENT_THRESHOLD = Decimal("1800")
+DEFAULT_RENT_THRESHOLD = Decimal("1800")
+STATE_RENT_THRESHOLDS: dict[str, Decimal] = {
+    "TX": Decimal("1500"),
+    "TN": Decimal("1600"),
+    "GA": Decimal("1600"),
+    "FL": Decimal("1800"),
+    "IL": Decimal("1800"),
+    "WA": Decimal("1900"),
+    "AZ": Decimal("1500"),
+    "NV": Decimal("1600"),
+}
 FRESH_FILING_DAYS = 7
 
 APPROVED_ZIPS: dict[str, set[str]] = {
@@ -86,6 +96,10 @@ def is_approved_zip(state: str, property_zip: str | None) -> bool:
     return property_zip in APPROVED_ZIPS.get(state.upper(), set())
 
 
+def rent_threshold_for_state(state: str) -> Decimal:
+    return STATE_RENT_THRESHOLDS.get(state.upper(), DEFAULT_RENT_THRESHOLD)
+
+
 def classify_lead(
     *,
     state: str,
@@ -121,12 +135,15 @@ def classify_lead(
             qualification_notes="Commercial lead: high priority.",
         )
 
-    if estimated_rent is not None and Decimal(str(estimated_rent)) < RENT_THRESHOLD:
+    rent_threshold = rent_threshold_for_state(state)
+    threshold_label = f"${rent_threshold:,.0f}"
+
+    if estimated_rent is not None and Decimal(str(estimated_rent)) < rent_threshold:
         return QualificationOutcome(
             property_zip=property_zip,
             lead_bucket="discarded",
             discard_reason="rent_below_threshold",
-            qualification_notes="Discarded after enrichment: estimated rent is below $1,800.",
+            qualification_notes=f"Discarded after enrichment: estimated rent is below {threshold_label}.",
         )
 
     reference_date = today or date.today()
@@ -141,7 +158,7 @@ def classify_lead(
     if estimated_rent is None:
         notes = "Approved by ZIP fallback; rent estimate unavailable."
     else:
-        notes = "Approved residential lead: rent estimate is $1,800+."
+        notes = f"Approved residential lead: rent estimate is {threshold_label}+."
 
     return QualificationOutcome(
         property_zip=property_zip,

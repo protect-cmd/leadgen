@@ -68,7 +68,7 @@ class HarrisCountyScraper(BaseScraper):
 
     The extract already contains Cause of Action ("Nonpayment - Residential" /
     "Nonpayment - Commercial") and Claim Amount, so the router can make the
-    $1,800 threshold decision without a BatchData call when these fields are
+    Texas threshold decision without a BatchData call when these fields are
     present.
     """
 
@@ -117,11 +117,12 @@ class HarrisCountyScraper(BaseScraper):
                 "els => els.map(o => ({value: o.value, text: o.innerText}))",
             )
             ct_val = next(
-                (o["value"] for o in casetype_opts if o["value"] != "0"),
+                (o["value"] for o in casetype_opts if o["text"].strip().lower() == "eviction"),
                 "0",
             )
-            if ct_val != "0":
-                await page.select_option(SELECTOR_CASETYPE, value=ct_val)
+            if ct_val == "0":
+                raise RuntimeError("Eviction case type option not found")
+            await page.select_option(SELECTOR_CASETYPE, value=ct_val)
             await page.wait_for_timeout(300)
 
             # Step 5 — CSV format

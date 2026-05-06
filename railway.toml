@@ -1,8 +1,9 @@
 [[cron]]
-schedule = "0 6 * * *"
-command = "python jobs/run_california.py"
+schedule = "0 13 * * *"
+command = "python jobs/run_texas.py"
 
-# Uncomment as each county is implemented and tested:
+# Fixed 13:00 UTC = 6 AM PDT.
+# Add each state after Texas is verified with the shared qualification pipeline:
 # [[cron]]
-# schedule = "0 6 * * *"
-# command = "python jobs/run_texas.py"
+# schedule = "0 13 * * *"
+# command = "python jobs/run_tennessee.py"

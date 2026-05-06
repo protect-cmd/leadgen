@@ -1,4 +1,5 @@
 from models.contact import EnrichedContact, RoutingOutcome
+from pipeline.qualification import rent_threshold_for_state
 
 
 def route_ec(contact: EnrichedContact) -> RoutingOutcome:
@@ -6,7 +7,10 @@ def route_ec(contact: EnrichedContact) -> RoutingOutcome:
     property_type = (contact.property_type or "").strip().lower()
     if property_type in {"commercial", "retail", "office"}:
         return RoutingOutcome(action="proceed", tag="Commercial", pipeline="commercial")
-    if contact.estimated_rent is not None and contact.estimated_rent < 1800:
+    if (
+        contact.estimated_rent is not None
+        and contact.estimated_rent < rent_threshold_for_state(contact.filing.state)
+    ):
         return RoutingOutcome(action="skip", tag="Below-Threshold")
     return RoutingOutcome(action="proceed", tag="EC-New-Filing", pipeline="residential")
 

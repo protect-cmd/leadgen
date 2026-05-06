@@ -100,3 +100,27 @@ def test_classify_low_rent_residential_as_discarded_after_zip_approval():
 
     assert outcome.lead_bucket == "discarded"
     assert outcome.discard_reason == "rent_below_threshold"
+
+
+def test_classify_texas_uses_1500_rent_threshold():
+    below = classify_lead(
+        state="TX",
+        property_address="123 Main St, Houston, TX 77002",
+        filing_date=date(2026, 5, 5),
+        property_type="residential",
+        estimated_rent=1499,
+        today=date(2026, 5, 5),
+    )
+    at_threshold = classify_lead(
+        state="TX",
+        property_address="123 Main St, Houston, TX 77002",
+        filing_date=date(2026, 5, 5),
+        property_type="residential",
+        estimated_rent=1500,
+        today=date(2026, 5, 5),
+    )
+
+    assert below.lead_bucket == "discarded"
+    assert below.discard_reason == "rent_below_threshold"
+    assert at_threshold.lead_bucket == "residential_approved"
+    assert at_threshold.discard_reason is None

@@ -40,7 +40,7 @@
 | Civil radio | `input#civil` | `CV` |
 | Extract dropdown | `select#extract` | first non-zero option after CV loads |
 | Court dropdown | `select#court` | `300` = All Courts |
-| Case type dropdown | `select#casetype` | first non-zero option |
+| Case type dropdown | `select#casetype` | visible text `Eviction` |
 | Format dropdown | `select#format` | `csv` |
 | From date | `input#fdate` | MM/DD/YYYY |
 | To date | `input#tdate` | MM/DD/YYYY |

@@ -26,7 +26,7 @@ async def main() -> None:
     log.info("Starting Texas scrape job")
 
     counties = [
-        ("Harris", HarrisCountyScraper(lookback_days=3)),
+        ("Harris", HarrisCountyScraper(lookback_days=2)),
     ]
 
     for name, scraper in counties:
