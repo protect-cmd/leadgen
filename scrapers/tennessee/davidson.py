@@ -41,16 +41,19 @@ class DavidsonTNScraper:
 
     def __init__(self, lookback_days: int = 7):
         self.lookback_days = lookback_days
+        self.last_error: str | None = None
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "Mozilla/5.0"})
 
     def scrape(self) -> list[Filing]:
+        self.last_error = None
         today = date.today()
         cutoff = today - timedelta(days=self.lookback_days)
 
         try:
             docket_entries = self._fetch_docket_list()
         except Exception as e:
+            self.last_error = f"failed to fetch docket list: {e}"
             log.error(f"Davidson TN: failed to fetch docket list: {e}")
             return []
 

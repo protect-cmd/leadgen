@@ -17,6 +17,7 @@ from services import (
     dnc_service,
     geocode_service,
     ghl_service,
+    notification_service,
 )
 
 log = logging.getLogger(__name__)
@@ -73,6 +74,11 @@ async def _process_track(contact: EnrichedContact) -> bool:
                     f"GHL review failed [{contact.track.upper()}] "
                     f"{filing.case_number}: {e}"
                 )
+                await notification_service.send_job_error(
+                    job=f"{filing.state}/{filing.county}",
+                    stage=f"ghl_review_{contact.track}",
+                    error=e,
+                )
         return False
 
     if outcome.pipeline == "commercial":
@@ -91,6 +97,11 @@ async def _process_track(contact: EnrichedContact) -> bool:
         log.info(f"GHL contact created [{contact.track.upper()}]: {ghl_id}")
     except Exception as e:
         log.warning(f"GHL failed [{contact.track.upper()}] {filing.case_number}: {e}")
+        await notification_service.send_job_error(
+            job=f"{filing.state}/{filing.county}",
+            stage=f"ghl_create_{contact.track}",
+            error=e,
+        )
         return False
 
     if contact.phone:
@@ -122,6 +133,11 @@ async def _process_track(contact: EnrichedContact) -> bool:
                 log.warning(
                     f"Bland auto-call failed [{contact.track.upper()}] "
                     f"{filing.case_number}: {e}"
+                )
+                await notification_service.send_job_error(
+                    job=f"{filing.state}/{filing.county}",
+                    stage=f"bland_{contact.track}",
+                    error=e,
                 )
         else:
             await dedup_service.set_bland_status(filing.case_number, contact.track, "pending")
@@ -220,6 +236,11 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
                 m["batchdata_calls"] += property_lookup_calls + 1
         except Exception as e:
             log.warning(f"Enrichment failed for {filing.case_number}: {e}")
+            await notification_service.send_job_error(
+                job=f"{state or filing.state}/{county or filing.county}",
+                stage="batchdata_enrichment",
+                error=e,
+            )
             continue
 
         if ec_contact.phone:
@@ -251,3 +272,8 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         await dedup_service.write_run_metrics(m)
     except Exception as e:
         log.warning(f"Failed to write run metrics: {e}")
+        await notification_service.send_job_error(
+            job=f"{state}/{county}",
+            stage="write_run_metrics",
+            error=e,
+        )

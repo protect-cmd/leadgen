@@ -140,5 +140,34 @@ async def test_runner_skips_property_lookup_when_scraper_supplies_type(monkeypat
     assert "metrics:1" in calls
 
 
+@pytest.mark.asyncio
+async def test_runner_alerts_when_enrichment_fails(monkeypatch):
+    filing = _filing(property_type_hint="residential", claim_amount=None)
+    alerts: list[tuple[str, str, str]] = []
+
+    async def is_duplicate(case_number: str) -> bool:
+        return False
+
+    async def enrich(*args, **kwargs):
+        raise RuntimeError("BatchData timeout")
+
+    async def send_job_error(*, job: str, stage: str, error, priority: int = 1):
+        alerts.append((job, stage, str(error)))
+        return True
+
+    monkeypatch.setattr(runner, "_NG_ENABLED", False)
+    monkeypatch.setattr(runner.dedup_service, "is_duplicate", is_duplicate)
+    monkeypatch.setattr(runner.dedup_service, "insert_filing", _async_none)
+    monkeypatch.setattr(runner.dedup_service, "update_classification", _async_none)
+    monkeypatch.setattr(runner.dedup_service, "write_run_metrics", _async_none)
+    monkeypatch.setattr(runner.geocode_service, "normalize_address", _async_none)
+    monkeypatch.setattr(runner.batchdata_service, "enrich", enrich)
+    monkeypatch.setattr(runner.notification_service, "send_job_error", send_job_error)
+
+    await runner.run([filing], state="TX", county="Harris")
+
+    assert alerts == [("TX/Harris", "batchdata_enrichment", "BatchData timeout")]
+
+
 async def _async_none(*args, **kwargs):
     return None

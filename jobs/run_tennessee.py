@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scrapers.tennessee.davidson import DavidsonTNScraper
 from pipeline import runner
+from services import notification_service
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,6 +27,12 @@ async def main() -> None:
         log.info(f"=== Tennessee / {label} ===")
         filings = scraper.scrape()
         log.info(f"{label}: {len(filings)} filings scraped")
+        if scraper.last_error:
+            await notification_service.send_job_error(
+                job=f"Tennessee / {label}",
+                stage="scrape",
+                error=scraper.last_error,
+            )
         if filings:
             await runner.run(filings, state="TN", county=label)
         else:

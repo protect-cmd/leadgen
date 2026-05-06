@@ -21,6 +21,7 @@ This file is the repo-level operating manual for Codex and other coding agents. 
 - Phone outreach must fail closed unless DNC status is explicitly clear.
 - Treat `dnc_status = "clear"` as callable, `blocked` as blocked, and `unknown` as manual review only.
 - Bland.ai auto-calling must remain disabled unless the user explicitly asks to enable it. The env flag is `AUTO_BLAND_CALLS_ENABLED`.
+- Pushover phone alerts are optional and controlled by `PUSHOVER_ENABLED`, `PUSHOVER_APP_TOKEN`, and `PUSHOVER_USER_KEY`. Alert failures must never crash a job.
 - GHL/dashboard approval must block Bland for missing phone numbers or non-clear DNC status.
 - SMS sequences must include STOP opt-out language.
 - Do not send or trigger production outreach during local tests unless the user explicitly approves it.
