@@ -77,3 +77,40 @@ async def send_job_error(
         priority=priority,
         tags={"job": job, "stage": stage},
     )
+
+
+async def send_run_summary(
+    metrics: dict,
+    *,
+    auto_bland_enabled: bool,
+) -> bool:
+    state = str(metrics.get("state") or "").strip()
+    county = str(metrics.get("county") or "").strip()
+    job = "/".join(part for part in (state, county) if part) or "Leadgen"
+    elapsed = metrics.get("elapsed_seconds")
+    elapsed_text = f"{float(elapsed):.1f}s" if elapsed is not None else "unknown"
+    bland_text = (
+        "auto-call enabled"
+        if auto_bland_enabled
+        else "queued only (auto-call off)"
+    )
+
+    message = "\n".join(
+        [
+            f"{job} complete",
+            f"Filings: {metrics.get('filings_received', 0)}",
+            f"Duplicates: {metrics.get('duplicates_skipped', 0)}",
+            f"Discarded/skipped: {metrics.get('address_skipped', 0)}",
+            f"BatchData calls: {metrics.get('batchdata_calls', 0)}",
+            f"Phones found: {metrics.get('phones_found', 0)}",
+            f"GHL created: {metrics.get('ghl_created', 0)}",
+            f"Bland: {bland_text}",
+            f"Elapsed: {elapsed_text}",
+        ]
+    )
+
+    return await send_alert(
+        "Leadgen job complete",
+        message,
+        tags={"job": job},
+    )

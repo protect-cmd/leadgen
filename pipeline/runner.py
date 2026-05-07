@@ -342,3 +342,10 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
             stage="write_run_metrics",
             error=e,
         )
+    try:
+        await notification_service.send_run_summary(
+            m,
+            auto_bland_enabled=_AUTO_BLAND_CALLS_ENABLED,
+        )
+    except Exception as e:
+        log.warning(f"Failed to send run summary notification: {e}")

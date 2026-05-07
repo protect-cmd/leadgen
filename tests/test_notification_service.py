@@ -101,3 +101,50 @@ async def test_send_alert_returns_false_when_pushover_fails(monkeypatch):
     result = await notification_service.send_alert("Title", "Message")
 
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_send_run_summary_posts_success_details(monkeypatch):
+    payloads = []
+
+    class Response:
+        status_code = 200
+        text = "ok"
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, data):
+            payloads.append((url, data))
+            return Response()
+
+    monkeypatch.setenv("PUSHOVER_ENABLED", "true")
+    monkeypatch.setenv("PUSHOVER_APP_TOKEN", "app-token")
+    monkeypatch.setenv("PUSHOVER_USER_KEY", "user-key")
+    monkeypatch.setattr(notification_service.httpx, "AsyncClient", lambda **kwargs: Client())
+
+    result = await notification_service.send_run_summary(
+        {
+            "state": "TX",
+            "county": "Harris",
+            "filings_received": 141,
+            "duplicates_skipped": 55,
+            "address_skipped": 82,
+            "batchdata_calls": 7,
+            "phones_found": 4,
+            "ghl_created": 7,
+            "elapsed_seconds": 110.5,
+        },
+        auto_bland_enabled=False,
+    )
+
+    assert result is True
+    assert payloads[0][1]["title"] == "Leadgen job complete"
+    assert "TX/Harris complete" in payloads[0][1]["message"]
+    assert "Filings: 141" in payloads[0][1]["message"]
+    assert "BatchData calls: 7" in payloads[0][1]["message"]
+    assert "Bland: queued only (auto-call off)" in payloads[0][1]["message"]

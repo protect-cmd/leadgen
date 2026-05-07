@@ -6,6 +6,7 @@ import os
 import httpx
 
 from models.contact import EnrichedContact
+from services import notification_service
 
 log = logging.getLogger(__name__)
 
@@ -182,9 +183,17 @@ async def create_contact(
                     opp_id = opp_r.json().get("opportunity", {}).get("id", "")
                     log.info(f"GHL opportunity created: {opp_id}")
                 else:
-                    log.warning(
+                    error_msg = (
                         f"GHL opportunity creation failed {opp_r.status_code}: "
                         f"{opp_r.text[:200]}"
+                    )
+                    log.warning(
+                        error_msg
+                    )
+                    await notification_service.send_job_error(
+                        job=f"{filing.state}/{filing.county}",
+                        stage=f"ghl_opportunity_{contact.track}",
+                        error=error_msg,
                     )
             else:
                 log.warning(
