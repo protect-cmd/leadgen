@@ -16,8 +16,11 @@ API_VERSION = "2021-07-28"
 _pipeline_cache: dict[str, str] = {}
 
 
-def _headers() -> dict[str, str]:
-    key = os.environ.get("GHL_API_KEY", "")
+def _headers(track: str = "ec") -> dict[str, str]:
+    if track == "ng":
+        key = os.environ.get("GHL_API_NG_KEY") or os.environ.get("GHL_API_KEY", "")
+    else:
+        key = os.environ.get("GHL_API_KEY", "")
     if not key:
         raise RuntimeError("GHL_API_KEY not set")
     return {
@@ -73,7 +76,7 @@ async def create_contact(
     pipeline_stage_id: str,
 ) -> str:
     location_id = _location_id(contact.track)
-    headers = _headers()
+    headers = _headers(contact.track)
     filing = contact.filing
 
     first, last = _split_name(contact.contact_name)
