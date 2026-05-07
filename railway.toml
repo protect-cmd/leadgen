@@ -1,14 +1,9 @@
 [[cron]]
 schedule = "0 13 * * *"
-command = "python jobs/run_texas.py"
-
-[[cron]]
-schedule = "20 13 * * *"
-command = "python jobs/run_tennessee.py"
+command = "python jobs/run_daily.py"
 
 [deploy]
 startCommand = "sh scripts/start_dashboard.sh"
 
 # Fixed 13:00 UTC = 6 AM PDT.
-# Add each state after Texas is verified with the shared qualification pipeline:
-# Tennessee runs at 13:20 UTC = 6:20 AM PDT to avoid overlapping BatchData/GHL calls.
+# run_daily.py runs Texas first, then waits until 13:20 UTC for Tennessee.
