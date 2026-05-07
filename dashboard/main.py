@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -14,7 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from services import bland_service, dnc_service
+from services import bland_service, daily_scheduler, dnc_service
 from services.dedup_service import (
     clear_dnc_status,
     get_dashboard_counts,
@@ -26,7 +27,32 @@ from services.dedup_service import (
 from models.filing import Filing
 from models.contact import EnrichedContact
 
-app = FastAPI(title="Grant Ellis Group Lead Queue")
+_scheduler_task: asyncio.Task | None = None
+
+
+async def start_daily_scheduler() -> None:
+    global _scheduler_task
+    if daily_scheduler.is_enabled() and _scheduler_task is None:
+        _scheduler_task = asyncio.create_task(daily_scheduler.run_forever())
+
+
+async def stop_daily_scheduler() -> None:
+    global _scheduler_task
+    if _scheduler_task is not None:
+        _scheduler_task.cancel()
+        _scheduler_task = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await start_daily_scheduler()
+    try:
+        yield
+    finally:
+        await stop_daily_scheduler()
+
+
+app = FastAPI(title="Grant Ellis Group Lead Queue", lifespan=lifespan)
 
 _HTML = Path(__file__).parent / "index.html"
 

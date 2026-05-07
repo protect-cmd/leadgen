@@ -1,9 +1,6 @@
-[[cron]]
-schedule = "0 13 * * *"
-command = "python jobs/run_daily.py"
-
 [deploy]
 startCommand = "sh scripts/start_dashboard.sh"
 
-# Fixed 13:00 UTC = 6 AM PDT.
-# run_daily.py runs Texas first, then waits until 13:20 UTC for Tennessee.
+# The dashboard service starts an in-process scheduler on Railway.
+# It launches jobs/run_daily.py at 13:00 UTC; that script waits until
+# 13:20 UTC before running Tennessee.

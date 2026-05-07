@@ -84,8 +84,9 @@ Expected production flow:
 
 ## Railway And Deployment
 
-- `railway.toml` controls the active scheduled job. Changing it can switch production cron behavior.
-- Do not include unrelated `railway.toml` changes in a dashboard-only or DNC-only deploy unless the user intentionally wants the production cron changed.
+- `railway.toml` controls the dashboard service start command.
+- Railway cron config-as-code uses `deploy.cronSchedule` and runs the service start command; do not use old `[[cron]] command = ...` blocks.
+- The current daily scrape schedule is launched by the dashboard startup scheduler in `services/daily_scheduler.py`, which runs `jobs/run_daily.py` at 13:00 UTC. `jobs/run_daily.py` runs Texas first and waits until 13:20 UTC before Tennessee.
 - Railway uses the repo state pushed to GitHub, so dashboard changes must be committed and pushed to appear there.
 - Before pushing, check `git diff --stat`, `git diff`, and `git status --short` for unrelated dirty files.
 
