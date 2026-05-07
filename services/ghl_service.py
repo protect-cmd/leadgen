@@ -17,6 +17,14 @@ API_VERSION = "2021-07-28"
 _pipeline_cache: dict[str, str] = {}
 
 
+def _is_duplicate_opportunity_error(status_code: int, body: str) -> bool:
+    return (
+        status_code == 400
+        and "duplicate opportunity" in body.lower()
+        and "contact" in body.lower()
+    )
+
+
 def _headers(track: str = "ec") -> dict[str, str]:
     if track == "ng":
         key = os.environ.get("GHL_API_NG_KEY") or os.environ.get("GHL_API_KEY", "")
@@ -182,6 +190,12 @@ async def create_contact(
                 if opp_r.status_code in (200, 201):
                     opp_id = opp_r.json().get("opportunity", {}).get("id", "")
                     log.info(f"GHL opportunity created: {opp_id}")
+                elif _is_duplicate_opportunity_error(opp_r.status_code, opp_r.text):
+                    log.info(
+                        "GHL opportunity already exists for contact %s; "
+                        "treating as idempotent",
+                        contact_id,
+                    )
                 else:
                     error_msg = (
                         f"GHL opportunity creation failed {opp_r.status_code}: "

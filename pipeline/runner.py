@@ -92,7 +92,7 @@ async def _process_track(contact: EnrichedContact) -> bool:
         return False
 
     if outcome.pipeline == "commercial":
-        stage_id = GHL_NG_COMMERCIAL_STAGE_ID
+        stage_id = GHL_EC_STAGE_ID if is_ec else GHL_NG_COMMERCIAL_STAGE_ID
         tags = [outcome.tag, "High-Priority"]
     elif is_ec:
         stage_id = GHL_EC_STAGE_ID

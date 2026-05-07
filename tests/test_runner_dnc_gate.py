@@ -119,6 +119,29 @@ async def test_process_track_adds_spanish_likely_tag_to_ng_contacts(monkeypatch)
     assert "Spanish-Likely" in captured_tags
 
 
+@pytest.mark.asyncio
+async def test_process_track_uses_ec_stage_for_ec_commercial_contacts(monkeypatch):
+    captured: list[tuple[list[str], str]] = []
+    contact = _contact("clear")
+    contact.property_type = "commercial"
+
+    async def create_contact(contact: EnrichedContact, tags: list[str], pipeline_stage_id: str):
+        captured.append((tags, pipeline_stage_id))
+        return "ghl-123"
+
+    monkeypatch.setattr(runner, "GHL_EC_STAGE_ID", "ec-stage")
+    monkeypatch.setattr(runner, "GHL_NG_COMMERCIAL_STAGE_ID", "ng-commercial-stage")
+    monkeypatch.setattr(runner, "_AUTO_BLAND_CALLS_ENABLED", False)
+    monkeypatch.setattr(runner.ghl_service, "create_contact", create_contact)
+    monkeypatch.setattr(runner.dedup_service, "update_ghl_id", _async_none)
+    monkeypatch.setattr(runner.dedup_service, "set_bland_status", _async_none)
+
+    created = await runner._process_track(contact)
+
+    assert created is True
+    assert captured == [(["Commercial", "High-Priority"], "ec-stage")]
+
+
 def _async_return(value):
     async def inner(*args, **kwargs):
         return value
