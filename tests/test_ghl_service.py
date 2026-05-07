@@ -156,3 +156,13 @@ async def test_create_contact_does_not_alert_for_duplicate_opportunity(monkeypat
 
     assert contact_id == "contact-1"
     assert alerts == []
+
+
+@pytest.mark.asyncio
+async def test_create_contact_rejects_contact_without_phone_or_email():
+    contact = _contact()
+    contact.phone = None
+    contact.email = None
+
+    with pytest.raises(RuntimeError, match="phone or email"):
+        await ghl_service.create_contact(contact, ["EC-New-Filing"], "stage-1")

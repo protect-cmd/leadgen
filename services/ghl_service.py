@@ -84,6 +84,9 @@ async def create_contact(
     tags: list[str],
     pipeline_stage_id: str,
 ) -> str:
+    if not (contact.phone or contact.email):
+        raise RuntimeError("GHL contact requires phone or email from enrichment")
+
     location_id = _location_id(contact.track)
     headers = _headers(contact.track)
     filing = contact.filing

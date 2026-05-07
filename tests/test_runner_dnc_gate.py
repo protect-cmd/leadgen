@@ -142,6 +142,30 @@ async def test_process_track_uses_ec_stage_for_ec_commercial_contacts(monkeypatc
     assert captured == [(["Commercial", "High-Priority"], "ec-stage")]
 
 
+@pytest.mark.asyncio
+async def test_process_track_skips_ghl_when_contact_has_no_phone_or_email(monkeypatch):
+    contact = _ng_spanish_contact()
+    contact.phone = None
+    contact.email = None
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("GHL should not receive contacts without phone or email")
+
+    statuses: list[tuple[str, str, str]] = []
+
+    async def capture_status(case_number: str, track: str, status: str, call_id: str | None = None):
+        statuses.append((case_number, track, status))
+
+    monkeypatch.setattr(runner.ghl_service, "create_contact", fail_if_called)
+    monkeypatch.setattr(runner.dedup_service, "update_ghl_id", fail_if_called)
+    monkeypatch.setattr(runner.dedup_service, "set_bland_status", capture_status)
+
+    created = await runner._process_track(contact)
+
+    assert created is False
+    assert statuses == [("TEST-SPANISH-TAG", "ng", "missing_contact_data")]
+
+
 def _async_return(value):
     async def inner(*args, **kwargs):
         return value

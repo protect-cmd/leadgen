@@ -54,6 +54,10 @@ def _language_tags(contact: EnrichedContact) -> list[str]:
     return []
 
 
+def _has_contact_method(contact: EnrichedContact) -> bool:
+    return bool(contact.phone or contact.email)
+
+
 async def _process_track(contact: EnrichedContact) -> bool:
     """Route, push to GHL, and queue/trigger Bland for one EC or NG track."""
     filing = contact.filing
@@ -66,6 +70,18 @@ async def _process_track(contact: EnrichedContact) -> bool:
     )
 
     if outcome.action == "skip":
+        return False
+
+    if not _has_contact_method(contact):
+        await dedup_service.set_bland_status(
+            filing.case_number,
+            contact.track,
+            "missing_contact_data",
+        )
+        log.info(
+            f"{filing.case_number} [{contact.track.upper()}] skipped: "
+            "no phone or email from enrichment"
+        )
         return False
 
     if outcome.action == "flag" and is_ec:
