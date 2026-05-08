@@ -71,7 +71,7 @@ def test_bland_renders_spanish_vdg_script_for_spanish_likely_contacts():
 
     assert "Hola, este mensaje es para Maria." in script
     assert "Vantage Defense Group" in script
-    assert "consulta es completamente gratuita" in script
+    assert "consulta gratuita" in script
 
 
 def test_batchdata_phone_selection_preserves_clear_dnc_status():

@@ -19,32 +19,35 @@ _NG_PHONE_NUMBER = os.getenv("BLAND_NG_PHONE_NUMBER", "")
 _NG_SPANISH_PHONE_NUMBER = os.getenv("BLAND_NG_SPANISH_PHONE_NUMBER", "")
 
 _EC_VOICEMAIL_SCRIPT = (
-    "Hi, this message is for {first_name}. My name is Alex calling from Grant Ellis Group. "
-    "We noticed a recent unlawful detainer filing in {county} County associated with your "
-    "property at {property_address}. We specialize in preparing county-specific eviction "
-    "documents - notices, UD packages, and serving instructions - delivered in 24 hours "
-    "starting at $297. If you still need documents for your case, call us back at "
-    "{ec_phone}. Again that number is {ec_phone}. Have a great day."
+    "Hi, this message is for {first_name}. This is Alex calling from Grant Ellis Group. "
+    "We noticed a recent filing in {county} County associated with your property at "
+    "{property_address}. If you need county-specific eviction documents prepared - "
+    "notices, UD packages, or serving instructions - we deliver them in 24 hours "
+    "starting at $297. Attorney reviewed and county specific. Call us back at "
+    "{ec_phone} or visit grantellisgroup.com. That number again is {ec_phone}. "
+    "Have a great day."
 )
 
 _NG_VOICEMAIL_SCRIPT = (
-    "Hi, this message is for {first_name}. This is Alex calling from Vantage Defense Group. "
-    "We understand you may have recently received an eviction notice at {property_address}. "
-    "We help tenants respond to eviction filings and in most cases we can keep you in your "
-    "home for four to five months while your case works through the court. There is no "
-    "obligation to speak with us - we just want to make sure you know your options before "
-    "your response deadline. Please call us back at {ng_phone} for a free consultation. "
-    "That number again is {ng_phone}. We are here to help."
+    "Hi, this message is for {first_name}. This is an important call from Vantage Defense Group. "
+    "You may have recently received legal papers about your home. Do not ignore them - "
+    "you have rights and you have options. We are here to help protect you and keep you "
+    "in your home. Call us today at {ng_phone} for a free consultation. Someone is "
+    "standing by right now to help you. If you prefer to continue in Spanish - "
+    "hola {first_name}, le llama Vantage Defense Group. Usted tiene derechos. "
+    "Estamos aqui para protegerle y ayudarle a quedarse en su hogar. Llamenos al "
+    "{ng_phone}. La consulta es gratis y estamos aqui para usted ahora mismo. "
+    "Again that number is {ng_phone}. We are on your side. Call us now."
 )
 
 _NG_SPANISH_VOICEMAIL_SCRIPT = (
-    "Hola, este mensaje es para {first_name}. Le llamo de Vantage Defense Group. "
-    "Entendemos que usted pudo haber recibido papeles legales sobre su hogar en "
-    "{property_address}. Nosotros ayudamos a inquilinos a responder a estos documentos "
-    "y en la mayoria de los casos podemos ayudarle a permanecer en su hogar por cuatro "
-    "a cinco meses. La consulta es completamente gratuita y sin obligacion. Por favor "
-    "llamenos al {ng_phone} para hablar con alguien hoy. Ese numero es {ng_phone}. "
-    "Estamos aqui para ayudarle."
+    "Hola, este mensaje es para {first_name}. Le llama Vantage Defense Group. "
+    "Es posible que usted haya recibido papeles legales sobre su hogar. "
+    "No los ignore - usted tiene derechos y tiene opciones. "
+    "Estamos aqui para protegerle y ayudarle a quedarse en su hogar. "
+    "Llamenos hoy al {ng_phone} para una consulta gratuita. "
+    "Alguien esta disponible ahora mismo para ayudarle. "
+    "Ese numero es {ng_phone}. Estamos de su lado. Llamenos ahora."
 )
 
 
@@ -83,7 +86,6 @@ def render_voicemail_script(contact: EnrichedContact) -> str:
     script = _NG_SPANISH_VOICEMAIL_SCRIPT if _is_spanish_likely(contact) else _NG_VOICEMAIL_SCRIPT
     return script.format(
         first_name=first_name,
-        property_address=filing.property_address,
         ng_phone=from_number,
     )
 
