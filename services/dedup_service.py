@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import logging
 import os
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -10,6 +11,8 @@ from pipeline.qualification import QualificationOutcome
 
 load_dotenv()
 
+log = logging.getLogger(__name__)
+
 _client: Client = create_client(
     os.environ["SUPABASE_URL"],
     os.environ["SUPABASE_SERVICE_ROLE_KEY"],
@@ -19,9 +22,10 @@ _client: Client = create_client(
 def _execute_optional_lead_contact_write(query) -> None:
     try:
         query.execute()
-    except Exception:
+    except Exception as exc:
         # Keep legacy filing writes alive while the lead_contacts migration is
         # being applied across environments.
+        log.warning("lead_contacts write suppressed: %s", exc)
         return
 
 
