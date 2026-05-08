@@ -77,6 +77,56 @@ def _split_address(address: str) -> dict[str, str]:
     }
 
 
+_COMPANY_TERMS = {
+    "llc", "inc", "corp", "lp", "llp", "trust", "properties", "apartments",
+    "management", "holdings", "group", "realty", "enterprises",
+}
+
+_NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv"}
+
+_STRIP_CHARS = str.maketrans("", "", ".,'-")
+
+
+def _tenant_name_matches(expected: str, returned: str | None) -> bool:
+    """Return True if *returned* is a plausible person name that matches *expected*.
+
+    Rules:
+    - Rejects None / empty strings.
+    - Rejects names containing company/legal-entity terms (LLC, Inc, …).
+    - Case-insensitive; strips punctuation (.,'-).
+    - Ignores generational suffixes (Jr, Sr, II, III, IV).
+    - First + last name match is sufficient; middle name is not required.
+    """
+    if not returned or not returned.strip():
+        return False
+
+    def _normalise(name: str) -> list[str]:
+        tokens = name.strip().lower().translate(_STRIP_CHARS).split()
+        return [t for t in tokens if t not in _NAME_SUFFIXES]
+
+    ret_tokens = _normalise(returned)
+
+    # Reject if any company/legal-entity term appears in the returned name.
+    if any(t in _COMPANY_TERMS for t in ret_tokens):
+        return False
+
+    exp_tokens = _normalise(expected)
+    if not exp_tokens or not ret_tokens:
+        return False
+
+    # Full token-set match (order-independent).
+    if set(exp_tokens) == set(ret_tokens):
+        return True
+
+    # First + last from expected are both present in returned.
+    first = exp_tokens[0]
+    last = exp_tokens[-1] if len(exp_tokens) > 1 else None
+    if last and first in ret_tokens and last in ret_tokens:
+        return True
+
+    return False
+
+
 def _best_phone_result(phone_list: list[dict]) -> PhoneSelection:
     if not phone_list:
         return PhoneSelection(None)
@@ -265,11 +315,19 @@ async def enrich_tenant(
             persons = r.json().get("results", {}).get("persons", [])
             if persons:
                 p = persons[0]
-                phone_selection = _best_phone_result(p.get("phoneNumbers", []))
-                phone = phone_selection.number
-                dnc_status = phone_selection.dnc_status
-                dnc_source = phone_selection.dnc_source
-                email = _best_email(p.get("emails", []))
+                returned_name = p.get("fullName") or p.get("name") or ""
+                if _tenant_name_matches(filing.tenant_name, returned_name):
+                    phone_selection = _best_phone_result(p.get("phoneNumbers", []))
+                    phone = phone_selection.number
+                    dnc_status = phone_selection.dnc_status
+                    dnc_source = phone_selection.dnc_source
+                    email = _best_email(p.get("emails", []))
+                else:
+                    log.info(
+                        f"Tenant name mismatch for {filing.case_number}: "
+                        f"expected={filing.tenant_name!r}, got={returned_name!r} "
+                        f"→ tenant_not_matched"
+                    )
         else:
             log.warning(
                 f"Tenant skip-trace {r.status_code} for {filing.case_number}: "
@@ -288,7 +346,8 @@ async def enrich_tenant(
         f"BatchData (tenant) enriched {filing.case_number}: "
         f"phone={'yes' if phone else 'no'}, "
         f"email={'yes' if email else 'no'}, "
-        f"property_type={property_type}"
+        f"property_type={property_type}, "
+        f"name_matched={'yes' if phone else 'no'}"
     )
 
     return EnrichedContact(
