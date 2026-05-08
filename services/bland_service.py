@@ -28,7 +28,7 @@ _EC_VOICEMAIL_SCRIPT = (
 )
 
 _NG_VOICEMAIL_SCRIPT = (
-    "Hi, this message is for {first_name}. My name is calling from Vantage Defense Group. "
+    "Hi, this message is for {first_name}. This is Alex calling from Vantage Defense Group. "
     "We understand you may have recently received an eviction notice at {property_address}. "
     "We help tenants respond to eviction filings and in most cases we can keep you in your "
     "home for four to five months while your case works through the court. There is no "
