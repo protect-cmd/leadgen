@@ -16,6 +16,15 @@ _client: Client = create_client(
 )
 
 
+def _execute_optional_lead_contact_write(query) -> None:
+    try:
+        query.execute()
+    except Exception:
+        # Keep legacy filing writes alive while the lead_contacts migration is
+        # being applied across environments.
+        return
+
+
 async def is_duplicate(case_number: str) -> bool:
     def _query() -> bool:
         result = _client.table("filings").select("case_number").eq("case_number", case_number).execute()
@@ -54,10 +63,57 @@ def _enrichment_payload(contact: EnrichedContact) -> dict:
     }
 
 
-async def update_enrichment(contact: EnrichedContact) -> None:
+def _lead_contact_payload(contact: EnrichedContact) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        "case_number": contact.filing.case_number,
+        "track": contact.track,
+        "contact_name": contact.contact_name,
+        "phone": contact.phone,
+        "email": contact.email,
+        "secondary_address": contact.secondary_address,
+        "estimated_rent": contact.estimated_rent,
+        "property_type": contact.property_type,
+        "dnc_status": contact.dnc_status,
+        "dnc_source": contact.dnc_source,
+        "dnc_checked_at": now,
+        "language_hint": contact.language_hint,
+        "enrichment_source": "batchdata",
+        "updated_at": now,
+    }
+
+
+def _ng_legacy_enrichment_payload(contact: EnrichedContact) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        "ng_dnc_status": contact.dnc_status,
+        "ng_dnc_source": contact.dnc_source,
+        "ng_dnc_checked_at": now,
+        "language_hint": contact.language_hint,
+    }
+
+
+async def upsert_contact_enrichment(contact: EnrichedContact) -> None:
     def _update() -> None:
-        _client.table("filings").update(_enrichment_payload(contact)).eq("case_number", contact.filing.case_number).execute()
+        _execute_optional_lead_contact_write(
+            _client.table("lead_contacts").upsert(
+                _lead_contact_payload(contact),
+                on_conflict="case_number,track",
+            )
+        )
+        if contact.track == "ec":
+            legacy_payload = _enrichment_payload(contact)
+        else:
+            legacy_payload = _ng_legacy_enrichment_payload(contact)
+        _client.table("filings").update(legacy_payload).eq(
+            "case_number",
+            contact.filing.case_number,
+        ).execute()
     await asyncio.to_thread(_update)
+
+
+async def update_enrichment(contact: EnrichedContact) -> None:
+    await upsert_contact_enrichment(contact)
 
 
 async def update_classification(case_number: str, outcome: QualificationOutcome) -> None:
@@ -100,12 +156,24 @@ async def clear_dnc_status(
     notes: str | None = None,
 ) -> None:
     payload = _manual_dnc_payload(source=source, notes=notes)
+    lead_payload = {
+        "dnc_status": "clear",
+        "dnc_source": payload["dnc_source"],
+        "dnc_checked_at": payload["dnc_checked_at"],
+        "updated_at": payload["dnc_checked_at"],
+    }
     if track != "ec":
         payload["ng_dnc_status"] = payload.pop("dnc_status")
         payload["ng_dnc_source"] = payload.pop("dnc_source")
         payload["ng_dnc_checked_at"] = payload.pop("dnc_checked_at")
 
     def _update() -> None:
+        _execute_optional_lead_contact_write(
+            _client.table("lead_contacts").update(lead_payload).eq(
+                "case_number",
+                case_number,
+            ).eq("track", track)
+        )
         _client.table("filings").update(payload).eq("case_number", case_number).execute()
     await asyncio.to_thread(_update)
 
@@ -119,13 +187,22 @@ async def update_routing(case_number: str, outcome: RoutingOutcome) -> None:
     await asyncio.to_thread(_update)
 
 
-async def update_ghl_id(case_number: str, ghl_contact_id: str, track: str = "ec") -> None:
+async def update_contact_ghl_id(case_number: str, ghl_contact_id: str, track: str = "ec") -> None:
     column = "ghl_contact_id" if track == "ec" else "ng_ghl_contact_id"
     def _update() -> None:
+        _execute_optional_lead_contact_write(
+            _client.table("lead_contacts").update({
+                "ghl_contact_id": ghl_contact_id,
+            }).eq("case_number", case_number).eq("track", track)
+        )
         _client.table("filings").update({
             column: ghl_contact_id,
         }).eq("case_number", case_number).execute()
     await asyncio.to_thread(_update)
+
+
+async def update_ghl_id(case_number: str, ghl_contact_id: str, track: str = "ec") -> None:
+    await update_contact_ghl_id(case_number, ghl_contact_id, track)
 
 
 async def mark_bland_triggered(case_number: str, track: str = "ec") -> None:
@@ -148,30 +225,114 @@ async def set_bland_status(case_number: str, track: str, status: str, call_id: s
     col_call_id = "bland_call_id" if track == "ec" else "ng_bland_call_id"
     def _update() -> None:
         payload: dict = {col_status: status}
+        lead_payload: dict = {"bland_status": status}
         if call_id:
             payload[col_call_id] = call_id
+            lead_payload["bland_call_id"] = call_id
+        _execute_optional_lead_contact_write(
+            _client.table("lead_contacts").update(lead_payload).eq(
+                "case_number",
+                case_number,
+            ).eq("track", track)
+        )
         _client.table("filings").update(payload).eq("case_number", case_number).execute()
     await asyncio.to_thread(_update)
 
 
-async def get_pending_leads(track: str = "ec", limit: int = 200) -> list[dict]:
+_PENDING_FILING_SELECT = (
+    "case_number,tenant_name,landlord_name,property_address,"
+    "state,county,filing_date,court_date,phone,email,"
+    "property_type,dnc_status,dnc_source"
+)
+
+
+def _overlay_contact_rows(
+    filing_rows: list[dict],
+    contact_rows: list[dict],
+    clear_missing_contact: bool = False,
+) -> list[dict]:
+    contacts_by_case = {row["case_number"]: row for row in contact_rows}
+    merged: list[dict] = []
+    for filing_row in filing_rows:
+        row = dict(filing_row)
+        contact_row = contacts_by_case.get(row["case_number"])
+        if contact_row:
+            row["phone"] = contact_row.get("phone")
+            row["email"] = contact_row.get("email")
+            row["property_type"] = contact_row.get("property_type") or row.get("property_type")
+            row["estimated_rent"] = contact_row.get("estimated_rent") or row.get("estimated_rent")
+            row["dnc_status"] = contact_row.get("dnc_status", "unknown")
+            row["dnc_source"] = contact_row.get("dnc_source")
+            row["language_hint"] = contact_row.get("language_hint") or row.get("language_hint")
+            row["bland_status"] = contact_row.get("bland_status")
+            row["ghl_contact_id"] = contact_row.get("ghl_contact_id")
+        elif clear_missing_contact:
+            row["phone"] = None
+            row["email"] = None
+            row["dnc_status"] = "unknown"
+            row["dnc_source"] = None
+            row["bland_status"] = None
+            row["ghl_contact_id"] = None
+        merged.append(row)
+    return merged
+
+
+def _get_pending_leads_from_contacts(track: str, limit: int) -> list[dict]:
+    contacts = (
+        _client.table("lead_contacts")
+        .select(
+            "case_number,track,phone,email,property_type,estimated_rent,"
+            "dnc_status,dnc_source,language_hint,bland_status,ghl_contact_id"
+        )
+        .eq("track", track)
+        .eq("bland_status", "pending")
+        .not_.is_("ghl_contact_id", "null")
+        .limit(limit)
+        .execute()
+        .data
+    )
+    case_numbers = [row["case_number"] for row in contacts]
+    if not case_numbers:
+        return []
+
+    filings = (
+        _client.table("filings")
+        .select(_PENDING_FILING_SELECT)
+        .in_("case_number", case_numbers)
+        .order("filing_date", desc=True)
+        .execute()
+        .data
+    )
+    return _overlay_contact_rows(filings, contacts)
+
+
+def _get_pending_leads_legacy(track: str, limit: int) -> list[dict]:
     col_status = "bland_status" if track == "ec" else "ng_bland_status"
     col_ghl = "ghl_contact_id" if track == "ec" else "ng_ghl_contact_id"
+    return (
+        _client.table("filings")
+        .select(f"{_PENDING_FILING_SELECT},{col_status},{col_ghl}")
+        .eq(col_status, "pending")
+        .not_.is_(col_ghl, "null")
+        .order("filing_date", desc=True)
+        .limit(limit)
+        .execute()
+        .data
+    )
+
+
+async def get_pending_leads(track: str = "ec", limit: int = 200) -> list[dict]:
     def _query() -> list[dict]:
-        result = (
-            _client.table("filings")
-            .select(
-                "case_number,tenant_name,landlord_name,property_address,"
-                "state,county,filing_date,court_date,phone,email,"
-                f"property_type,dnc_status,dnc_source,{col_status},{col_ghl}"
-            )
-            .eq(col_status, "pending")
-            .not_.is_(col_ghl, "null")
-            .order("filing_date", desc=True)
-            .limit(limit)
-            .execute()
-        )
-        return result.data
+        try:
+            rows = _get_pending_leads_from_contacts(track, limit)
+            if rows or track != "ec":
+                return rows
+            return _get_pending_leads_legacy(track, limit)
+        except Exception:
+            if track != "ec":
+                return []
+            return _get_pending_leads_legacy(track, limit)
+
     return await asyncio.to_thread(_query)
 
 
@@ -185,7 +346,7 @@ _DASHBOARD_SELECT = (
 
 
 def _filter_dashboard_query(query, view: str):
-    if view == "commercial":
+    if view == "commercial" or view == "vantage_commercial":
         return query.eq("lead_bucket", "commercial").or_(
             "language_hint.is.null,language_hint.neq.spanish_likely"
         )
@@ -202,7 +363,63 @@ def _filter_dashboard_query(query, view: str):
     )
 
 
-async def get_dashboard_leads(view: str = "residential_approved", limit: int = 500) -> list[dict]:
+def _track_for_dashboard_view(view: str) -> str:
+    return "ng" if view in {
+        "vantage_residential",
+        "vantage_commercial",
+        "spanish_residential",
+        "spanish_commercial",
+    } else "ec"
+
+
+def _target_metadata(track: str, view: str) -> dict:
+    is_vantage = track == "ng"
+    is_spanish = view in {"spanish_residential", "spanish_commercial"}
+    if is_vantage:
+        return {
+            "target_track": "ng",
+            "target_brand": "Vantage Defense Group",
+            "target_role": "Spanish tenant" if is_spanish else "Tenant",
+            "target_phone_label": "Tenant Phone",
+            "missing_phone_label": "NO TENANT PHONE",
+        }
+    return {
+        "target_track": "ec",
+        "target_brand": "Grant Ellis Group",
+        "target_role": "Landlord / owner",
+        "target_phone_label": "Landlord Phone",
+        "missing_phone_label": "NO LANDLORD PHONE",
+    }
+
+
+def _decorate_dashboard_rows(rows: list[dict], track: str, view: str) -> list[dict]:
+    metadata = _target_metadata(track, view)
+    return [{**row, **metadata} for row in rows]
+
+
+def _overlay_dashboard_contact_data(rows: list[dict], track: str) -> list[dict]:
+    case_numbers = [row["case_number"] for row in rows]
+    if not case_numbers:
+        return rows
+    contacts = (
+        _client.table("lead_contacts")
+        .select(
+            "case_number,track,phone,email,property_type,estimated_rent,"
+            "dnc_status,dnc_source,language_hint,bland_status,ghl_contact_id"
+        )
+        .eq("track", track)
+        .in_("case_number", case_numbers)
+        .execute()
+        .data
+    )
+    return _overlay_contact_rows(rows, contacts, clear_missing_contact=track == "ng")
+
+
+async def get_dashboard_leads(
+    view: str = "residential_approved",
+    limit: int = 500,
+    track: str | None = None,
+) -> list[dict]:
     def _query() -> list[dict]:
         query = _client.table("filings").select(_DASHBOARD_SELECT)
         query = _filter_dashboard_query(query, view)
@@ -213,14 +430,23 @@ async def get_dashboard_leads(view: str = "residential_approved", limit: int = 5
             .limit(limit)
             .execute()
         )
-        return result.data
+        rows = result.data
+        try:
+            effective_track = track or _track_for_dashboard_view(view)
+            rows = _overlay_dashboard_contact_data(rows, effective_track)
+            return _decorate_dashboard_rows(rows, effective_track, view)
+        except Exception:
+            effective_track = track or _track_for_dashboard_view(view)
+            return _decorate_dashboard_rows(rows, effective_track, view)
     return await asyncio.to_thread(_query)
 
 
 def _dashboard_counts_from_rows(rows: list[dict]) -> dict:
     counts = {
         "residential_approved": 0,
+        "vantage_residential": 0,
         "commercial": 0,
+        "vantage_commercial": 0,
         "held": 0,
         "discarded": 0,
         "spanish_residential": 0,
@@ -234,11 +460,13 @@ def _dashboard_counts_from_rows(rows: list[dict]) -> dict:
                 counts["spanish_residential"] += 1
             else:
                 counts["residential_approved"] += 1
+                counts["vantage_residential"] += 1
         elif bucket == "commercial":
             if spanish_likely:
                 counts["spanish_commercial"] += 1
             else:
                 counts["commercial"] += 1
+                counts["vantage_commercial"] += 1
         elif bucket == "held":
             counts["held"] += 1
         elif bucket == "discarded":
