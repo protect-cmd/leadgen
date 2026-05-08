@@ -293,6 +293,7 @@ async def enrich_tenant(
     email: str | None = None
     property_type: str | None = filing.property_type_hint
     estimated_rent: float | None = filing.claim_amount
+    name_matched = False
 
     name_parts = filing.tenant_name.strip().split()
     first_name = name_parts[0] if name_parts else ""
@@ -317,6 +318,7 @@ async def enrich_tenant(
                 p = persons[0]
                 returned_name = p.get("fullName") or p.get("name") or ""
                 if _tenant_name_matches(filing.tenant_name, returned_name):
+                    name_matched = True
                     phone_selection = _best_phone_result(p.get("phoneNumbers", []))
                     phone = phone_selection.number
                     dnc_status = phone_selection.dnc_status
@@ -347,7 +349,7 @@ async def enrich_tenant(
         f"phone={'yes' if phone else 'no'}, "
         f"email={'yes' if email else 'no'}, "
         f"property_type={property_type}, "
-        f"name_matched={'yes' if phone else 'no'}"
+        f"name_matched={'yes' if name_matched else 'no'}"
     )
 
     return EnrichedContact(
