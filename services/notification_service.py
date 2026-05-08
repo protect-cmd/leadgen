@@ -14,11 +14,16 @@ def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _config() -> tuple[bool, str, str]:
+def _config() -> tuple[bool, str, list[str]]:
     enabled = _truthy(os.getenv("PUSHOVER_ENABLED"))
     token = os.getenv("PUSHOVER_APP_TOKEN", "").strip()
-    user = os.getenv("PUSHOVER_USER_KEY", "").strip()
-    return enabled, token, user
+    multi = os.getenv("PUSHOVER_USER_KEYS", "").strip()
+    if multi:
+        users = [k.strip() for k in multi.split(",") if k.strip()]
+    else:
+        single = os.getenv("PUSHOVER_USER_KEY", "").strip()
+        users = [single] if single else []
+    return enabled, token, users
 
 
 def _message_with_tags(message: str, tags: dict[str, str] | None) -> str:
@@ -36,32 +41,36 @@ async def send_alert(
     tags: dict[str, str] | None = None,
 ) -> bool:
     """Send a Pushover alert. Notification failures never crash the job."""
-    enabled, token, user = _config()
+    enabled, token, users = _config()
     if not enabled:
         return False
-    if not token or not user:
+    if not token or not users:
         log.warning("Pushover enabled but token/user key is missing")
         return False
 
-    payload = {
-        "token": token,
-        "user": user,
-        "title": title,
-        "message": _message_with_tags(message, tags),
-        "priority": str(priority),
-    }
+    body = _message_with_tags(message, tags)
+    any_success = False
 
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(PUSHOVER_API_URL, data=payload)
-    except Exception as e:
-        log.warning(f"Pushover alert failed: {e}")
-        return False
+    async with httpx.AsyncClient(timeout=10) as client:
+        for user in users:
+            payload = {
+                "token": token,
+                "user": user,
+                "title": title,
+                "message": body,
+                "priority": str(priority),
+            }
+            try:
+                r = await client.post(PUSHOVER_API_URL, data=payload)
+            except Exception as e:
+                log.warning(f"Pushover alert failed for user {user[:8]}…: {e}")
+                continue
+            if r.status_code != 200:
+                log.warning(f"Pushover alert failed {r.status_code} for user {user[:8]}…: {r.text[:200]}")
+                continue
+            any_success = True
 
-    if r.status_code != 200:
-        log.warning(f"Pushover alert failed {r.status_code}: {r.text[:200]}")
-        return False
-    return True
+    return any_success
 
 
 async def send_job_error(
