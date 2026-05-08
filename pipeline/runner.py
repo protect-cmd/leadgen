@@ -326,8 +326,12 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
 
         if ec_contact.phone:
             m["phones_found"] += 1
+        if ng_contact is not None and ng_contact.phone:
+            m["phones_found"] += 1
 
         await dedup_service.update_enrichment(ec_contact)
+        if ng_contact is not None:
+            await dedup_service.update_enrichment(ng_contact)
 
         lead_bucket = await _classify_and_store(filing, ec_contact)
         if lead_bucket == "discarded":
