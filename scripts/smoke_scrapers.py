@@ -13,6 +13,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
 
+from scrapers.florida.broward import BrowardScraper
+from scrapers.florida.hillsborough import HillsboroughScraper
+from scrapers.florida.miami_dade import MiamiDadeScraper
 from scrapers.tennessee.davidson import DavidsonTNScraper
 from scrapers.texas.harris import HarrisCountyScraper
 from services import notification_service
@@ -44,9 +47,18 @@ def _tennessee_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, o
     return [("Davidson", DavidsonTNScraper(lookback_days=lookback_days))]
 
 
+def _florida_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, object]]:
+    return [
+        ("Miami-Dade", MiamiDadeScraper(lookback_days=lookback_days, headless=headless)),
+        ("Broward", BrowardScraper(lookback_days=lookback_days, headless=headless)),
+        ("Hillsborough", HillsboroughScraper(lookback_days=lookback_days, headless=headless)),
+    ]
+
+
 SCRAPER_FACTORIES: dict[str, StateFactory] = {
     "texas": _texas_scrapers,
     "tennessee": _tennessee_scrapers,
+    "florida": _florida_scrapers,
 }
 
 STATE_ALIASES = {
@@ -56,6 +68,12 @@ STATE_ALIASES = {
     "tn": "tennessee",
     "tennessee": "tennessee",
     "davidson": "tennessee",
+    "fl": "florida",
+    "florida": "florida",
+    "miami": "florida",
+    "miami-dade": "florida",
+    "broward": "florida",
+    "hillsborough": "florida",
 }
 
 

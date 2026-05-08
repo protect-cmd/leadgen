@@ -28,7 +28,10 @@ class AsyncScraper:
 
 def test_parse_states_accepts_aliases_and_all():
     assert smoke_scrapers.parse_states("texas,tn") == ["texas", "tennessee"]
-    assert smoke_scrapers.parse_states("all") == ["texas", "tennessee"]
+    all_states = smoke_scrapers.parse_states("all")
+    assert "texas" in all_states
+    assert "tennessee" in all_states
+    assert "florida" in all_states
 
 
 @pytest.mark.asyncio
