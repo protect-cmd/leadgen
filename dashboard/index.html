@@ -481,6 +481,10 @@
       width: 130px;
     }
 
+    th.col-extra {
+      width: 100px;
+    }
+
     th.col-action {
       width: 150px;
       text-align: right;
@@ -604,6 +608,24 @@
       background: var(--red-dim);
       color: #c05050;
       border: 1px solid var(--red);
+    }
+
+    .badge-corp {
+      background: #2a1a00;
+      color: #c8861e;
+      border: 1px solid #7a5210;
+      font-size: 9px;
+      padding: 1px 5px;
+      margin-left: 4px;
+      vertical-align: middle;
+    }
+
+    .email-dot {
+      display: inline-block;
+      font-size: 10px;
+      color: #3a8f5e;
+      margin-left: 4px;
+      vertical-align: middle;
     }
 
     .td-date {
@@ -922,7 +944,7 @@
   <!-- TABLE -->
   <div class="table-wrap">
     <table id="leads-table">
-      <thead>
+      <thead id="leads-thead">
         <tr>
           <th class="col-check"><input type="checkbox" class="row-check" id="check-all"
               onchange="toggleAll(this.checked)" title="Select all visible"></th>
@@ -932,6 +954,7 @@
           <th class="col-address">Address</th>
           <th class="col-phone">Phone</th>
           <th class="col-dnc">DNC</th>
+          <th class="col-extra" id="th-extra">Est. Rent</th>
           <th class="col-type">Type</th>
           <th class="col-date sortable" id="th-court" onclick="setSort('court_date')">Court Date</th>
           <th class="col-date sortable" id="th-filing" onclick="setSort('filing_date')">Filed</th>
@@ -940,7 +963,7 @@
       </thead>
       <tbody id="leads-body">
         <tr>
-          <td colspan="11">
+          <td colspan="12">
             <div class="state-full">
               <div class="spinner"></div>
               <div class="state-sub">Loading leads...</div>
@@ -1045,7 +1068,7 @@
 
     async function loadLeads() {
       const tbody = document.getElementById('leads-body');
-      tbody.innerHTML = `<tr><td colspan="11"><div class="state-full"><div class="spinner"></div><div class="state-sub">Loading...</div></div></td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="12"><div class="state-full"><div class="spinner"></div><div class="state-sub">Loading...</div></div></td></tr>`;
       try {
         const res = await fetch(`/api/leads?view=${encodeURIComponent(activeView)}`);
         allLeads = await res.json();
@@ -1054,7 +1077,7 @@
         applyFilters();
         document.getElementById('m-pending').textContent = allLeads.length;
       } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="11"><div class="state-full"><div class="state-icon">!</div><div class="state-title">Failed to load</div><div class="state-sub">${e.message}</div></div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="12"><div class="state-full"><div class="state-icon">!</div><div class="state-title">Failed to load</div><div class="state-sub">${e.message}</div></div></td></tr>`;
       }
     }
 
@@ -1069,6 +1092,8 @@
       document.getElementById(`brand-${brand}`).classList.add(brand === 'ng' ? 'active-blue' : 'active');
 
       _rebuildViewChips(brand);
+      const thExtra = document.getElementById('th-extra');
+      if (thExtra) thExtra.textContent = brand === 'ng' ? 'Language' : 'Est. Rent';
       activeView = brandViews[brand][0];
       loadLeadCounts();
       loadLeads();
@@ -1170,7 +1195,7 @@
       document.getElementById('queue-count').innerHTML = `<strong>${leads.length}</strong> ${esc(viewLabels[activeView] || 'Leads')}`;
 
       if (!leads.length) {
-        tbody.innerHTML = `<tr><td colspan="11"><div class="state-full">
+        tbody.innerHTML = `<tr><td colspan="12"><div class="state-full">
         <div class="state-icon">OK</div>
         <div class="state-title">No Records</div>
         <div class="state-sub">No pending leads match the current filters.</div>
@@ -1187,29 +1212,45 @@
         const dncClear = dncStatus === 'clear';
         const canManualClearDnc = hasPhone && !dncClear && dncStatus !== 'blocked' && !activeView.endsWith('_discarded');
         const type = lead.property_type || lead.lead_bucket || 'unknown';
-        const language = lead.language_hint === 'spanish_likely' ? 'Spanish-Likely' : '';
+        const isNg = activeBrand === 'ng';
+        const language = lead.language_hint === 'spanish_likely' ? 'ES' : 'EN';
         const reason = lead.discard_reason || lead.qualification_notes || lead.lead_bucket || '';
         const courtDate = lead.court_date ? formatDate(lead.court_date) : '—';
         const filedDate = lead.filing_date ? formatDate(lead.filing_date) : '—';
         const isOverdue = lead.court_date && new Date(lead.court_date + 'T00:00:00') < today;
         const checked = selectedCases.has(lead.case_number) ? 'checked' : '';
         const selClass = selectedCases.has(lead.case_number) ? ' selected' : '';
+        const isNew = lastRunAt && lead.scraped_at && lead.scraped_at >= lastRunAt;
+
+        // Swap column: Est. Rent (EC) or Language badge (NG)
+        const extraCell = isNg
+          ? `<span class="badge ${language === 'ES' ? 'badge-commercial' : 'badge-unknown'}">${language}</span>`
+          : (lead.estimated_rent ? `$${Math.round(lead.estimated_rent).toLocaleString()}` : '—');
+
+        // Corporate badge for EC landlord
+        const corpBadge = !isNg && isCorpName(lead.landlord_name)
+          ? `<span class="badge-corp">CORP</span>`
+          : '';
+
+        // Email dot
+        const emailDot = lead.email ? `<span class="email-dot" title="Has email">✉</span>` : '';
 
         return `<tr data-case="${esc(lead.case_number)}" data-idx="${i}" class="${selClass}">
         <td><input type="checkbox" class="row-check" ${checked} onchange="toggleRow('${esc(lead.case_number)}', this.checked)"></td>
         <td class="td-case">${esc(lead.case_number)}</td>
         <td>
-          <div class="td-name">${esc(lead.tenant_name || '—')}</div>
-          <div class="td-sub">${esc(lead.county || '')}, ${esc(lead.state || '')}${language ? ' - ' + esc(language) : ''}</div>
+          <div class="td-name">${esc(lead.tenant_name || '—')}${isNew ? ' <span style="background:#1a2d3a;color:#4a9bbf;font-size:9px;padding:1px 5px;vertical-align:middle;font-family:\'Barlow Condensed\',sans-serif;letter-spacing:.06em;">NEW</span>' : ''}</div>
+          <div class="td-sub">${esc(lead.county || '')}, ${esc(lead.state || '')}</div>
         </td>
         <td>
-          <div class="td-name">${esc(lead.landlord_name || '—')}</div>
+          <div class="td-name">${esc(lead.landlord_name || '—')}${corpBadge}</div>
         </td>
         <td class="td-address">${esc(lead.property_address || '—')}
           <div class="td-sub">${esc(lead.property_zip || '')}${lead.property_zip ? ' - ' : ''}${esc(reason)}</div>
         </td>
-        <td class="td-phone ${hasPhone ? 'has-phone' : 'no-phone'}">${phone}</td>
+        <td class="td-phone ${hasPhone ? 'has-phone' : 'no-phone'}">${phone}${emailDot}</td>
         <td><span class="badge badge-${dncClear ? 'residential' : dncStatus === 'blocked' ? 'blocked' : 'unknown'}">${esc(dncStatus)}</span></td>
+        <td>${extraCell}</td>
         <td><span class="badge badge-${type}">${type}</span></td>
         <td class="td-date ${isOverdue ? 'overdue' : ''}">${courtDate}</td>
         <td class="td-date">${filedDate}</td>
@@ -1442,6 +1483,12 @@
     // ── UTILS ──
     function esc(s) {
       return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    const _CORP_RE = /\b(LLC|INC|CORP|LTD|LP|LLP|PLLC|PROPERTIES|PROPERTY|MANAGEMENT|MGMT|REALTY|INVESTMENTS|HOLDINGS|TRUST|PARTNERS|GROUP|ENTERPRISES|VENTURES)\b/i;
+
+    function isCorpName(name) {
+      return _CORP_RE.test(name || '');
     }
 
     function formatPhone(p) {
