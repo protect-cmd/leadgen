@@ -1346,7 +1346,7 @@
       let ok = 0, fail = 0;
       await Promise.all(cases.map(async cn => {
         try {
-          const res = await fetch(`/api/leads/${encodeURIComponent(cn)}/approve?track=ec`, { method: 'POST' });
+          const res = await fetch(`/api/leads/${encodeURIComponent(cn)}/approve?track=${activeBrand}`, { method: 'POST' });
           if (!res.ok) throw new Error();
           removeLeadFromState(cn);
           ok++;
@@ -1363,7 +1363,7 @@
       const cases = [...selectedCases];
       await Promise.all(cases.map(async cn => {
         try {
-          await fetch(`/api/leads/${encodeURIComponent(cn)}/skip?track=ec`, { method: 'POST' });
+          await fetch(`/api/leads/${encodeURIComponent(cn)}/skip?track=${activeBrand}`, { method: 'POST' });
           removeLeadFromState(cn);
         } catch { }
       }));
@@ -1383,7 +1383,7 @@
       const el = document.getElementById(`actions-${caseNumber}`);
       setActionsLoading(el);
       try {
-        const res = await fetch(`/api/leads/${encodeURIComponent(caseNumber)}/approve?track=ec`, { method: 'POST' });
+        const res = await fetch(`/api/leads/${encodeURIComponent(caseNumber)}/approve?track=${activeBrand}`, { method: 'POST' });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed');
         el.innerHTML = `<span class="action-status triggered">✓ TRIGGERED</span>`;
@@ -1406,7 +1406,7 @@
         return;
       }
       try {
-        const res = await fetch(`/api/leads/${encodeURIComponent(caseNumber)}/dnc-clear?track=ec`, {
+        const res = await fetch(`/api/leads/${encodeURIComponent(caseNumber)}/dnc-clear?track=${activeBrand}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ source: notes.trim(), notes: notes.trim() })
@@ -1430,7 +1430,7 @@
       const el = document.getElementById(`actions-${caseNumber}`);
       setActionsLoading(el);
       try {
-        await fetch(`/api/leads/${encodeURIComponent(caseNumber)}/skip?track=ec`, { method: 'POST' });
+        await fetch(`/api/leads/${encodeURIComponent(caseNumber)}/skip?track=${activeBrand}`, { method: 'POST' });
         el.innerHTML = `<span class="action-status skipped">SKIPPED</span>`;
         removeLeadFromState(caseNumber);
         document.getElementById('m-pending').textContent = allLeads.length;
