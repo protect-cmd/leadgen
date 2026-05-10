@@ -882,6 +882,10 @@
         <div class="metric-value neutral" id="m-pending">—</div>
         <div class="metric-label">Pending</div>
       </div>
+      <div class="metric" style="background: #080f0b;">
+        <div class="metric-value green" id="m-ready">—</div>
+        <div class="metric-label">Ready to Call</div>
+      </div>
       <div class="metric">
         <div class="metric-value" id="m-received">—</div>
         <div class="metric-label">Last Scraped</div>
@@ -1055,6 +1059,7 @@
         const rows = await res.json();
         if (!rows.length) return;
         const m = rows[0];
+        lastRunAt = m.run_at || null;
         document.getElementById('m-received').textContent = m.filings_received ?? '—';
         document.getElementById('m-dupes').textContent = m.duplicates_skipped ?? '—';
         document.getElementById('m-batchdata').textContent = m.batchdata_calls ?? '—';
@@ -1187,6 +1192,7 @@
       renderLeads(leads);
       updateBulkBar();
       syncSelectAll();
+      updateReadyCount();
     }
 
     // ── RENDER ──
@@ -1324,6 +1330,11 @@
       document.getElementById('btn-bulk-approve').disabled = anyNotCallable;
       if (anyNotCallable) document.getElementById('btn-bulk-approve').title = 'Some selected leads are missing phone or DNC clearance';
       else document.getElementById('btn-bulk-approve').title = '';
+    }
+
+    function updateReadyCount() {
+      const n = visibleLeads.filter(l => l.phone && l.phone !== 'None' && l.dnc_status === 'clear').length;
+      document.getElementById('m-ready').textContent = n;
     }
 
     // ── BULK ACTIONS ──
