@@ -281,6 +281,12 @@
       color: #c05050;
     }
 
+    .chip.active-blue {
+      background: #1a2d3a;
+      border-color: #3a6b8f;
+      color: #4a9bbf;
+    }
+
     .queue-count {
       margin-left: auto;
       font-family: 'Barlow Condensed', sans-serif;
@@ -594,6 +600,12 @@
       border: 1px solid var(--border-2);
     }
 
+    .badge-blocked {
+      background: var(--red-dim);
+      color: #c05050;
+      border: 1px solid var(--red);
+    }
+
     .td-date {
       font-family: 'JetBrains Mono', monospace;
       font-size: 12px;
@@ -876,22 +888,22 @@
 
     <!-- TOOLBAR -->
     <div class="toolbar">
+      <span class="toolbar-label">Brand</span>
+      <button class="chip active" id="brand-ec" onclick="setBrand('ec')">GRANT</button>
+      <button class="chip" id="brand-ng" onclick="setBrand('ng')">VANTAGE</button>
+      <div class="toolbar-sep"></div>
       <span class="toolbar-label">View</span>
-      <button class="chip active" id="view-residential_approved"
-        onclick="setView('residential_approved')">Residential</button>
-      <button class="chip" id="view-commercial" onclick="setView('commercial')">Commercial</button>
-      <button class="chip" id="view-spanish_residential" onclick="setView('spanish_residential')">Spanish
-        Residential</button>
-      <button class="chip" id="view-spanish_commercial" onclick="setView('spanish_commercial')">Spanish
-        Commercial</button>
-      <button class="chip" id="view-held" onclick="setView('held')">Held</button>
-      <button class="chip" id="view-discarded" onclick="setView('discarded')">Discarded</button>
+      <button class="chip active" id="view-ec_residential" onclick="setView('ec_residential')">Residential</button>
+      <button class="chip" id="view-ec_commercial" onclick="setView('ec_commercial')">Commercial</button>
+      <button class="chip" id="view-ec_held" onclick="setView('ec_held')">Held</button>
+      <button class="chip" id="view-ec_discarded" onclick="setView('ec_discarded')">Discarded</button>
       <div class="toolbar-sep"></div>
       <span class="toolbar-label">Filter</span>
       <input class="filter-input" id="filter-input" type="text" placeholder="case, name, address…"
         oninput="applyFilters()">
       <div class="toolbar-sep"></div>
       <button class="chip" id="chip-phone" onclick="toggleChip('phone')">Has Phone</button>
+      <button class="chip" id="chip-dnc" onclick="toggleChip('dnc')">DNC Clear</button>
       <button class="chip" id="chip-residential" onclick="toggleChip('residential')">Residential</button>
       <button class="chip" id="chip-commercial" onclick="toggleChip('commercial')">Commercial</button>
       <button class="chip" id="chip-overdue" onclick="toggleChip('overdue')">Overdue</button>
@@ -965,16 +977,28 @@
     let selectedCases = new Set();
     let sortKey = null;
     let sortDir = 1; // 1 = asc, -1 = desc
-    let chips = { phone: false, residential: false, commercial: false, overdue: false };
+    let chips = { phone: false, dnc: false, residential: false, commercial: false, overdue: false };
     let kbIndex = -1;
-    let activeView = 'residential_approved';
+    let activeBrand = 'ec';
+    let activeView = 'ec_residential';
+    let lastRunAt = null;
+
+    const brandViews = {
+      ec: ['ec_residential', 'ec_commercial', 'ec_held', 'ec_discarded'],
+      ng: ['ng_residential', 'ng_commercial', 'ng_spanish_residential', 'ng_spanish_commercial', 'ng_held', 'ng_discarded'],
+    };
+
     const viewLabels = {
-      residential_approved: 'English Residential Approved',
-      commercial: 'Commercial High Priority',
-      spanish_residential: 'Spanish Residential Approved',
-      spanish_commercial: 'Spanish Commercial High Priority',
-      held: 'Held',
-      discarded: 'Discarded'
+      ec_residential: 'English Residential Approved',
+      ec_commercial: 'Commercial High Priority',
+      ec_held: 'Held',
+      ec_discarded: 'Discarded',
+      ng_residential: 'Vantage Residential',
+      ng_commercial: 'Vantage Commercial',
+      ng_spanish_residential: 'Spanish Residential Approved',
+      ng_spanish_commercial: 'Spanish Commercial',
+      ng_held: 'Held',
+      ng_discarded: 'Discarded',
     };
 
     // ── LOAD ──
@@ -986,12 +1010,19 @@
       try {
         const res = await fetch('/api/lead-counts');
         const counts = await res.json();
-        document.getElementById('view-residential_approved').textContent = `Residential (${counts.residential_approved ?? 0})`;
-        document.getElementById('view-commercial').textContent = `Commercial (${counts.commercial ?? 0})`;
-        document.getElementById('view-spanish_residential').textContent = `Spanish Residential (${counts.spanish_residential ?? 0})`;
-        document.getElementById('view-spanish_commercial').textContent = `Spanish Commercial (${counts.spanish_commercial ?? 0})`;
-        document.getElementById('view-held').textContent = `Held (${counts.held ?? 0})`;
-        document.getElementById('view-discarded').textContent = `Discarded (${counts.discarded ?? 0})`;
+        brandViews[activeBrand].forEach(viewKey => {
+          const el = document.getElementById(`view-${viewKey}`);
+          if (el) {
+            const shortLabels = {
+              ec_residential: 'Residential', ec_commercial: 'Commercial',
+              ec_held: 'Held', ec_discarded: 'Discarded',
+              ng_residential: 'Residential', ng_commercial: 'Commercial',
+              ng_spanish_residential: 'Spanish Res', ng_spanish_commercial: 'Spanish Com',
+              ng_held: 'Held', ng_discarded: 'Discarded',
+            };
+            el.textContent = `${shortLabels[viewKey]} (${counts[viewKey] ?? 0})`;
+          }
+        });
       } catch (e) { console.error('lead counts error', e); }
     }
 
@@ -1027,24 +1058,66 @@
       }
     }
 
+    // ── BRAND + VIEW SWITCHING ──
+    function setBrand(brand) {
+      activeBrand = brand;
+      selectedCases.clear();
+      kbIndex = -1;
+
+      document.getElementById('brand-ec').classList.remove('active', 'active-blue');
+      document.getElementById('brand-ng').classList.remove('active', 'active-blue');
+      document.getElementById(`brand-${brand}`).classList.add(brand === 'ng' ? 'active-blue' : 'active');
+
+      _rebuildViewChips(brand);
+      activeView = brandViews[brand][0];
+      loadLeadCounts();
+      loadLeads();
+    }
+
+    function _rebuildViewChips(brand) {
+      const viewLabelsShort = {
+        ec_residential: 'Residential', ec_commercial: 'Commercial',
+        ec_held: 'Held', ec_discarded: 'Discarded',
+        ng_residential: 'Residential', ng_commercial: 'Commercial',
+        ng_spanish_residential: 'Spanish Res', ng_spanish_commercial: 'Spanish Com',
+        ng_held: 'Held', ng_discarded: 'Discarded',
+      };
+      // Remove all existing view chips
+      document.querySelectorAll('[id^="view-"]').forEach(el => el.remove());
+
+      // Insert new chips before the second toolbar-sep (the one before Filter label)
+      const seps = document.querySelectorAll('.toolbar .toolbar-sep');
+      const insertBefore = seps[1]; // second separator = between View chips and Filter
+      brandViews[brand].forEach((viewKey, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'chip' + (i === 0 ? ' active' : '');
+        btn.id = `view-${viewKey}`;
+        btn.textContent = viewLabelsShort[viewKey];
+        btn.onclick = () => setView(viewKey);
+        insertBefore.parentNode.insertBefore(btn, insertBefore);
+      });
+    }
+
     // ── FILTERS + SORT ──
     function setView(name) {
       activeView = name;
       selectedCases.clear();
       kbIndex = -1;
       document.querySelectorAll('[id^="view-"]').forEach(el => {
-        el.classList.remove('active', 'active-green', 'active-red');
+        el.classList.remove('active', 'active-green', 'active-red', 'active-blue');
       });
-      const active = document.getElementById(`view-${name}`);
-      const activeClass = name === 'discarded' ? 'active-red' : (name === 'commercial' || name === 'spanish_commercial') ? 'active-green' : 'active';
-      active.classList.add(activeClass);
+      const isDiscard = name.endsWith('_discarded');
+      const isCommercial = name.endsWith('_commercial');
+      const isSpanish = name.includes('spanish');
+      const cls = isDiscard ? 'active-red' : isCommercial ? 'active-green' : isSpanish ? 'active-blue' : 'active';
+      document.getElementById(`view-${name}`).classList.add(cls);
       loadLeads();
     }
 
     function toggleChip(name) {
       chips[name] = !chips[name];
       const el = document.getElementById(`chip-${name}`);
-      const activeClass = name === 'overdue' ? 'active-red' : name === 'phone' ? 'active-green' : 'active';
+      const activeClass = name === 'overdue' ? 'active-red' : (name === 'phone' || name === 'dnc') ? 'active-green' : 'active';
       el.classList.toggle(activeClass, chips[name]);
       applyFilters();
     }
@@ -1069,6 +1142,7 @@
       let leads = allLeads.filter(l => {
         if (q && !([l.case_number, l.tenant_name, l.landlord_name, l.property_address].join(' ').toLowerCase().includes(q))) return false;
         if (chips.phone && !(l.phone && l.phone !== 'None')) return false;
+        if (chips.dnc && l.dnc_status !== 'clear') return false;
         if (chips.residential && l.property_type !== 'residential') return false;
         if (chips.commercial && l.property_type !== 'commercial') return false;
         if (chips.overdue && !(l.court_date && new Date(l.court_date + 'T00:00:00') < today)) return false;
@@ -1135,7 +1209,7 @@
           <div class="td-sub">${esc(lead.property_zip || '')}${lead.property_zip ? ' - ' : ''}${esc(reason)}</div>
         </td>
         <td class="td-phone ${hasPhone ? 'has-phone' : 'no-phone'}">${phone}</td>
-        <td><span class="badge badge-${dncClear ? 'residential' : 'unknown'}">${esc(dncStatus)}</span></td>
+        <td><span class="badge badge-${dncClear ? 'residential' : dncStatus === 'blocked' ? 'blocked' : 'unknown'}">${esc(dncStatus)}</span></td>
         <td><span class="badge badge-${type}">${type}</span></td>
         <td class="td-date ${isOverdue ? 'overdue' : ''}">${courtDate}</td>
         <td class="td-date">${filedDate}</td>
