@@ -445,55 +445,73 @@ async def get_dashboard_leads(
     return await asyncio.to_thread(_query)
 
 
-def _dashboard_counts_from_rows(rows: list[dict]) -> dict:
+def _ec_counts_from_rows(rows: list[dict]) -> dict:
     counts = {
-        "residential_approved": 0,
-        "vantage_residential": 0,
-        "commercial": 0,
-        "vantage_commercial": 0,
-        "held": 0,
-        "discarded": 0,
-        "spanish_residential": 0,
-        "spanish_commercial": 0,
+        "ec_residential": 0,
+        "ec_commercial": 0,
+        "ec_held": 0,
+        "ec_discarded": 0,
     }
     for row in rows:
         bucket = row.get("lead_bucket")
-        spanish_likely = row.get("language_hint") == "spanish_likely"
-        if bucket == "residential_approved":
-            if spanish_likely:
-                counts["spanish_residential"] += 1
-            else:
-                counts["residential_approved"] += 1
-                counts["vantage_residential"] += 1
-        elif bucket == "commercial":
-            if spanish_likely:
-                counts["spanish_commercial"] += 1
-            else:
-                counts["commercial"] += 1
-                counts["vantage_commercial"] += 1
+        spanish = row.get("language_hint") == "spanish_likely"
+        if bucket == "residential_approved" and not spanish:
+            counts["ec_residential"] += 1
+        elif bucket == "commercial" and not spanish:
+            counts["ec_commercial"] += 1
         elif bucket == "held":
-            counts["held"] += 1
+            counts["ec_held"] += 1
         elif bucket == "discarded":
-            counts["discarded"] += 1
-        elif (
-            bucket is None
-            and row.get("bland_status") == "pending"
-            and row.get("ghl_contact_id")
-        ):
-            counts["residential_approved"] += 1
+            counts["ec_discarded"] += 1
+    return counts
+
+
+def _ng_counts_from_contact_rows(rows: list[dict]) -> dict:
+    counts = {
+        "ng_residential": 0,
+        "ng_commercial": 0,
+        "ng_spanish_residential": 0,
+        "ng_spanish_commercial": 0,
+        "ng_held": 0,
+        "ng_discarded": 0,
+    }
+    for row in rows:
+        filing = row.get("filings") or {}
+        bucket = filing.get("lead_bucket")
+        spanish = filing.get("language_hint") == "spanish_likely"
+        if bucket == "residential_approved":
+            if spanish:
+                counts["ng_spanish_residential"] += 1
+            else:
+                counts["ng_residential"] += 1
+        elif bucket == "commercial":
+            if spanish:
+                counts["ng_spanish_commercial"] += 1
+            else:
+                counts["ng_commercial"] += 1
+        elif bucket == "held":
+            counts["ng_held"] += 1
+        elif bucket == "discarded":
+            counts["ng_discarded"] += 1
     return counts
 
 
 async def get_dashboard_counts() -> dict:
     def _query() -> dict:
-        rows = (
+        ec_rows = (
             _client.table("filings")
-            .select("lead_bucket,property_type,language_hint,bland_status,ghl_contact_id")
+            .select("lead_bucket,language_hint")
             .execute()
             .data
         )
-
-        return _dashboard_counts_from_rows(rows)
+        ng_rows = (
+            _client.table("lead_contacts")
+            .select("case_number,filings(lead_bucket,language_hint)")
+            .eq("track", "ng")
+            .execute()
+            .data
+        )
+        return {**_ec_counts_from_rows(ec_rows), **_ng_counts_from_contact_rows(ng_rows)}
     return await asyncio.to_thread(_query)
 
 
