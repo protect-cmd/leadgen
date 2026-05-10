@@ -342,7 +342,7 @@ async def get_pending_leads(track: str = "ec", limit: int = 200) -> list[dict]:
 
 _DASHBOARD_SELECT = (
     "case_number,tenant_name,landlord_name,property_address,"
-    "state,county,filing_date,court_date,phone,email,"
+    "state,county,filing_date,court_date,scraped_at,phone,email,"
     "property_type,estimated_rent,property_zip,lead_bucket,"
     "discard_reason,qualification_notes,dnc_status,dnc_source,language_hint,"
     "bland_status,ghl_contact_id"
@@ -350,36 +350,35 @@ _DASHBOARD_SELECT = (
 
 
 def _filter_dashboard_query(query, view: str):
-    if view == "commercial" or view == "vantage_commercial":
+    if view in ("ec_residential", "ng_residential"):
+        return query.eq("lead_bucket", "residential_approved").or_(
+            "language_hint.is.null,language_hint.neq.spanish_likely"
+        )
+    if view in ("ec_commercial", "ng_commercial"):
         return query.eq("lead_bucket", "commercial").or_(
             "language_hint.is.null,language_hint.neq.spanish_likely"
         )
-    if view == "spanish_residential":
+    if view == "ng_spanish_residential":
         return query.eq("lead_bucket", "residential_approved").eq("language_hint", "spanish_likely")
-    if view == "spanish_commercial":
+    if view == "ng_spanish_commercial":
         return query.eq("lead_bucket", "commercial").eq("language_hint", "spanish_likely")
-    if view == "held":
+    if view in ("ec_held", "ng_held"):
         return query.eq("lead_bucket", "held")
-    if view == "discarded":
+    if view in ("ec_discarded", "ng_discarded"):
         return query.eq("lead_bucket", "discarded")
+    # Legacy fallback — residential approved, non-Spanish
     return query.eq("lead_bucket", "residential_approved").or_(
         "language_hint.is.null,language_hint.neq.spanish_likely"
     )
 
 
 def _track_for_dashboard_view(view: str) -> str:
-    return "ng" if view in {
-        "vantage_residential",
-        "vantage_commercial",
-        "spanish_residential",
-        "spanish_commercial",
-    } else "ec"
+    return "ng" if view.startswith("ng_") else "ec"
 
 
 def _target_metadata(track: str, view: str) -> dict:
-    is_vantage = track == "ng"
-    is_spanish = view in {"spanish_residential", "spanish_commercial"}
-    if is_vantage:
+    is_spanish = view in {"ng_spanish_residential", "ng_spanish_commercial"}
+    if track == "ng":
         return {
             "target_track": "ng",
             "target_brand": "Vantage Defense Group",
@@ -430,6 +429,7 @@ async def get_dashboard_leads(
 
         result = (
             query
+            .order("court_date", desc=False, nullsfirst=False)
             .order("filing_date", desc=True)
             .limit(limit)
             .execute()
