@@ -1140,7 +1140,7 @@
       const isDiscard = name.endsWith('_discarded');
       const isCommercial = name.endsWith('_commercial');
       const isSpanish = name.includes('spanish');
-      const cls = isDiscard ? 'active-red' : isCommercial ? 'active-green' : isSpanish ? 'active-blue' : 'active';
+      const cls = isDiscard ? 'active-red' : isSpanish ? 'active-blue' : isCommercial ? 'active-green' : 'active';
       document.getElementById(`view-${name}`).classList.add(cls);
       loadLeads();
     }
