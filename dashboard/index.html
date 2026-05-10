@@ -1185,7 +1185,7 @@
         const phone = hasPhone ? formatPhone(lead.phone) : '—';
         const dncStatus = lead.dnc_status || 'unknown';
         const dncClear = dncStatus === 'clear';
-        const canManualClearDnc = hasPhone && !dncClear && dncStatus !== 'blocked' && activeView !== 'discarded';
+        const canManualClearDnc = hasPhone && !dncClear && dncStatus !== 'blocked' && !activeView.endsWith('_discarded');
         const type = lead.property_type || lead.lead_bucket || 'unknown';
         const language = lead.language_hint === 'spanish_likely' ? 'Spanish-Likely' : '';
         const reason = lead.discard_reason || lead.qualification_notes || lead.lead_bucket || '';
@@ -1215,7 +1215,7 @@
         <td class="td-date">${filedDate}</td>
         <td>
           <div class="actions" id="actions-${esc(lead.case_number)}">
-            ${activeView === 'discarded'
+            ${activeView.endsWith('_discarded')
             ? `<span class="action-status skipped">NO CALL</span>`
             : hasPhone && dncClear
               ? `<button class="btn-approve" onclick="approve('${esc(lead.case_number)}')">APPROVE</button>`
@@ -1223,7 +1223,7 @@
                 ? `<button class="btn-dnc" onclick="clearDnc('${esc(lead.case_number)}')">DNC CLEAR</button>`
                 : `<span class="action-status skipped">${!hasPhone ? 'NO PHONE' : dncStatus === 'blocked' ? 'DNC BLOCKED' : 'DNC REVIEW'}</span>`
           }
-            ${activeView === 'discarded'
+            ${activeView.endsWith('_discarded')
             ? ''
             : `<button class="btn-skip" onclick="skip('${esc(lead.case_number)}')">SKIP</button>`
           }
