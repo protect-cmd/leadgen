@@ -1060,6 +1060,7 @@
         if (!rows.length) return;
         const m = rows[0];
         lastRunAt = m.run_at || null;
+        if (visibleLeads.length > 0) renderLeads(visibleLeads);
         document.getElementById('m-received').textContent = m.filings_received ?? '—';
         document.getElementById('m-dupes').textContent = m.duplicates_skipped ?? '—';
         document.getElementById('m-batchdata').textContent = m.batchdata_calls ?? '—';
