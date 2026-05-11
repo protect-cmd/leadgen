@@ -418,15 +418,46 @@ def _overlay_dashboard_contact_data(rows: list[dict], track: str) -> list[dict]:
     return _overlay_contact_rows(rows, contacts, clear_missing_contact=track == "ng")
 
 
+def _get_ng_dashboard_leads(view: str, limit: int) -> list[dict]:
+    ng_contacts = (
+        _client.table("lead_contacts")
+        .select(
+            "case_number,track,phone,email,property_type,estimated_rent,"
+            "dnc_status,dnc_source,language_hint,bland_status,ghl_contact_id"
+        )
+        .eq("track", "ng")
+        .execute()
+        .data
+    )
+    if not ng_contacts:
+        return []
+    ng_case_numbers = [row["case_number"] for row in ng_contacts]
+    query = _client.table("filings").select(_DASHBOARD_SELECT)
+    query = _filter_dashboard_query(query, view)
+    query = query.in_("case_number", ng_case_numbers)
+    result = (
+        query
+        .order("court_date", desc=False, nullsfirst=False)
+        .order("filing_date", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    rows = _overlay_contact_rows(result.data, ng_contacts, clear_missing_contact=False)
+    return _decorate_dashboard_rows(rows, "ng", view)
+
+
 async def get_dashboard_leads(
     view: str = "residential_approved",
     limit: int = 500,
     track: str | None = None,
 ) -> list[dict]:
     def _query() -> list[dict]:
+        effective_track = track or _track_for_dashboard_view(view)
+        if effective_track == "ng":
+            return _get_ng_dashboard_leads(view, limit)
+        # EC: query filings directly, overlay EC contacts
         query = _client.table("filings").select(_DASHBOARD_SELECT)
         query = _filter_dashboard_query(query, view)
-
         result = (
             query
             .order("court_date", desc=False, nullsfirst=False)
@@ -435,13 +466,8 @@ async def get_dashboard_leads(
             .execute()
         )
         rows = result.data
-        try:
-            effective_track = track or _track_for_dashboard_view(view)
-            rows = _overlay_dashboard_contact_data(rows, effective_track)
-            return _decorate_dashboard_rows(rows, effective_track, view)
-        except Exception:
-            effective_track = track or _track_for_dashboard_view(view)
-            return _decorate_dashboard_rows(rows, effective_track, view)
+        rows = _overlay_dashboard_contact_data(rows, effective_track)
+        return _decorate_dashboard_rows(rows, effective_track, view)
     return await asyncio.to_thread(_query)
 
 
@@ -496,22 +522,36 @@ def _ng_counts_from_contact_rows(rows: list[dict]) -> dict:
     return counts
 
 
+def _count_filings(bucket: str, spanish: bool | None = None) -> int:
+    q = (
+        _client.table("filings")
+        .select("case_number", count="exact")
+        .eq("lead_bucket", bucket)
+    )
+    if spanish is True:
+        q = q.eq("language_hint", "spanish_likely")
+    elif spanish is False:
+        q = q.or_("language_hint.is.null,language_hint.neq.spanish_likely")
+    return q.limit(1).execute().count or 0
+
+
 async def get_dashboard_counts() -> dict:
     def _query() -> dict:
-        ec_rows = (
-            _client.table("filings")
-            .select("lead_bucket,language_hint")
-            .execute()
-            .data
-        )
+        ec_counts = {
+            "ec_residential": _count_filings("residential_approved", spanish=False),
+            "ec_commercial": _count_filings("commercial", spanish=False),
+            "ec_held": _count_filings("held"),
+            "ec_discarded": _count_filings("discarded"),
+        }
         ng_rows = (
             _client.table("lead_contacts")
             .select("case_number,filings(lead_bucket,language_hint)")
             .eq("track", "ng")
+            .limit(10000)
             .execute()
             .data
         )
-        return {**_ec_counts_from_rows(ec_rows), **_ng_counts_from_contact_rows(ng_rows)}
+        return {**ec_counts, **_ng_counts_from_contact_rows(ng_rows)}
     return await asyncio.to_thread(_query)
 
 
