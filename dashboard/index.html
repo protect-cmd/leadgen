@@ -466,7 +466,7 @@
     }
 
     th.col-phone {
-      width: 135px;
+      width: 155px;
     }
 
     th.col-dnc {
@@ -624,8 +624,11 @@
       display: inline-block;
       font-size: 10px;
       color: #3a8f5e;
-      margin-left: 4px;
       vertical-align: middle;
+    }
+
+    .td-email {
+      margin-top: 3px;
     }
 
     .td-date {
@@ -1255,7 +1258,7 @@
         <td class="td-address">${esc(lead.property_address || '—')}
           <div class="td-sub">${esc(lead.property_zip || '')}${lead.property_zip ? ' - ' : ''}${esc(reason)}</div>
         </td>
-        <td class="td-phone ${hasPhone ? 'has-phone' : 'no-phone'}">${phone}${emailDot}</td>
+        <td class="td-phone ${hasPhone ? 'has-phone' : 'no-phone'}">${phone}${emailDot ? `<div class="td-sub td-email">${emailDot}</div>` : ''}</td>
         <td><span class="badge badge-${dncClear ? 'residential' : dncStatus === 'blocked' ? 'blocked' : 'unknown'}">${esc(dncStatus)}</span></td>
         <td>${extraCell}</td>
         <td><span class="badge badge-${type}">${type}</span></td>
