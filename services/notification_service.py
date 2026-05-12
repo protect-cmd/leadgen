@@ -104,19 +104,20 @@ async def send_run_summary(
         else "queued only (auto-call off)"
     )
 
-    message = "\n".join(
-        [
-            f"{job} complete",
-            f"Filings: {metrics.get('filings_received', 0)}",
-            f"Duplicates: {metrics.get('duplicates_skipped', 0)}",
-            f"Discarded/skipped: {metrics.get('address_skipped', 0)}",
-            f"BatchData calls: {metrics.get('batchdata_calls', 0)}",
-            f"Phones found: {metrics.get('phones_found', 0)}",
-            f"GHL created: {metrics.get('ghl_created', 0)}",
-            f"Bland: {bland_text}",
-            f"Elapsed: {elapsed_text}",
-        ]
-    )
+    lines = [
+        f"{job} complete",
+        f"Filings: {metrics.get('filings_received', 0)}",
+        f"Duplicates: {metrics.get('duplicates_skipped', 0)}",
+        f"Discarded/skipped: {metrics.get('address_skipped', 0)}",
+        f"BatchData calls: {metrics.get('batchdata_calls', 0)}",
+        f"Phones found: {metrics.get('phones_found', 0)}",
+        f"GHL created: {metrics.get('ghl_created', 0)}",
+        f"Bland: {bland_text}",
+        f"Elapsed: {elapsed_text}",
+    ]
+    if "instantly_enrolled" in metrics:
+        lines.insert(-1, f"Instantly enrolled: {metrics['instantly_enrolled']}")
+    message = "\n".join(lines)
 
     return await send_alert(
         "Leadgen job complete",

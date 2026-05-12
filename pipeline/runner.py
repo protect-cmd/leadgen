@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from models.contact import EnrichedContact
@@ -17,6 +18,7 @@ from services import (
     dnc_service,
     geocode_service,
     ghl_service,
+    instantly_service,
     language_service,
     notification_service,
     rent_estimate_service,
@@ -40,6 +42,13 @@ _BUSINESS_RE = re.compile(
 SPANISH_LIKELY_TAG = "Spanish-Likely"
 
 
+@dataclass(frozen=True)
+class TrackResult:
+    ghl_created: bool
+    instantly_enrolled: bool = False
+    instantly_error: str | None = None
+
+
 def _is_business_name(name: str) -> bool:
     return bool(_BUSINESS_RE.search(name))
 
@@ -58,8 +67,11 @@ def _has_contact_method(contact: EnrichedContact) -> bool:
     return bool(contact.phone or contact.email)
 
 
-async def _process_track(contact: EnrichedContact) -> bool:
-    """Route, push to GHL, and queue/trigger Bland for one EC or NG track."""
+async def _process_track(contact: EnrichedContact) -> TrackResult:
+    """Route, push to GHL, queue/trigger Bland, and enroll in Instantly for one track.
+
+    Returns structured per-track processing metrics.
+    """
     filing = contact.filing
     is_ec = contact.track == "ec"
     outcome = router.route_ec(contact) if is_ec else router.route_ng(contact)
@@ -70,7 +82,7 @@ async def _process_track(contact: EnrichedContact) -> bool:
     )
 
     if outcome.action == "skip":
-        return False
+        return TrackResult(False)
 
     if not _has_contact_method(contact):
         await dedup_service.set_bland_status(
@@ -82,7 +94,7 @@ async def _process_track(contact: EnrichedContact) -> bool:
             f"{filing.case_number} [{contact.track.upper()}] skipped: "
             "no phone or email from enrichment"
         )
-        return False
+        return TrackResult(False)
 
     if outcome.action == "flag" and is_ec:
         if GHL_EC_REVIEW_STAGE_ID and contact.phone:
@@ -94,7 +106,7 @@ async def _process_track(contact: EnrichedContact) -> bool:
                 )
                 await dedup_service.update_ghl_id(filing.case_number, ghl_id, contact.track)
                 log.info(f"GHL review contact created [{contact.track.upper()}]: {ghl_id}")
-                return True
+                return TrackResult(True)
             except Exception as e:
                 log.warning(
                     f"GHL review failed [{contact.track.upper()}] "
@@ -105,7 +117,7 @@ async def _process_track(contact: EnrichedContact) -> bool:
                     stage=f"ghl_review_{contact.track}",
                     error=e,
                 )
-        return False
+        return TrackResult(False)
 
     if outcome.pipeline == "commercial":
         stage_id = GHL_EC_STAGE_ID if is_ec else GHL_NG_COMMERCIAL_STAGE_ID
@@ -129,7 +141,9 @@ async def _process_track(contact: EnrichedContact) -> bool:
             stage=f"ghl_create_{contact.track}",
             error=e,
         )
-        return False
+        return TrackResult(False)
+
+    instantly_result = await instantly_service.enroll(contact)
 
     if contact.phone:
         dnc_decision = dnc_service.can_call(contact)
@@ -143,7 +157,11 @@ async def _process_track(contact: EnrichedContact) -> bool:
                 f"{filing.case_number} [{contact.track.upper()}] Bland blocked: "
                 f"{dnc_decision.reason}"
             )
-            return True
+            return TrackResult(
+                True,
+                instantly_enrolled=instantly_result.enrolled,
+                instantly_error=instantly_result.error,
+            )
 
         if _AUTO_BLAND_CALLS_ENABLED:
             try:
@@ -170,7 +188,11 @@ async def _process_track(contact: EnrichedContact) -> bool:
             await dedup_service.set_bland_status(filing.case_number, contact.track, "pending")
             log.info(f"{filing.case_number} [{contact.track.upper()}] queued for Bland review")
 
-    return True
+    return TrackResult(
+        True,
+        instantly_enrolled=instantly_result.enrolled,
+        instantly_error=instantly_result.error,
+    )
 
 
 async def _classify_and_store(filing: Filing, contact: EnrichedContact | None = None) -> str:
@@ -242,6 +264,7 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         phones_found=0,
         ghl_created=0,
         bland_triggered=0,
+        instantly_enrolled=0,
     )
 
     for filing in filings:
@@ -343,7 +366,13 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         if ng_contact is not None:
             tasks.append(_process_track(ng_contact))
         results = await asyncio.gather(*tasks)
-        m["ghl_created"] += sum(1 for created in results if created)
+        for result in results:
+            if result.ghl_created:
+                m["ghl_created"] += 1
+            if result.instantly_error:
+                m.setdefault("instantly_failures", []).append(result.instantly_error)
+            if result.instantly_enrolled:
+                m["instantly_enrolled"] += 1
 
     elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
     m["elapsed_seconds"] = elapsed
@@ -362,6 +391,20 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
             stage="write_run_metrics",
             error=e,
         )
+    instantly_failures: list[str] = m.pop("instantly_failures", [])
+    if instantly_failures:
+        summary = "\n".join(instantly_failures[:20])
+        if len(instantly_failures) > 20:
+            summary += f"\n…and {len(instantly_failures) - 20} more"
+        try:
+            await notification_service.send_alert(
+                "Instantly enrollment errors",
+                f"{len(instantly_failures)} lead(s) failed to enroll:\n{summary}",
+                tags={"job": f"{state}/{county}"},
+            )
+        except Exception as e:
+            log.warning(f"Failed to send Instantly error alert: {e}")
+
     try:
         await notification_service.send_run_summary(
             m,

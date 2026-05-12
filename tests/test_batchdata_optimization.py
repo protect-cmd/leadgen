@@ -73,8 +73,8 @@ async def test_runner_reuses_one_property_lookup_for_landlord_and_tenant(monkeyp
             dnc_status="clear",
         )
 
-    async def process_track(contact: EnrichedContact) -> bool:
-        return True
+    async def process_track(contact: EnrichedContact) -> runner.TrackResult:
+        return runner.TrackResult(ghl_created=True)
 
     monkeypatch.setattr(runner, "_NG_ENABLED", True)
     monkeypatch.setattr(runner.dedup_service, "is_duplicate", is_duplicate)
@@ -117,8 +117,8 @@ async def test_runner_skips_property_lookup_when_scraper_supplies_type(monkeypat
             dnc_status="clear",
         )
 
-    async def process_track(contact: EnrichedContact) -> bool:
-        return True
+    async def process_track(contact: EnrichedContact) -> runner.TrackResult:
+        return runner.TrackResult(ghl_created=True)
 
     async def write_run_metrics(metrics: dict) -> None:
         calls.append(f"metrics:{metrics['batchdata_calls']}")
@@ -234,8 +234,8 @@ async def test_runner_skips_rent_precheck_when_disabled(monkeypatch):
             dnc_status="clear",
         )
 
-    async def process_track(contact: EnrichedContact) -> bool:
-        return True
+    async def process_track(contact: EnrichedContact) -> runner.TrackResult:
+        return runner.TrackResult(ghl_created=True)
 
     async def write_run_metrics(metrics: dict) -> None:
         calls.append(f"metrics:{metrics['batchdata_calls']}")
@@ -281,8 +281,8 @@ async def test_runner_skips_rent_precheck_when_scraper_supplies_claim_amount(mon
             dnc_status="clear",
         )
 
-    async def process_track(contact: EnrichedContact) -> bool:
-        return True
+    async def process_track(contact: EnrichedContact) -> runner.TrackResult:
+        return runner.TrackResult(ghl_created=True)
 
     monkeypatch.setattr(runner, "_NG_ENABLED", False)
     monkeypatch.setattr(runner, "rent_estimate_service", RentPrecheck, raising=False)

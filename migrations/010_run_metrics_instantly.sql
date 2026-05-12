@@ -1,0 +1,2 @@
+ALTER TABLE run_metrics
+ADD COLUMN IF NOT EXISTS instantly_enrolled INTEGER NOT NULL DEFAULT 0;

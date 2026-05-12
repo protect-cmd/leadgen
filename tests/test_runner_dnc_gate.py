@@ -75,7 +75,7 @@ async def test_process_track_blocks_bland_when_dnc_not_clear(monkeypatch):
 
     created = await runner._process_track(_contact("blocked"))
 
-    assert created is True
+    assert created.ghl_created is True
     assert statuses == [("TEST-DNC-blocked", "ec", "blocked_dnc")]
 
 
@@ -95,7 +95,7 @@ async def test_process_track_triggers_bland_when_dnc_clear(monkeypatch):
 
     created = await runner._process_track(_contact("clear"))
 
-    assert created is True
+    assert created.ghl_created is True
     assert statuses == [("TEST-DNC-clear", "ec", "triggered", "call-123")]
 
 
@@ -114,7 +114,7 @@ async def test_process_track_adds_spanish_likely_tag_to_ng_contacts(monkeypatch)
 
     created = await runner._process_track(_ng_spanish_contact())
 
-    assert created is True
+    assert created.ghl_created is True
     assert "NG-New-Filing" in captured_tags
     assert "Spanish-Likely" in captured_tags
 
@@ -138,7 +138,7 @@ async def test_process_track_uses_ec_stage_for_ec_commercial_contacts(monkeypatc
 
     created = await runner._process_track(contact)
 
-    assert created is True
+    assert created.ghl_created is True
     assert captured == [(["Commercial", "High-Priority"], "ec-stage")]
 
 
@@ -162,7 +162,7 @@ async def test_process_track_skips_ghl_when_contact_has_no_phone_or_email(monkey
 
     created = await runner._process_track(contact)
 
-    assert created is False
+    assert created.ghl_created is False
     assert statuses == [("TEST-SPANISH-TAG", "ng", "missing_contact_data")]
 
 
