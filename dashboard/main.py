@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -28,6 +29,11 @@ from models.filing import Filing
 from models.contact import EnrichedContact
 
 _scheduler_task: asyncio.Task | None = None
+_BLAND_TEST_RECIPIENTS = {
+    "ec": "+18883224034",
+    "ng": "+18882141711",
+    "ng_spanish": "+18882141711",
+}
 
 
 async def start_daily_scheduler() -> None:
@@ -62,6 +68,42 @@ class DncClearRequest(BaseModel):
     notes: str | None = None
 
 
+def _truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _bland_test_calls_enabled() -> bool:
+    return _truthy(os.getenv("BLAND_ENABLED")) and _truthy(os.getenv("BLAND_TEST_CALLS_ENABLED"))
+
+
+def _build_bland_test_contact(track: str) -> EnrichedContact:
+    if track not in _BLAND_TEST_RECIPIENTS:
+        raise HTTPException(404, "Unknown Bland QA track")
+
+    is_ec = track == "ec"
+    is_spanish = track == "ng_spanish"
+    filing = Filing(
+        case_number=f"QA-{track.upper()}-001",
+        tenant_name="Maria Garcia" if is_spanish else "QA Tenant",
+        landlord_name="QA Landlord",
+        property_address="123 Main St, Houston, TX 77002",
+        filing_date=date.today(),
+        state="TX",
+        county="Harris",
+        notice_type="Eviction",
+        source_url="https://example.test",
+    )
+    return EnrichedContact(
+        filing=filing,
+        track="ec" if is_ec else "ng",
+        phone=_BLAND_TEST_RECIPIENTS[track],
+        property_type="residential",
+        dnc_status="clear",
+        dnc_source="internal_qa",
+        language_hint="spanish_likely" if is_spanish else None,
+    )
+
+
 @app.get("/", response_class=FileResponse)
 async def dashboard():
     return FileResponse(_HTML)
@@ -85,6 +127,18 @@ async def lead_counts():
 async def metrics():
     rows = await get_recent_metrics(limit=10)
     return JSONResponse(rows)
+
+
+@app.post("/api/bland-test-calls/{track}")
+async def bland_test_call(track: str):
+    if not _bland_test_calls_enabled():
+        raise HTTPException(403, "Bland QA test calls are disabled")
+    contact = _build_bland_test_contact(track)
+    try:
+        call_id = await bland_service.trigger_voicemail(contact)
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    return {"status": "triggered", "track": track, "call_id": call_id}
 
 
 @app.post("/api/leads/{case_number}/approve")
