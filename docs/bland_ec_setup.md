@@ -73,6 +73,37 @@ grantellisgroup.com. That number again is {{ec_phone}}. Have a great day.
 **Voicemail message** (sent by our code, not configured in Bland UI):
 Same script as Node 1 — our code renders it from `bland_service.py` and sends it in the `voicemail.message` payload field.
 
+### AI Builder (Fastest Option)
+
+Go to: **app.bland.ai → Conversational Pathways → Generate Pathway** (the magic wand / "Generate" button).
+
+Paste this prompt exactly (meets the 100–8000 character requirement):
+
+```
+Create a Bland.ai conversational pathway named "Grant Ellis Group Outbound" for outbound voicemail drops to landlords facing eviction filings.
+
+Global prompt (apply to all nodes):
+You are Alex, a professional representative from Grant Ellis Group. Speak clearly and professionally at a moderate pace. If someone answers and interrupts, pause politely, then continue or offer to let them call back. Do not engage in extended conversation. End the call after the message.
+
+Voice: Professional male, neutral American accent. Use the voice named "mason" or "derek".
+
+Node 1 — Name: "Message", Type: Default, Static Text ON (do NOT use AI-generated text). Text:
+Hi, this message is for {{first_name}}. This is Alex calling from Grant Ellis Group. We noticed a recent filing in {{county}} County associated with your property at {{property_address}}. If you need county-specific eviction documents prepared — notices, UD packages, or serving instructions — we deliver them in 24 hours starting at $297. Attorney reviewed and county specific. Call us back at {{ec_phone}} or visit grantellisgroup.com. That number again is {{ec_phone}}. Have a great day.
+
+Node 2 — Name: "End Call", Type: End Call.
+
+Connect Node 1 to Node 2 with edge label "message complete".
+
+Variables used: {{first_name}}, {{county}}, {{property_address}}, {{ec_phone}}. These are injected at call time via request_data — do not modify or remove them.
+
+This pathway is for a single-message voicemail drop. There is no branching. The agent should not ask questions or wait for input. Static Text must be ON on Node 1 to ensure word-for-word delivery.
+```
+
+**After generation:**
+1. Review Node 1 — confirm Static Text is toggled ON
+2. Confirm voice is set to `mason` or `derek`
+3. Copy the pathway ID → set Railway `BLAND_EC_AGENT_ID=<id>`
+
 ---
 
 ## Agent 2 — Vantage Defense Group English Outbound (NG)
@@ -121,6 +152,37 @@ side. Call us now.
 1. Copy the full pathway ID from the list
 2. Set in Railway: `BLAND_NG_AGENT_ID=<paste-id>`
 
+### AI Builder (Fastest Option)
+
+Go to: **app.bland.ai → Conversational Pathways → Generate Pathway**.
+
+Paste this prompt:
+
+```
+Create a Bland.ai conversational pathway named "Vantage Defense Group English Outbound" for outbound voicemail drops to tenants who may be facing eviction.
+
+Global prompt (apply to all nodes):
+You are a compassionate representative from Vantage Defense Group calling tenants who may be facing eviction. Speak warmly and calmly. These people are stressed. If they engage, listen briefly, reassure them help is available, and give the callback number. Do not make legal promises. Do not discuss case details. End politely.
+
+Voice: Warm, empathetic female. Neutral American accent. Use the voice named "Sarah" or "Emily". Preview to confirm warmth — not robotic.
+
+Node 1 — Name: "Message", Type: Default, Static Text ON (do NOT use AI-generated text). Text:
+Hi, this message is for {{first_name}}. This is an important call from Vantage Defense Group. You may have recently received legal papers about your home. Do not ignore them — you have rights and you have options. We are here to help protect you and keep you in your home. Call us today at {{ng_phone}} for a free consultation. Someone is standing by right now to help you. If you prefer to continue in Spanish — hola {{first_name}}, le llama Vantage Defense Group. Usted tiene derechos. Estamos aqui para protegerle y ayudarle a quedarse en su hogar. Llamenos al {{ng_phone}}. La consulta es gratis y estamos aqui para usted ahora mismo. Again that number is {{ng_phone}}. We are on your side. Call us now.
+
+Node 2 — Name: "End Call", Type: End Call.
+
+Connect Node 1 to Node 2 with edge label "message complete".
+
+Variables used: {{first_name}}, {{ng_phone}}. These are injected at call time via request_data — do not modify or remove them.
+
+This pathway is for a single-message voicemail drop targeting English-speaking tenants (with a brief Spanish bridge). Static Text must be ON on Node 1 for word-for-word delivery. No branching. Agent should not ask questions.
+```
+
+**After generation:**
+1. Review Node 1 — confirm Static Text is toggled ON
+2. Confirm voice is `Sarah` or `Emily`
+3. Copy pathway ID → set Railway `BLAND_NG_AGENT_ID=<id>`
+
 ---
 
 ## Agent 3 — Vantage Defense Group Spanish Outbound (NG Spanish)
@@ -162,6 +224,37 @@ ahora mismo para ayudarle. Ese numero es {{ng_phone}}. Estamos de su lado. Llame
 **After creating:**
 1. Copy the full pathway ID
 2. Set in Railway: `BLAND_NG_SPANISH_AGENT_ID=<paste-id>`
+
+### AI Builder (Fastest Option)
+
+Go to: **app.bland.ai → Conversational Pathways → Generate Pathway**.
+
+Paste this prompt:
+
+```
+Create a Bland.ai conversational pathway named "Vantage Defense Group Spanish Outbound" for outbound voicemail drops to Spanish-speaking tenants who may be facing eviction.
+
+Global prompt (apply to all nodes):
+Eres una representante compasiva de Vantage Defense Group que llama a inquilinos que pueden estar enfrentando un desalojo. Habla con calidez y calma. Estas personas estan estresadas. Si interactuan, escuchalos brevemente, tranquilizalos y da el numero de contacto. No hagas promesas legales. Termina amablemente.
+
+Voice: Warm, empathetic female. Native Spanish speaker, neutral Latin American accent — NOT robotic. Use a Spanish-language voice such as "Isabella". Preview it with Spanish text before saving.
+
+Node 1 — Name: "Mensaje", Type: Default, Static Text ON (do NOT use AI-generated text). Text:
+Hola, este mensaje es para {{first_name}}. Le llama Vantage Defense Group. Es posible que usted haya recibido papeles legales sobre su hogar. No los ignore — usted tiene derechos y tiene opciones. Estamos aqui para protegerle y ayudarle a quedarse en su hogar. Llamenos hoy al {{ng_phone}} para una consulta gratuita. Alguien esta disponible ahora mismo para ayudarle. Ese numero es {{ng_phone}}. Estamos de su lado. Llamenos ahora.
+
+Node 2 — Name: "Fin de llamada", Type: End Call.
+
+Connect Node 1 to Node 2 with edge label "mensaje completo".
+
+Variables used: {{first_name}}, {{ng_phone}}. These are injected at call time via request_data — do not modify or remove them.
+
+This is a fully Spanish-language single-message voicemail drop. Static Text must be ON on Node 1 for word-for-word delivery. No branching. Agent should not ask questions or wait for input.
+```
+
+**After generation:**
+1. Review Node 1 — confirm Static Text is toggled ON
+2. Confirm voice is a native Spanish-language voice (e.g., `Isabella`)
+3. Copy pathway ID → set Railway `BLAND_NG_SPANISH_AGENT_ID=<id>`
 
 ---
 
@@ -257,6 +350,6 @@ Our code sends `retry.wait = 14400` (4 hours). Bland retries once if first attem
 
 ## Callback Phone Numbers (not yet wired in code)
 
-The `BLAND_EC_CALLBACK_PHONE_NUMBER` and `BLAND_NG_CALLBACK_PHONE_NUMBER` vars are reserved for a dedicated inbound line separate from the outbound calling number, if that's the setup. If the outbound number IS the callback number (same line), just set both to the same value.
+The `BLAND_EC_CALLBACK_PHONE_NUMBER`, `BLAND_NG_CALLBACK_PHONE_NUMBER`, and `BLAND_NG_SPANISH_CALLBACK_PHONE_NUMBER` vars are reserved for dedicated inbound lines separate from the outbound calling numbers, if that's the setup. If an outbound number IS also the callback number, set the matching callback var to the same value.
 
-Code currently uses the outbound number as the callback number in the script — update these Railway vars once numbers are confirmed.
+Code falls back to the outbound number when a callback var is blank. Set the callback vars in Railway once numbers are confirmed so the spoken script and Bland `request_data` match the intended inbound line.

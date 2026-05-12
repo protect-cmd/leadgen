@@ -17,6 +17,9 @@ _NG_SPANISH_AGENT_ID = os.getenv("BLAND_NG_SPANISH_AGENT_ID", "")
 _EC_PHONE_NUMBER = os.getenv("BLAND_EC_PHONE_NUMBER", "")
 _NG_PHONE_NUMBER = os.getenv("BLAND_NG_PHONE_NUMBER", "")
 _NG_SPANISH_PHONE_NUMBER = os.getenv("BLAND_NG_SPANISH_PHONE_NUMBER", "")
+_EC_CALLBACK_NUMBER = os.getenv("BLAND_EC_CALLBACK_PHONE_NUMBER", "")
+_NG_CALLBACK_NUMBER = os.getenv("BLAND_NG_CALLBACK_PHONE_NUMBER", "")
+_NG_SPANISH_CALLBACK_NUMBER = os.getenv("BLAND_NG_SPANISH_CALLBACK_PHONE_NUMBER", "")
 
 _EC_VOICEMAIL_SCRIPT = (
     "Hi, this message is for {first_name}. This is Alex calling from Grant Ellis Group. "
@@ -70,23 +73,32 @@ def _phone_number_for_contact(contact: EnrichedContact) -> str:
     return _NG_PHONE_NUMBER
 
 
+def _callback_number_for_contact(contact: EnrichedContact) -> str:
+    from_number = _phone_number_for_contact(contact) or "[PHONE_NUMBER]"
+    if contact.track == "ec":
+        return _EC_CALLBACK_NUMBER or from_number
+    if _is_spanish_likely(contact):
+        return _NG_SPANISH_CALLBACK_NUMBER or _NG_CALLBACK_NUMBER or from_number
+    return _NG_CALLBACK_NUMBER or from_number
+
+
 def render_voicemail_script(contact: EnrichedContact) -> str:
     filing = contact.filing
     first_name = contact.contact_first_name
-    from_number = _phone_number_for_contact(contact) or "[PHONE_NUMBER]"
+    callback = _callback_number_for_contact(contact)
 
     if contact.track == "ec":
         return _EC_VOICEMAIL_SCRIPT.format(
             first_name=first_name,
             county=filing.county,
             property_address=filing.property_address,
-            ec_phone=from_number,
+            ec_phone=callback,
         )
 
     script = _NG_SPANISH_VOICEMAIL_SCRIPT if _is_spanish_likely(contact) else _NG_VOICEMAIL_SCRIPT
     return script.format(
         first_name=first_name,
-        ng_phone=from_number,
+        ng_phone=callback,
     )
 
 
@@ -118,6 +130,7 @@ async def trigger_voicemail(contact: EnrichedContact) -> str:
 
     first_name = contact.contact_first_name
     voicemail_text = render_voicemail_script(contact)
+    callback = _callback_number_for_contact(contact)
 
     payload: dict = {
         "phone_number": contact.phone,
@@ -127,7 +140,7 @@ async def trigger_voicemail(contact: EnrichedContact) -> str:
             "first_name": first_name,
             "county": filing.county,
             "property_address": filing.property_address,
-            "ec_phone" if is_ec else "ng_phone": from_number,
+            "ec_phone" if is_ec else "ng_phone": callback,
             "language_hint": contact.language_hint or "",
         },
         "voicemail": {

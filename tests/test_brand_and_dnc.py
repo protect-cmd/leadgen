@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from models.contact import EnrichedContact
 from models.filing import Filing
 from services import batchdata_service, bland_service, dedup_service, dnc_service
@@ -72,6 +74,97 @@ def test_bland_renders_spanish_vdg_script_for_spanish_likely_contacts():
     assert "Hola, este mensaje es para Maria." in script
     assert "Vantage Defense Group" in script
     assert "consulta gratuita" in script
+
+
+def test_bland_ec_script_uses_callback_number(monkeypatch):
+    monkeypatch.setattr(bland_service, "_EC_PHONE_NUMBER", "+18185550100")
+    monkeypatch.setattr(bland_service, "_EC_CALLBACK_NUMBER", "+18885550100")
+
+    script = bland_service.render_voicemail_script(
+        EnrichedContact(
+            filing=_filing(),
+            track="ec",
+            phone="+12135550100",
+            dnc_status="clear",
+        )
+    )
+
+    assert "+18885550100" in script
+    assert "+18185550100" not in script
+
+
+def test_bland_spanish_script_uses_spanish_callback_number(monkeypatch):
+    monkeypatch.setattr(bland_service, "_NG_PHONE_NUMBER", "+18185550101")
+    monkeypatch.setattr(bland_service, "_NG_SPANISH_PHONE_NUMBER", "+18185550102")
+    monkeypatch.setattr(bland_service, "_NG_CALLBACK_NUMBER", "+18885550101")
+    monkeypatch.setattr(bland_service, "_NG_SPANISH_CALLBACK_NUMBER", "+18885550102")
+
+    script = bland_service.render_voicemail_script(
+        EnrichedContact(
+            filing=Filing(
+                case_number="TEST-SPANISH-CALLBACK",
+                tenant_name="Maria Garcia",
+                property_address="123 Main St, Houston, TX 77002",
+                landlord_name="Grant Owner",
+                filing_date=date(2026, 5, 6),
+                state="TX",
+                county="Harris",
+                notice_type="Eviction",
+                source_url="https://example.test",
+            ),
+            track="ng",
+            phone="+12135550100",
+            dnc_status="clear",
+            language_hint="spanish_likely",
+        )
+    )
+
+    assert "+18885550102" in script
+    assert "+18885550101" not in script
+    assert "+18185550102" not in script
+
+
+@pytest.mark.asyncio
+async def test_bland_request_data_uses_callback_number(monkeypatch):
+    payloads: list[dict] = []
+
+    class Response:
+        status_code = 200
+        text = "ok"
+
+        def json(self):
+            return {"call_id": "call-123"}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, json, headers):
+            payloads.append(json)
+            return Response()
+
+    monkeypatch.setenv("BLAND_API_KEY", "key")
+    monkeypatch.setattr(bland_service, "_EC_AGENT_ID", "agent-ec")
+    monkeypatch.setattr(bland_service, "_EC_PHONE_NUMBER", "+18185550100")
+    monkeypatch.setattr(bland_service, "_EC_CALLBACK_NUMBER", "+18885550100")
+    monkeypatch.setattr(bland_service.httpx, "AsyncClient", lambda **kwargs: Client())
+
+    call_id = await bland_service.trigger_voicemail(
+        EnrichedContact(
+            filing=_filing(),
+            track="ec",
+            phone="+12135550100",
+            dnc_status="clear",
+        )
+    )
+
+    assert call_id == "call-123"
+    assert payloads[0]["from"] == "+18185550100"
+    assert payloads[0]["request_data"]["ec_phone"] == "+18885550100"
+    assert "+18885550100" in payloads[0]["voicemail"]["message"]
 
 
 def test_batchdata_phone_selection_preserves_clear_dnc_status():
