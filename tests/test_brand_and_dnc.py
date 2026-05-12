@@ -89,8 +89,9 @@ def test_bland_ec_script_uses_callback_number(monkeypatch):
         )
     )
 
-    assert "+18885550100" in script
+    assert "8 8 8, 5 5 5, 0 1 0 0" in script
     assert "+18185550100" not in script
+    assert "24 hours" not in script
 
 
 def test_bland_spanish_script_uses_spanish_callback_number(monkeypatch):
@@ -119,8 +120,8 @@ def test_bland_spanish_script_uses_spanish_callback_number(monkeypatch):
         )
     )
 
-    assert "+18885550102" in script
-    assert "+18885550101" not in script
+    assert "8 8 8, 5 5 5, 0 1 0 2" in script
+    assert "8 8 8, 5 5 5, 0 1 0 1" not in script
     assert "+18185550102" not in script
 
 
@@ -163,8 +164,8 @@ async def test_bland_request_data_uses_callback_number(monkeypatch):
 
     assert call_id == "call-123"
     assert payloads[0]["from"] == "+18185550100"
-    assert payloads[0]["request_data"]["ec_phone"] == "+18885550100"
-    assert "+18885550100" in payloads[0]["voicemail"]["message"]
+    assert payloads[0]["request_data"]["ec_phone"] == "8 8 8, 5 5 5, 0 1 0 0"
+    assert "8 8 8, 5 5 5, 0 1 0 0" in payloads[0]["voicemail"]["message"]
 
 
 def test_batchdata_phone_selection_preserves_clear_dnc_status():

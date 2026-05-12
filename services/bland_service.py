@@ -25,7 +25,7 @@ _EC_VOICEMAIL_SCRIPT = (
     "Hi, this message is for {first_name}. This is Alex calling from Grant Ellis Group. "
     "We noticed a recent filing in {county} County associated with your property at "
     "{property_address}. If you need county-specific eviction documents prepared - "
-    "notices, UD packages, or serving instructions - we deliver them in 24 hours "
+    "notices, UD packages, or serving instructions - we can help prepare them quickly, "
     "starting at $297. Attorney reviewed and county specific. Call us back at "
     "{ec_phone} or visit grantellisgroup.com. That number again is {ec_phone}. "
     "Have a great day."
@@ -82,10 +82,24 @@ def _callback_number_for_contact(contact: EnrichedContact) -> str:
     return _NG_CALLBACK_NUMBER or from_number
 
 
+def _spoken_phone_number(number: str) -> str:
+    digits = "".join(ch for ch in number if ch.isdigit())
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    if len(digits) != 10:
+        return number
+
+    return (
+        f"{digits[0]} {digits[1]} {digits[2]}, "
+        f"{digits[3]} {digits[4]} {digits[5]}, "
+        f"{digits[6]} {digits[7]} {digits[8]} {digits[9]}"
+    )
+
+
 def render_voicemail_script(contact: EnrichedContact) -> str:
     filing = contact.filing
     first_name = contact.contact_first_name
-    callback = _callback_number_for_contact(contact)
+    callback = _spoken_phone_number(_callback_number_for_contact(contact))
 
     if contact.track == "ec":
         return _EC_VOICEMAIL_SCRIPT.format(
@@ -130,7 +144,7 @@ async def trigger_voicemail(contact: EnrichedContact) -> str:
 
     first_name = contact.contact_first_name
     voicemail_text = render_voicemail_script(contact)
-    callback = _callback_number_for_contact(contact)
+    callback = _spoken_phone_number(_callback_number_for_contact(contact))
 
     payload: dict = {
         "phone_number": contact.phone,
