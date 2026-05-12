@@ -2,8 +2,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from dotenv import load_dotenv
+import httpx
 from supabase import create_client, Client
 from models.filing import Filing
 from models.contact import EnrichedContact, RoutingOutcome
@@ -12,6 +14,8 @@ from pipeline.qualification import QualificationOutcome
 load_dotenv()
 
 log = logging.getLogger(__name__)
+_SUPABASE_RETRY_ATTEMPTS = 3
+_SUPABASE_RETRY_DELAY_SECONDS = 1.0
 
 _client: Client = create_client(
     os.environ["SUPABASE_URL"],
@@ -19,9 +23,26 @@ _client: Client = create_client(
 )
 
 
+def _execute_with_retry(query, label: str):
+    for attempt in range(1, _SUPABASE_RETRY_ATTEMPTS + 1):
+        try:
+            return query.execute()
+        except httpx.TransportError as exc:
+            if attempt == _SUPABASE_RETRY_ATTEMPTS:
+                raise
+            log.warning(
+                "Supabase %s transport error on attempt %s/%s: %s",
+                label,
+                attempt,
+                _SUPABASE_RETRY_ATTEMPTS,
+                exc,
+            )
+            time.sleep(_SUPABASE_RETRY_DELAY_SECONDS * attempt)
+
+
 def _execute_optional_lead_contact_write(query) -> None:
     try:
-        query.execute()
+        _execute_with_retry(query, "lead_contacts optional write")
     except Exception as exc:
         # Keep legacy filing writes alive while the lead_contacts migration is
         # being applied across environments.
@@ -31,25 +52,31 @@ def _execute_optional_lead_contact_write(query) -> None:
 
 async def is_duplicate(case_number: str) -> bool:
     def _query() -> bool:
-        result = _client.table("filings").select("case_number").eq("case_number", case_number).execute()
+        result = _execute_with_retry(
+            _client.table("filings").select("case_number").eq("case_number", case_number),
+            "duplicate check",
+        )
         return len(result.data) > 0
     return await asyncio.to_thread(_query)
 
 
 async def insert_filing(filing: Filing) -> None:
     def _insert() -> None:
-        _client.table("filings").insert({
-            "case_number": filing.case_number,
-            "tenant_name": filing.tenant_name,
-            "property_address": filing.property_address,
-            "landlord_name": filing.landlord_name,
-            "filing_date": filing.filing_date.isoformat(),
-            "court_date": filing.court_date.isoformat() if filing.court_date else None,
-            "state": filing.state,
-            "county": filing.county,
-            "notice_type": filing.notice_type,
-            "source_url": filing.source_url,
-        }).execute()
+        _execute_with_retry(
+            _client.table("filings").insert({
+                "case_number": filing.case_number,
+                "tenant_name": filing.tenant_name,
+                "property_address": filing.property_address,
+                "landlord_name": filing.landlord_name,
+                "filing_date": filing.filing_date.isoformat(),
+                "court_date": filing.court_date.isoformat() if filing.court_date else None,
+                "state": filing.state,
+                "county": filing.county,
+                "notice_type": filing.notice_type,
+                "source_url": filing.source_url,
+            }),
+            "insert filing",
+        )
     await asyncio.to_thread(_insert)
 
 
@@ -109,10 +136,13 @@ async def upsert_contact_enrichment(contact: EnrichedContact) -> None:
             legacy_payload = _enrichment_payload(contact)
         else:
             legacy_payload = _ng_legacy_enrichment_payload(contact)
-        _client.table("filings").update(legacy_payload).eq(
-            "case_number",
-            contact.filing.case_number,
-        ).execute()
+        _execute_with_retry(
+            _client.table("filings").update(legacy_payload).eq(
+                "case_number",
+                contact.filing.case_number,
+            ),
+            "update enrichment",
+        )
     await asyncio.to_thread(_update)
 
 
@@ -122,21 +152,27 @@ async def update_enrichment(contact: EnrichedContact) -> None:
 
 async def update_classification(case_number: str, outcome: QualificationOutcome) -> None:
     def _update() -> None:
-        _client.table("filings").update({
-            "property_zip": outcome.property_zip,
-            "lead_bucket": outcome.lead_bucket,
-            "discard_reason": outcome.discard_reason,
-            "qualification_notes": outcome.qualification_notes,
-            "classified_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("case_number", case_number).execute()
+        _execute_with_retry(
+            _client.table("filings").update({
+                "property_zip": outcome.property_zip,
+                "lead_bucket": outcome.lead_bucket,
+                "discard_reason": outcome.discard_reason,
+                "qualification_notes": outcome.qualification_notes,
+                "classified_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("case_number", case_number),
+            "update classification",
+        )
     await asyncio.to_thread(_update)
 
 
 async def update_language_hint(case_number: str, language_hint: str | None) -> None:
     def _update() -> None:
-        _client.table("filings").update({
-            "language_hint": language_hint,
-        }).eq("case_number", case_number).execute()
+        _execute_with_retry(
+            _client.table("filings").update({
+                "language_hint": language_hint,
+            }).eq("case_number", case_number),
+            "update language hint",
+        )
     await asyncio.to_thread(_update)
 
 
@@ -178,16 +214,22 @@ async def clear_dnc_status(
                 case_number,
             ).eq("track", track)
         )
-        _client.table("filings").update(payload).eq("case_number", case_number).execute()
+        _execute_with_retry(
+            _client.table("filings").update(payload).eq("case_number", case_number),
+            "clear dnc",
+        )
     await asyncio.to_thread(_update)
 
 
 async def update_routing(case_number: str, outcome: RoutingOutcome) -> None:
     def _update() -> None:
-        _client.table("filings").update({
-            "routed": True,
-            "routing_outcome": outcome.action,
-        }).eq("case_number", case_number).execute()
+        _execute_with_retry(
+            _client.table("filings").update({
+                "routed": True,
+                "routing_outcome": outcome.action,
+            }).eq("case_number", case_number),
+            "update routing",
+        )
     await asyncio.to_thread(_update)
 
 
@@ -199,9 +241,12 @@ async def update_contact_ghl_id(case_number: str, ghl_contact_id: str, track: st
                 "ghl_contact_id": ghl_contact_id,
             }).eq("case_number", case_number).eq("track", track)
         )
-        _client.table("filings").update({
-            column: ghl_contact_id,
-        }).eq("case_number", case_number).execute()
+        _execute_with_retry(
+            _client.table("filings").update({
+                column: ghl_contact_id,
+            }).eq("case_number", case_number),
+            "update ghl id",
+        )
     await asyncio.to_thread(_update)
 
 
@@ -212,15 +257,18 @@ async def update_ghl_id(case_number: str, ghl_contact_id: str, track: str = "ec"
 async def mark_bland_triggered(case_number: str, track: str = "ec") -> None:
     column = "bland_triggered" if track == "ec" else "ng_bland_triggered"
     def _update() -> None:
-        _client.table("filings").update({
-            column: True,
-        }).eq("case_number", case_number).execute()
+        _execute_with_retry(
+            _client.table("filings").update({
+                column: True,
+            }).eq("case_number", case_number),
+            "mark bland triggered",
+        )
     await asyncio.to_thread(_update)
 
 
 async def write_run_metrics(metrics: dict) -> None:
     def _insert() -> None:
-        _client.table("run_metrics").insert(metrics).execute()
+        _execute_with_retry(_client.table("run_metrics").insert(metrics), "write run metrics")
     await asyncio.to_thread(_insert)
 
 
@@ -239,7 +287,10 @@ async def set_bland_status(case_number: str, track: str, status: str, call_id: s
                 case_number,
             ).eq("track", track)
         )
-        _client.table("filings").update(payload).eq("case_number", case_number).execute()
+        _execute_with_retry(
+            _client.table("filings").update(payload).eq("case_number", case_number),
+            "set bland status",
+        )
     await asyncio.to_thread(_update)
 
 
