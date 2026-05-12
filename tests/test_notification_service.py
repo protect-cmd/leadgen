@@ -53,6 +53,7 @@ async def test_send_alert_posts_to_pushover_when_enabled(monkeypatch):
     monkeypatch.setenv("PUSHOVER_ENABLED", "true")
     monkeypatch.setenv("PUSHOVER_APP_TOKEN", "app-token")
     monkeypatch.setenv("PUSHOVER_USER_KEY", "user-key")
+    monkeypatch.delenv("PUSHOVER_USER_KEYS", raising=False)
     monkeypatch.setattr(notification_service.httpx, "AsyncClient", lambda **kwargs: Client())
 
     result = await notification_service.send_alert(
@@ -96,6 +97,7 @@ async def test_send_alert_returns_false_when_pushover_fails(monkeypatch):
     monkeypatch.setenv("PUSHOVER_ENABLED", "true")
     monkeypatch.setenv("PUSHOVER_APP_TOKEN", "app-token")
     monkeypatch.setenv("PUSHOVER_USER_KEY", "user-key")
+    monkeypatch.delenv("PUSHOVER_USER_KEYS", raising=False)
     monkeypatch.setattr(notification_service.httpx, "AsyncClient", lambda **kwargs: Client())
 
     result = await notification_service.send_alert("Title", "Message")
@@ -125,6 +127,7 @@ async def test_send_run_summary_posts_success_details(monkeypatch):
     monkeypatch.setenv("PUSHOVER_ENABLED", "true")
     monkeypatch.setenv("PUSHOVER_APP_TOKEN", "app-token")
     monkeypatch.setenv("PUSHOVER_USER_KEY", "user-key")
+    monkeypatch.delenv("PUSHOVER_USER_KEYS", raising=False)
     monkeypatch.setattr(notification_service.httpx, "AsyncClient", lambda **kwargs: Client())
 
     result = await notification_service.send_run_summary(
