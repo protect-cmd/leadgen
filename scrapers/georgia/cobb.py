@@ -25,15 +25,29 @@ _CALENDAR_URL = "https://judicial.cobbcounty.gov/mc/magCalendars/"
 
 _COURT_DATE_RE = re.compile(
     r"(MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY)"
-    r",\s+(\w+\s+\d{1,2},\s+\d{4})",
+    r"\s*,\s+(\w+\s+\d{1,2},\s+\d{4})",
     re.IGNORECASE,
 )
-_CASE_RE = re.compile(r"^\s*\d+\s+(\d{2}[A-Z]{2,3}\d{4,7})\s+(.*)", re.IGNORECASE)
+# Format: [ N ] YY-E-NNNNN PLAINTIFF_START (attorney stripped by page crop)
+_CASE_RE = re.compile(r"^\[\s*\d+\s*\]\s+(\d{2}-[A-Z]-\d{4,7})\s+(.*)", re.IGNORECASE)
 _VS_RE = re.compile(r"^\s*VS\s*$", re.IGNORECASE)
-_HEARING_TYPE_RE = re.compile(
-    r"DISPOSSESSORY\s+HEARING|MOTION\s+HEARING|WRIT\s+HEARING", re.IGNORECASE
+_HEARING_VS_RE = re.compile(r"\bVS\s*$", re.IGNORECASE)  # "DISPOSSESSORY HEARING VS"
+_HEARING_PREFIX_RE = re.compile(
+    r"^(?:DISPOSSESSORY|MOTION|WRIT)\s+HEARING\s*|^REVIEW\s+BY\s+JUDGE\s*",
+    re.IGNORECASE,
 )
-_OCCUPANTS_RE = re.compile(r"AND\s+ALL\s+OCCUPANTS|ET\s+AL\.?", re.IGNORECASE)
+_OCCUPANTS_RE = re.compile(
+    r"AND\s+ALL\s+(?:OTHER\s+)?OCCUPANTS|AND\s+ALL\s+OTHERS|ALL\s+OTHER\s+OCCUPANTS"
+    r"|ALL\s+OTHERS|ET\s+AL\.?",
+    re.IGNORECASE,
+)
+# Skip repeated page headers (court date line also skipped by day-of-week prefix)
+_HEADER_SKIP_RE = re.compile(
+    r"^(?:MAGISTRATE COURT|RUNDATE:|JUDGE\s+\w|COURTROOM\s+\w|DISPOSSESSORY CALENDAR"
+    r"|(?:MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY)\s*,)",
+    re.IGNORECASE,
+)
+_ATTY_X_CUT = 400.0  # crop x threshold: removes attorney column on the right
 
 
 class CobbMagistrateCourtScraper:
@@ -53,8 +67,8 @@ class CobbMagistrateCourtScraper:
         self.address_match_counts: Counter = Counter()
 
         self._session = requests.Session()
-        self._session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; eviction-leadgen/1.0)"})
-        self._assessor = CobbAssessorClient(session=self._session)
+        self._session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"})
+        self._assessor = CobbAssessorClient()  # separate session — assessor sets Accept: application/json
 
     def scrape(self) -> list[Filing]:
         self.last_error = None
@@ -169,7 +183,11 @@ def _parse_date_from_filename(filename: str) -> date | None:
 
 
 def _parse_pdf_bytes(pdf_bytes: bytes) -> dict:
-    """Parse a Cobb DISPO PDF. Returns {'court_date': date|None, 'cases': list[dict]}."""
+    """Parse a Cobb DISPO PDF. Returns {'court_date': date|None, 'cases': list[dict]}.
+
+    Pages are cropped to x < _ATTY_X_CUT to strip the attorney/agent column before
+    text extraction, leaving clean plaintiff and defendant lines.
+    """
     court_date: date | None = None
     cases: list[dict] = []
     current: dict | None = None
@@ -180,37 +198,43 @@ def _parse_pdf_bytes(pdf_bytes: bytes) -> dict:
         if current and current.get("case_number"):
             cases.append({
                 "case_number": current["case_number"],
-                "plaintiff": current.get("plaintiff", "").strip(),
+                "plaintiff": " ".join(current.get("plaintiff_parts", [])).strip(),
                 "defendant": current.get("defendant", "").strip(),
             })
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page in pdf.pages:
-            text = page.extract_text() or ""
-            for raw_line in text.splitlines():
-                line = raw_line.strip()
+            h = float(page.height)
+            cropped = page.crop((0, 0, _ATTY_X_CUT, h))
+            text = cropped.extract_text() or ""
+            for line in text.splitlines():
+                line = line.strip()
                 if not line:
                     continue
 
-                # Extract court date from header
+                # Extract court date before header skip (date is on a day-of-week header line)
                 if court_date is None:
                     m = _COURT_DATE_RE.search(line)
                     if m:
                         try:
-                            court_date = datetime.strptime(
-                                m.group(2).strip(), "%B %d, %Y"
-                            ).date()
+                            court_date = datetime.strptime(m.group(2).strip(), "%B %d, %Y").date()
                         except ValueError:
                             pass
                         continue
 
-                # New case entry
-                m = _CASE_RE.match(raw_line)
+                # Skip repeated page headers
+                if _HEADER_SKIP_RE.match(line):
+                    continue
+
+                # New case entry: [ N ] YY-E-NNNNN PLAINTIFF_START
+                m = _CASE_RE.match(line)
                 if m:
                     _finalize()
-                    case_number = m.group(1).upper()
-                    plaintiff_raw = re.sub(r"\s{2,}.*$", "", m.group(2)).strip()
-                    current = {"case_number": case_number, "plaintiff": plaintiff_raw}
+                    current = {
+                        "case_number": m.group(1).upper(),
+                        "plaintiff_parts": [m.group(2).strip()],
+                        "defendant": "",
+                    }
                     after_vs = False
                     defendant_set = False
                     continue
@@ -218,16 +242,31 @@ def _parse_pdf_bytes(pdf_bytes: bytes) -> dict:
                 if current is None:
                     continue
 
-                if _VS_RE.match(line):
-                    after_vs = True
+                if not after_vs:
+                    if _VS_RE.match(line):
+                        after_vs = True
+                        continue
+                    if _HEARING_VS_RE.search(line):
+                        # e.g. "DISPOSSESSORY HEARING VS" — VS is at end
+                        after_vs = True
+                        continue
+                    current["plaintiff_parts"].append(line)
                     continue
 
-                if after_vs and _HEARING_TYPE_RE.search(line):
+                # After VS: collect defendant, skip occupant terminators
+                if _OCCUPANTS_RE.search(line):
                     continue
 
-                if after_vs and not defendant_set and not _OCCUPANTS_RE.search(line):
-                    current["defendant"] = line
-                    defendant_set = True
+                if not defendant_set:
+                    m_h = _HEARING_PREFIX_RE.match(line)
+                    if m_h:
+                        remaining = line[m_h.end():].strip()
+                        if remaining and not _OCCUPANTS_RE.search(remaining):
+                            current["defendant"] = remaining
+                            defendant_set = True
+                    else:
+                        current["defendant"] = line
+                        defendant_set = True
 
     _finalize()
     return {"court_date": court_date, "cases": cases}
