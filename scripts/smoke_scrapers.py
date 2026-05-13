@@ -13,9 +13,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
 
+from scrapers.arizona.maricopa import MaricopaJusticeCourtScraper
 from scrapers.florida.broward import BrowardScraper
 from scrapers.florida.hillsborough import HillsboroughScraper
 from scrapers.florida.miami_dade import MiamiDadeScraper
+from scrapers.georgia.cobb import CobbMagistrateCourtScraper
+from scrapers.georgia.researchga import ReSearchGAScraper
 from scrapers.tennessee.davidson import DavidsonTNScraper
 from scrapers.texas.harris import HarrisCountyScraper
 from services import notification_service
@@ -55,10 +58,25 @@ def _florida_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, obj
     ]
 
 
+def _georgia_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, object]]:
+    return [("re:SearchGA", ReSearchGAScraper(lookback_days=lookback_days, headless=headless))]
+
+
+def _arizona_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, object]]:
+    return [("Maricopa", MaricopaJusticeCourtScraper(lookback_days=lookback_days, max_cases=25))]
+
+
+def _georgia_cobb_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, object]]:
+    return [("Cobb Magistrate", CobbMagistrateCourtScraper(lookback_days=lookback_days, max_cases=25, enrich_addresses=False))]
+
+
 SCRAPER_FACTORIES: dict[str, StateFactory] = {
     "texas": _texas_scrapers,
     "tennessee": _tennessee_scrapers,
     "florida": _florida_scrapers,
+    "georgia": _georgia_scrapers,
+    "arizona": _arizona_scrapers,
+    "georgia_cobb": _georgia_cobb_scrapers,
 }
 
 STATE_ALIASES = {
@@ -74,6 +92,16 @@ STATE_ALIASES = {
     "miami-dade": "florida",
     "broward": "florida",
     "hillsborough": "florida",
+    "ga": "georgia",
+    "georgia": "georgia",
+    "researchga": "georgia",
+    "re:searchga": "georgia",
+    "az": "arizona",
+    "arizona": "arizona",
+    "maricopa": "arizona",
+    "georgia_cobb": "georgia_cobb",
+    "cobb": "georgia_cobb",
+    "ga_cobb": "georgia_cobb",
 }
 
 
@@ -164,7 +192,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--states",
         default="texas,tennessee",
-        help="Comma-separated states/aliases: texas, tx, harris, tennessee, tn, davidson, all.",
+        help="Comma-separated states/aliases: texas, tx, harris, tennessee, tn, davidson, florida, fl, georgia, ga, arizona, az, maricopa, georgia_cobb, cobb, all.",
     )
     parser.add_argument("--lookback-days", type=int, default=2)
     parser.add_argument("--notify", action="store_true", help="Send Pushover summary if enabled.")

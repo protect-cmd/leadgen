@@ -20,11 +20,14 @@ class ScheduledJob:
     hour: int
     minute: int
     script_name: str
+    args: tuple[str, ...] = ()
 
 
 SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
     ScheduledJob("texas", 13, 0, "run_texas.py"),
     ScheduledJob("tennessee", 13, 20, "run_tennessee.py"),
+    ScheduledJob("arizona", 13, 40, "run_arizona.py", args=("--pipe", "--notify")),
+    ScheduledJob("georgia_cobb", 14, 0, "run_georgia_cobb.py", args=("--pipe", "--notify")),
 )
 
 
@@ -82,10 +85,10 @@ def is_due_for_catch_up(
     return 0 <= elapsed <= (catch_up_seconds if catch_up_seconds is not None else _catch_up_seconds())
 
 
-async def run_script_once(script_name: str) -> int:
+async def run_script_once(script_name: str, args: tuple[str, ...] = ()) -> int:
     script = Path(__file__).resolve().parent.parent / "jobs" / script_name
     log.info("Starting scheduled scrape subprocess: %s", script)
-    process = await asyncio.create_subprocess_exec(sys.executable, str(script))
+    process = await asyncio.create_subprocess_exec(sys.executable, str(script), *args)
     return_code = await process.wait()
     if return_code:
         log.warning("Scheduled scrape %s exited with code %s", script_name, return_code)
@@ -98,7 +101,7 @@ async def run_daily_once() -> int:
     """Run both daily state jobs sequentially for manual/backward-compatible use."""
     return_code = 0
     for job in SCHEDULED_JOBS:
-        return_code = max(return_code, await run_script_once(job.script_name))
+        return_code = max(return_code, await run_script_once(job.script_name, job.args))
     return return_code
 
 
@@ -116,7 +119,7 @@ async def run_forever() -> None:
             for job in due_jobs:
                 started_dates.add((job.name, now.date().isoformat()))
                 log.info("Starting scheduled %s scrape", job.name)
-                await run_script_once(job.script_name)
+                await run_script_once(job.script_name, job.args)
             continue
 
         next_delay = min(

@@ -53,10 +53,29 @@ def test_scheduler_does_not_catch_up_old_state_window():
     assert not is_due_for_catch_up(now, hour=13, minute=20, catch_up_seconds=3600)
 
 
-def test_scheduler_defines_texas_and_tennessee_as_separate_jobs():
+def test_scheduler_defines_daily_jobs():
     from services import daily_scheduler
 
     assert [(job.name, job.hour, job.minute, job.script_name) for job in daily_scheduler.SCHEDULED_JOBS] == [
         ("texas", 13, 0, "run_texas.py"),
         ("tennessee", 13, 20, "run_tennessee.py"),
+        ("arizona", 13, 40, "run_arizona.py"),
+        ("georgia_cobb", 14, 0, "run_georgia_cobb.py"),
     ]
+    az_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "arizona")
+    assert "--pipe" in az_job.args
+    assert "--notify" in az_job.args
+
+
+def test_georgia_cobb_job_is_scheduled():
+    from services.daily_scheduler import SCHEDULED_JOBS
+    names = [j.name for j in SCHEDULED_JOBS]
+    assert "georgia_cobb" in names
+
+
+def test_georgia_cobb_job_has_pipe_and_notify():
+    from services.daily_scheduler import SCHEDULED_JOBS
+    job = next(j for j in SCHEDULED_JOBS if j.name == "georgia_cobb")
+    assert "--pipe" in job.args
+    assert "--notify" in job.args
+    assert job.script_name == "run_georgia_cobb.py"

@@ -27,11 +27,18 @@ class AsyncScraper:
 
 
 def test_parse_states_accepts_aliases_and_all():
-    assert smoke_scrapers.parse_states("texas,tn") == ["texas", "tennessee"]
+    assert smoke_scrapers.parse_states("texas,tn,ga,az") == [
+        "texas",
+        "tennessee",
+        "georgia",
+        "arizona",
+    ]
     all_states = smoke_scrapers.parse_states("all")
     assert "texas" in all_states
     assert "tennessee" in all_states
     assert "florida" in all_states
+    assert "georgia" in all_states
+    assert "arizona" in all_states
 
 
 @pytest.mark.asyncio
@@ -82,3 +89,18 @@ async def test_run_smoke_sends_redacted_pushover_summary(monkeypatch):
             {"mode": "scraper-only", "runner": "not called"},
         )
     ]
+
+
+def test_parse_states_recognises_cobb_alias():
+    from scripts.smoke_scrapers import parse_states
+    assert parse_states("cobb") == ["georgia_cobb"]
+    assert parse_states("georgia_cobb") == ["georgia_cobb"]
+
+
+def test_georgia_cobb_factory_returns_scraper():
+    from scripts.smoke_scrapers import SCRAPER_FACTORIES
+    scrapers = SCRAPER_FACTORIES["georgia_cobb"](7, True)
+    assert len(scrapers) == 1
+    label, scraper = scrapers[0]
+    assert label == "Cobb Magistrate"
+    assert scraper.enrich_addresses is False
