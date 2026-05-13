@@ -114,25 +114,28 @@ class CobbMagistrateCourtScraper:
                     if match.status == "single_match" and match.records:
                         rec = match.records[0]
                         if rec.situs_addr:
-                            geo = geocode_cache.get(rec.situs_addr)
-                            if geo is None:
+                            if rec.situs_addr not in geocode_cache:
                                 time.sleep(1.1)  # Nominatim rate limit
-                                geo = geocode_street_cobb(rec.situs_addr)
-                                geocode_cache[rec.situs_addr] = geo
+                                geocode_cache[rec.situs_addr] = geocode_street_cobb(rec.situs_addr)
+                            geo = geocode_cache[rec.situs_addr]
                             if geo and geo.postcode:
-                                city = geo.city or "Marietta"
-                                property_address = (
-                                    f"{rec.situs_addr}, {city}, GA {geo.postcode}"
-                                )
+                                city = geo.city or ""
+                                if city:
+                                    property_address = f"{rec.situs_addr}, {city}, GA {geo.postcode}"
+                                else:
+                                    property_address = f"{rec.situs_addr}, GA {geo.postcode}"
                 else:
-                    self.address_match_counts["no_match"] += 1
+                    # landlord=="Unknown" with enrichment enabled = genuine no_match
+                    if self.enrich_addresses and landlord == "Unknown":
+                        self.address_match_counts["no_match"] += 1
+                    # enrich_addresses=False (smoke mode) = don't track
 
                 filings.append(Filing(
                     case_number=case_num,
                     tenant_name=tenant,
                     property_address=property_address,
                     landlord_name=landlord,
-                    filing_date=court_dt or date.today(),
+                    filing_date=court_dt or today,
                     court_date=court_dt,
                     state=STATE,
                     county=COUNTY,

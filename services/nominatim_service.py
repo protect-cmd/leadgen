@@ -46,5 +46,5 @@ def geocode_street_cobb(street: str) -> NominatimResult | None:
         postcode = addr.get("postcode")
         return NominatimResult(city=city, postcode=postcode)
     except Exception:
-        log.warning("Nominatim geocode failed for %r", street)
+        log.warning("Nominatim geocode failed for %r", street, exc_info=True)
         return None
