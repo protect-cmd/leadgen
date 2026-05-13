@@ -99,6 +99,7 @@ Expected production flow:
 - Run focused tests for the changed behavior.
 - Run `pytest -q` before claiming the whole workflow is ready.
 - Use `python scripts/smoke_scrapers.py --states texas,tennessee --notify` for repeatable scraper-only smoke tests.
+- Scraper-only smoke aliases include `tennessee`/`tn`/`davidson`, `georgia_cobb`/`cobb`, and `georgia_dekalb`/`dekalb`; keep this mapping current when adding proof scrapers.
 - Scraper smoke tests should avoid triggering Supabase/GHL/Bland/BatchData unless that is explicitly part of the requested test.
 - User has pre-approved scraper-only smoke tests when needed. Do not call the pipeline runner, BatchData enrichment, GHL, Bland.ai, or other production outreach/state-changing services during those tests without asking for explicit permission first.
 - For Texas/Harris, scraper-only smoke tests are preferred while the portal is unstable.

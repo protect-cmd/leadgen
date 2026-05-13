@@ -18,6 +18,7 @@ from scrapers.florida.broward import BrowardScraper
 from scrapers.florida.hillsborough import HillsboroughScraper
 from scrapers.florida.miami_dade import MiamiDadeScraper
 from scrapers.georgia.cobb import CobbMagistrateCourtScraper
+from scrapers.georgia.dekalb import DeKalbDispossessoryScraper
 from scrapers.georgia.researchga import ReSearchGAScraper
 from scrapers.tennessee.davidson import DavidsonTNScraper
 from scrapers.texas.harris import HarrisCountyScraper
@@ -70,6 +71,10 @@ def _georgia_cobb_scrapers(lookback_days: int, headless: bool) -> list[tuple[str
     return [("Cobb Magistrate", CobbMagistrateCourtScraper(lookback_days=lookback_days, max_cases=25, enrich_addresses=False))]
 
 
+def _georgia_dekalb_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, object]]:
+    return [("DeKalb Magistrate", DeKalbDispossessoryScraper(lookback_days=lookback_days, max_cases=25))]
+
+
 SCRAPER_FACTORIES: dict[str, StateFactory] = {
     "texas": _texas_scrapers,
     "tennessee": _tennessee_scrapers,
@@ -77,6 +82,7 @@ SCRAPER_FACTORIES: dict[str, StateFactory] = {
     "georgia": _georgia_scrapers,
     "arizona": _arizona_scrapers,
     "georgia_cobb": _georgia_cobb_scrapers,
+    "georgia_dekalb": _georgia_dekalb_scrapers,
 }
 
 STATE_ALIASES = {
@@ -102,6 +108,9 @@ STATE_ALIASES = {
     "georgia_cobb": "georgia_cobb",
     "cobb": "georgia_cobb",
     "ga_cobb": "georgia_cobb",
+    "georgia_dekalb": "georgia_dekalb",
+    "dekalb": "georgia_dekalb",
+    "ga_dekalb": "georgia_dekalb",
 }
 
 
@@ -192,7 +201,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--states",
         default="texas,tennessee",
-        help="Comma-separated states/aliases: texas, tx, harris, tennessee, tn, davidson, florida, fl, georgia, ga, arizona, az, maricopa, georgia_cobb, cobb, all.",
+        help="Comma-separated states/aliases: texas, tx, harris, tennessee, tn, davidson, florida, fl, georgia, ga, arizona, az, maricopa, georgia_cobb, cobb, georgia_dekalb, dekalb, all.",
     )
     parser.add_argument("--lookback-days", type=int, default=2)
     parser.add_argument("--notify", action="store_true", help="Send Pushover summary if enabled.")

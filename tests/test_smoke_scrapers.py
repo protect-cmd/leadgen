@@ -97,6 +97,12 @@ def test_parse_states_recognises_cobb_alias():
     assert parse_states("georgia_cobb") == ["georgia_cobb"]
 
 
+def test_parse_states_recognises_dekalb_alias():
+    from scripts.smoke_scrapers import parse_states
+    assert parse_states("dekalb") == ["georgia_dekalb"]
+    assert parse_states("georgia_dekalb") == ["georgia_dekalb"]
+
+
 def test_georgia_cobb_factory_returns_scraper():
     from scripts.smoke_scrapers import SCRAPER_FACTORIES
     scrapers = SCRAPER_FACTORIES["georgia_cobb"](7, True)
@@ -104,3 +110,12 @@ def test_georgia_cobb_factory_returns_scraper():
     label, scraper = scrapers[0]
     assert label == "Cobb Magistrate"
     assert scraper.enrich_addresses is False
+
+
+def test_georgia_dekalb_factory_returns_scraper():
+    from scripts.smoke_scrapers import SCRAPER_FACTORIES
+    scrapers = SCRAPER_FACTORIES["georgia_dekalb"](7, True)
+    assert len(scrapers) == 1
+    label, scraper = scrapers[0]
+    assert label == "DeKalb Magistrate"
+    assert scraper.lookback_days == 7
