@@ -62,6 +62,9 @@ Expected production flow:
 ## Scraper Notes
 
 - Prefer a 2-day rolling lookback for daily scheduled jobs. It catches missed runs, timezone drift, and portal delays without creating excessive duplicates.
+- For Vantage Defense Group tenant leads, classify public/date-enumerable sources with tenant name plus property/defendant address as `green` even if phone/email is absent; Melissa Personator is expected to enrich those later.
+- Public/date-enumerable sources with tenant name but no property/defendant address are `yellow`: useful for volume proof and Melissa testing, but not production-ready until match quality is measured.
+- Assessor-derived addresses are confidence-scored. Only `single_match` rows should be eligible for downstream workflows; keep the overall source `yellow` until match rate and false-positive risk are proven.
 - Rent thresholds are state-specific: TX $1,500; TN $1,600; GA $1,600; FL $1,800; IL $1,800; WA $1,900; AZ $1,500; NV $1,600.
 - California LA currently appears portal/default-date dependent and is blocked by data-source/access limitations. Do not assume fresh LA filings are available without confirming the source.
 - Texas Harris:

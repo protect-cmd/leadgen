@@ -8,25 +8,32 @@ Before writing or repairing a scraper, classify the county source.
 
 1. Find the official source first: court extract, clerk data page, public index, daily calendar, or case-search portal.
 2. Confirm whether new filings can be enumerated by filing date without party names, CAPTCHA, paid API, or manual approval.
-3. Confirm whether results include the fields the pipeline needs: case number, filing date, plaintiff/landlord, defendant/tenant, property or defendant address, and source URL.
+3. Confirm whether results include the fields the pipeline needs: case number, filing date or hearing date, plaintiff/landlord, defendant/tenant, property or defendant address, and source URL.
 4. Only build a scraper for `green` or strong `yellow` sources. Document and skip `red` sources until a better public source is found.
 
 Status definitions:
 
-- `green`: no-cost, public, date-enumerable, lead-grade fields likely available.
-- `yellow`: no-cost source exists, but needs browser/network discovery or has data gaps.
-- `red`: paid/API-only, CAPTCHA/bot-blocked, name-only search, or missing lead-grade fields.
+- `green`: no-cost, public, date-enumerable source with tenant/defendant name plus property or defendant address. Phone/email may be enriched later through Melissa Personator, BatchData, or another approved vendor.
+- `yellow`: no-cost, public, date-enumerable source with tenant/defendant name and case context, but missing property address; or address is available only through confidence-scored enrichment such as assessor/APN matching. These are proof-worthy and can become Vantage leads once Melissa matching rules are confirmed.
+- `red`: paid/API-only without approval, CAPTCHA/bot-blocked, login/registration-only, legally restricted, missing tenant identity, or stale/unusable data.
+
+Tenant/Vantage scoring rule:
+
+- Tenant name + property/defendant address = `green` / gold source for Vantage, even if phone/email is absent, because Melissa Personator is expected to handle tenant enrichment.
+- Tenant name without property/defendant address = `yellow`; useful for volume proof and future Melissa testing, but do not treat as production-ready until match quality is measured.
+- Assessor-derived addresses are not automatically `green`; promote only the specific `single_match` rows into downstream workflows, while keeping the source as `yellow` until match rate and false-positive risk are proven.
 
 ## Current Priority Matrix
 
 | State | County/source | Status | Why | Next action |
 |---|---|---:|---|---|
 | TX | Harris JP Public Extracts | green | Public CSV extract supports date range and eviction case type; known to expose case number, filed date, parties, address, claim amount, and property type hints. | Keep as model source. |
+| TN | Davidson General Sessions | green | Public docket PDFs are date-enumerable and existing scraper parses GT/detainer cases with tenant name and defendant/property address. | Keep as model tenant-address source; confirm live yield and address quality during smoke tests. |
 | IN | Marion / Indiana MyCase | red | Existing scraper uses a stale MyCase JSON endpoint. A 2026-05-13 90-day diagnostic got HTML instead of JSON, and direct portal access redirected to `Error/Forbidden` with language indicating automated/non-human access may be blocked. | Do not build further from this environment unless a compliant access path is found. |
 | GA | re:SearchGA | red | 30-day diagnostic (2026-05-13) confirmed 6 filings exist, but: (1) case detail pages expose zero address data — no address field exists in the portal UI, only case number, filing date, and parties; (2) cases are Clayton **State Court** civil filings (commercial-grade), not Magistrate Court residential dispossessory. re:SearchGA is not a viable source for residential eviction leads with addresses. Georgia Magistrate Courts handle residential dispossessory and likely have separate, county-level portals. | Reclassified red 2026-05-13. See individual GA Magistrate rows below. |
-| GA | Cobb County Magistrate | yellow | 2026-05-13 research confirmed: (1) infax.com XML at `infax.com/Docket/CobbCountyMagistrate/assets/newData.xml` is a direct HTTP GET with no auth — exposes caseNumber, caseName (tenant), caseType (MD=dispossessory), court datetime; (2) DISPO PDFs at `judicial.cobbcounty.gov/mc/magCalendars/` are pdfplumber-parseable and contain case number, landlord/plaintiff, tenant/defendant, and hearing date; (3) Judicial records search has address data but prohibits bulk automated access. No property address in free sources — BatchData enrichment needed. | Build Cobb GA scraper: fetch calendar page for DISPO PDF links, parse PDFs with pdfplumber, de-dup by case number, pipe to BatchData. |
+| GA | Cobb County Magistrate | yellow | 2026-05-13 research confirmed: (1) infax.com XML at `infax.com/Docket/CobbCountyMagistrate/assets/newData.xml` is a direct HTTP GET with no auth and exposes caseNumber, caseName (tenant), caseType (MD=dispossessory), and court datetime; (2) DISPO PDFs are pdfplumber-parseable and contain case number, landlord/plaintiff, tenant/defendant, and hearing date; (3) Judicial records search has address data but prohibits bulk automated access. No property address in free sources. | Keep as tenant-name yellow source. Use for Vantage proof once Melissa Personator matching can be tested; do not use prohibited bulk records-search for addresses. |
 | GA | Gwinnett County Magistrate | red | Tyler Odyssey portal at `portal-gagwinnett.tylertech.cloud/Portal` requires free account registration as of March 3, 2023. Login wall blocks unauthenticated enumeration. | Skip until public extract or registration-bypass path found. |
-| GA | DeKalb County Magistrate | yellow | Official civil calendars page now exposes public dispossessory PDF calendars with case number, landlord/plaintiff, tenant/defendant, court date, and dispossessory type. Calendar PDFs do not expose property address. Case lookup still appears portal/registration-dependent. | Build scraper-only proof via `jobs/run_georgia_dekalb.py`; do not schedule or pipe by default until volume is measured. Melissa Personator is the expected future tenant-enrichment path for Vantage leads. |
+| GA | DeKalb County Magistrate | yellow | Official civil calendars page exposes public dispossessory PDF calendars with case number, landlord/plaintiff, tenant/defendant, court date, and dispossessory type. Calendar PDFs do not expose property address. Case lookup still appears portal/registration-dependent. | Keep scraper-only proof via `jobs/run_georgia_dekalb.py`; use as yellow Vantage/Melissa test volume until address/contact match quality is measured. |
 | GA | Fulton County Magistrate | red/yellow | Official site `magistratefulton.org` timed out during scrape. Case search existence unconfirmed. Judicial records search routes to Tyler/re:SearchGA (requires account). | Test `magistratefulton.org` manually before building. Low priority until Cobb is proven. |
 | SC | Richland Public Index | red | Official SC case-search page says home address information is no longer displayed as of 2026-01-01. 2026-05-13 scraper probe also failed on stale selector. | Skip for lead-gen unless a no-cost source with addresses is found. |
 | FL | Miami-Dade/Broward/Hillsborough | red | Public portals are SPA/name-required/CAPTCHA/bot-blocked. Official API/bulk access exists for some counties but adds cost or approval overhead. | Skip paid/premium APIs unless user approves cost. |
@@ -52,6 +59,7 @@ Status definitions:
 - **California statewide**: CCP 1161.2 seals all UD case records for 60 days after filing across every California Superior Court. Calendar-based scraping (SD, potentially OC) can surface cases that are past the 60-day window, but produces leads 60–180+ days old, not fresh filings. The SD Odyssey portal (`odyroa.sdcourt.ca.gov`) gates access behind a session-cookie disclaimer click; requires Playwright to automate.
 - **Cobb County GA Magistrate**: DISPO PDF calendars are published at `judicial.cobbcounty.gov/mc/magCalendars/` with predictable date+session filenames. pdfplumber parsing confirmed. Judicial records search explicitly prohibits bulk automated URL construction — do not call it in a scraper loop. Addresses must come via BatchData.
 - **Georgia statewide**: Residential dispossessory cases are Magistrate Court jurisdiction, not State Court or Superior Court. re:SearchGA (Tyler/eFileGA) covers State Court and is not a viable residential eviction source.
+- **Tenant enrichment policy**: With Melissa Personator expected for Vantage Defense Group, a court source that exposes tenant name plus property/defendant address is a `green` source even without phone/email. A tenant-name-only calendar remains `yellow` until Melissa matching quality is proven.
 - **DeKalb County GA Magistrate**: Public civil calendar page at `dekalbcountymagistratecourt.com/civil-matters/civil-calendars/` lists current dispossessory PDF calendars. PDFs are pdfplumber-parseable and expose case number, landlord, tenant, hearing date, and dispossessory subtype, but not property address. Keep proof scraper-only until Vantage tenant enrichment via Melissa Personator is wired or another reliable address source is confirmed.
 
 ## Recommended Next Build
