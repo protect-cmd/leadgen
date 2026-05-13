@@ -344,11 +344,25 @@ Gated by a session-cookie disclaimer. Must click "I have read, understood, and a
 
 ### DeKalb County Magistrate Court
 
-**Status:** Unclear — county government portal exists but not yet tested.
+**Status:** Yellow proof source as of 2026-05-13.
 
-**Finding (2026-05-13):** Official magistrate site is `dekalbcountymagistratecourt.com`. Case lookup page at `dekalbcountymagistratecourt.com/find-your-case/` references "DeKalb County Government Portal" for case search but appears to require e-file registration. No public calendar or extract found.
+**Sources confirmed:**
+- Official civil calendars page: `https://dekalbcountymagistratecourt.com/civil-matters/civil-calendars/`
+- Public dispossessory PDFs under the "Dispossessory Calendars" section, with filenames such as `Civil-Dispo-05.12.26-CT2-1pm-Attorney-Calendar.pdf`.
 
-**Decision:** Low priority. Investigate only if Cobb scraper proves insufficient volume.
+**Fields confirmed from PDFs:**
+| Field | Available | Notes |
+|---|---|---|
+| `case_number` | yes | Format like `26D08231`. |
+| `landlord_name` | yes | Plaintiff/party column; may span multiple lines. |
+| `tenant_name` | yes | Defendant/party column; occupant labels need stripping. |
+| `court_date` | yes | Calendar header date. |
+| `filing_date` | no | Use court date as proof placeholder. |
+| `property_address` | no | Not exposed in PDFs. |
+
+**Vantage/Melissa note:** DeKalb is a good tenant-volume proof once Melissa Personator is available, because PDFs provide tenant names and case context but not reliable address/contact fields. Keep the job scraper-only until Melissa matching rules or another address source is added.
+
+**Current implementation:** `jobs/run_georgia_dekalb.py` is scraper-only by default. It can run with `--pipe`, but DeKalb should not be scheduled or piped into production until proof volume and tenant-enrichment quality are reviewed.
 
 ---
 
