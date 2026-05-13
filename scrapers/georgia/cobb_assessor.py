@@ -10,7 +10,7 @@ _QUERY_URL = (
     "https://gis.cobbcounty.gov/gisserver/rest/services/cobbpublic/Parcels/MapServer/0/query"
 )
 _HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; eviction-leadgen/1.0)",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "application/json",
 }
 

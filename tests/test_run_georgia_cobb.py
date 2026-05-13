@@ -78,6 +78,15 @@ async def test_main_scraper_only_mode(monkeypatch, capsys):
 
 
 @pytest.mark.asyncio
+async def test_main_defaults_to_two_day_daily_lookback(monkeypatch):
+    monkeypatch.setattr(run_georgia_cobb, "CobbMagistrateCourtScraper", FakeCobbScraper)
+
+    summary = await run_georgia_cobb.main(notify=False)
+
+    assert summary.lookback_days == 2
+
+
+@pytest.mark.asyncio
 async def test_main_pipe_mode_sends_only_single_match(monkeypatch, capsys):
     piped_filings: list[Filing] = []
 

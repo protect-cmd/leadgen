@@ -12,8 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
 
-from jobs import run_tennessee, run_texas
-from services import notification_service
+from services import daily_scheduler
 
 load_dotenv()
 
@@ -22,10 +21,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 log = logging.getLogger(__name__)
-
-TENNESSEE_UTC_HOUR = 13
-TENNESSEE_UTC_MINUTE = 20
-
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -45,33 +40,17 @@ def seconds_until_utc_time(now: datetime, *, hour: int, minute: int) -> int:
 async def main() -> None:
     log.info("Starting daily scrape job")
 
-    await _run_state_job("Texas", "texas", run_texas.main)
+    for job in daily_scheduler.SCHEDULED_JOBS:
+        delay = seconds_until_utc_time(_utc_now(), hour=job.hour, minute=job.minute)
+        if delay:
+            log.info("Waiting %ss for %s scrape window", delay, job.name)
+            await asyncio.sleep(delay)
 
-    delay = seconds_until_utc_time(
-        _utc_now(),
-        hour=TENNESSEE_UTC_HOUR,
-        minute=TENNESSEE_UTC_MINUTE,
-    )
-    if delay:
-        log.info("Waiting %ss for Tennessee scrape window", delay)
-        await asyncio.sleep(delay)
-
-    await _run_state_job("Tennessee", "tennessee", run_tennessee.main)
+        return_code = await daily_scheduler.run_script_once(job.script_name, job.args)
+        if return_code:
+            log.warning("%s scrape job exited with code %s", job.name, return_code)
 
     log.info("Daily scrape job complete")
-
-
-async def _run_state_job(label: str, stage: str, job_main) -> None:
-    try:
-        await job_main()
-    except Exception as e:
-        log.error("%s scrape job failed: %s", label, e, exc_info=True)
-        await notification_service.send_job_error(
-            job=f"Daily scrape / {label}",
-            stage=stage,
-            error=e,
-        )
-
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -2,5 +2,5 @@
 startCommand = "sh scripts/start_dashboard.sh"
 
 # The dashboard service starts an in-process scheduler on Railway.
-# It launches jobs/run_daily.py at 13:00 UTC; that script waits until
-# 13:20 UTC before running Tennessee.
+# Current UTC schedule:
+# Texas 13:00, Tennessee 13:20, Arizona 13:40, Cobb GA 14:00.

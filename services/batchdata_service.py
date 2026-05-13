@@ -46,11 +46,17 @@ def _headers() -> dict[str, str]:
     }
 
 
+import re as _re
+
+_APT_NO_RE = _re.compile(r'\bApartment\s+No\.?\s*', _re.IGNORECASE)
+
+
 def _split_address(address: str) -> dict[str, str]:
     """
     Parse "123 Main St, Houston, TX 77001" back into BatchData address fields.
     Format produced by harris._build_address: street[, line2], city, STATE ZIP
     """
+    address = _APT_NO_RE.sub("Apt ", address)
     parts = [p.strip() for p in address.split(",")]
     state = zip_ = city = ""
     street_parts: list[str] = []
@@ -295,29 +301,32 @@ async def enrich_tenant(
     estimated_rent: float | None = filing.claim_amount
     name_matched = False
 
-    name_parts = filing.tenant_name.strip().split()
-    first_name = name_parts[0] if name_parts else ""
-    last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+    # Normalize "LAST,FIRST" → "FIRST LAST" so name matching works
+    raw_name = filing.tenant_name.strip()
+    if "," in raw_name and raw_name.index(",") < len(raw_name) - 1:
+        last, _, first = raw_name.partition(",")
+        tenant_name_normalized = f"{first.strip()} {last.strip()}"
+    else:
+        tenant_name_normalized = raw_name
 
     async with httpx.AsyncClient(timeout=30) as client:
-        # People search by name + address — returns the tenant's contact info
+        # Skip-trace by property address — same endpoint as EC track
+        # /api/v1/people/search does not exist; skip-trace returns the resident at the unit
         r = await client.post(
-            f"{BASE}/api/v1/people/search",
-            json={
-                "requests": [{
-                    "firstName": first_name,
-                    "lastName": last_name,
-                    "address": addr,
-                }]
-            },
+            f"{BASE}{SKIP_TRACE_EP}",
+            json={"requests": [{"propertyAddress": addr}]},
             headers=headers,
         )
         if r.status_code == 200:
             persons = r.json().get("results", {}).get("persons", [])
             if persons:
                 p = persons[0]
-                returned_name = p.get("fullName") or p.get("name") or ""
-                if _tenant_name_matches(filing.tenant_name, returned_name):
+                # name field is a dict {first, last, middle, full}; fall back to fullName string
+                name_field = p.get("name") or {}
+                returned_name = (
+                    name_field.get("full") if isinstance(name_field, dict) else name_field
+                ) or p.get("fullName") or ""
+                if _tenant_name_matches(tenant_name_normalized, returned_name):
                     name_matched = True
                     phone_selection = _best_phone_result(p.get("phoneNumbers", []))
                     phone = phone_selection.number
@@ -327,7 +336,7 @@ async def enrich_tenant(
                 else:
                     log.info(
                         f"Tenant name mismatch for {filing.case_number}: "
-                        f"expected={filing.tenant_name!r}, got={returned_name!r} "
+                        f"expected={tenant_name_normalized!r}, got={returned_name!r} "
                         f"→ tenant_not_matched"
                     )
         else:

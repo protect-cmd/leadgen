@@ -109,14 +109,16 @@ class ReSearchGAScraper(BaseScraper):
             await page.goto(PORTAL_URL, wait_until="load", timeout=60_000)
             return
 
-        await page.goto(LOGIN_URL, wait_until="load", timeout=60_000)
+        await page.goto(PORTAL_URL, wait_until="load", timeout=60_000)
         await page.wait_for_timeout(2000)
 
         try:
-            await page.fill('input[type="email"]', email)
-            await page.fill('input[type="password"]', password)
-            await page.click('button[type="submit"]')
+            await page.click("text=Sign in with Your eFileGA Account")
             await page.wait_for_timeout(3000)
+            await page.fill("#UserName", email)
+            await page.fill("#Password", password)
+            await page.click("button:has-text('Sign In')")
+            await page.wait_for_timeout(5000)
             log.info("re:SearchGA: login submitted")
         except Exception as e:
             log.warning(f"re:SearchGA login step failed: {e}")

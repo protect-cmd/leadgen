@@ -5,14 +5,13 @@ import asyncio
 import logging
 import os
 import sys
-from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from models.filing import Filing
-from scrapers.georgia.cobb import CobbMagistrateCourtScraper
+from scrapers.arizona.maricopa import MaricopaJusticeCourtScraper
 from services import notification_service
 
 logging.basicConfig(
@@ -23,7 +22,7 @@ log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class CobbRunSummary:
+class ArizonaRunSummary:
     total_filings: int
     usable_single_match: int
     ambiguous: int
@@ -44,7 +43,7 @@ class CobbRunSummary:
             else "Runner/enrichment/outreach: not called (scraper-only mode)"
         )
         return [
-            "Georgia / Cobb" + (" pipeline run" if self.piped else " scraper-only proof"),
+            "Arizona / Maricopa" + (" pipeline run" if self.piped else " scraper-only proof"),
             f"Max cases: {self.max_cases}",
             f"Lookback days: {self.lookback_days}",
             f"Total filings: {self.total_filings}",
@@ -60,12 +59,12 @@ class CobbRunSummary:
 def build_summary(
     *,
     filings: list[Filing],
-    address_match_counts: Counter,
+    address_match_counts: dict[str, int],
     max_cases: int,
     lookback_days: int,
     piped: bool,
-) -> CobbRunSummary:
-    return CobbRunSummary(
+) -> ArizonaRunSummary:
+    return ArizonaRunSummary(
         total_filings=len(filings),
         usable_single_match=int(address_match_counts.get("single_match", 0)),
         ambiguous=int(address_match_counts.get("ambiguous", 0)),
@@ -79,13 +78,13 @@ def build_summary(
 
 async def main(
     *,
-    max_cases: int = 200,
+    max_cases: int = 50,
     lookback_days: int = 2,
     notify: bool = False,
     pipe: bool = False,
-) -> CobbRunSummary:
-    log.info("Starting Georgia / Cobb %s", "pipeline run" if pipe else "scraper-only proof")
-    scraper = CobbMagistrateCourtScraper(
+) -> ArizonaRunSummary:
+    log.info("Starting Arizona / Maricopa %s", "pipeline run" if pipe else "scraper-only proof")
+    scraper = MaricopaJusticeCourtScraper(
         lookback_days=lookback_days,
         max_cases=max_cases,
         enrich_addresses=True,
@@ -102,14 +101,14 @@ async def main(
             and f.property_address not in ("Unknown", "", None)
         ]
         log.info(
-            "Cobb GA: passing %d single-match filings to pipeline (%d held)",
+            "Arizona: passing %d single-match filings to pipeline (%d held)",
             len(single_match_filings),
             len(filings) - len(single_match_filings),
         )
         if single_match_filings:
-            await pipeline_runner.run(single_match_filings, state="GA", county="Cobb")
+            await pipeline_runner.run(single_match_filings, state="AZ", county="Maricopa")
         else:
-            log.info("Cobb GA: no single-match filings to pipe")
+            log.info("Arizona: no single-match filings to pipe")
 
     summary = build_summary(
         filings=filings,
@@ -124,27 +123,31 @@ async def main(
 
     if notify:
         await notification_service.send_alert(
-            "Georgia Cobb run",
+            "Arizona Maricopa run",
             message,
             tags={"mode": "pipeline" if pipe else "scraper-only"},
         )
 
-    log.info("Georgia / Cobb run complete")
+    log.info("Arizona / Maricopa run complete")
     return summary
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Run Georgia / Cobb County Magistrate Court dispossessory scraper. "
-            "Default: scraper-only proof. Add --pipe to send single-match filings "
-            "through BatchData / GHL / Bland."
+            "Run Arizona / Maricopa eviction calendar scraper. "
+            "Default: scraper-only proof (no pipeline calls). "
+            "Add --pipe to send single-match filings through BatchData / GHL / Bland."
         )
     )
-    parser.add_argument("--max-cases", type=int, default=200)
+    parser.add_argument("--max-cases", type=int, default=50)
     parser.add_argument("--lookback-days", type=int, default=2)
     parser.add_argument("--notify", action="store_true")
-    parser.add_argument("--pipe", action="store_true")
+    parser.add_argument(
+        "--pipe",
+        action="store_true",
+        help="Send single-match address filings through the pipeline runner",
+    )
     return parser
 
 

@@ -22,57 +22,79 @@ def test_seconds_until_tennessee_window_does_not_wait_after_1320_utc():
 
 
 @pytest.mark.asyncio
-async def test_daily_job_runs_texas_then_waits_then_tennessee(monkeypatch):
+async def test_daily_job_runs_all_scheduled_jobs_in_order(monkeypatch):
     from jobs import run_daily
+    from services.daily_scheduler import ScheduledJob
 
-    calls: list[tuple[str, int | None]] = []
-
-    async def fake_texas_main() -> None:
-        calls.append(("texas", None))
-
-    async def fake_tennessee_main() -> None:
-        calls.append(("tennessee", None))
+    calls: list[tuple[str, tuple[str, ...]] | tuple[str, int]] = []
 
     async def fake_sleep(seconds: int) -> None:
         calls.append(("sleep", seconds))
 
-    monkeypatch.setattr(run_daily.run_texas, "main", fake_texas_main)
-    monkeypatch.setattr(run_daily.run_tennessee, "main", fake_tennessee_main)
-    monkeypatch.setattr(run_daily.asyncio, "sleep", fake_sleep)
+    async def fake_run_script_once(script_name: str, args: tuple[str, ...] = ()) -> int:
+        calls.append((script_name, args))
+        return 0
+
     monkeypatch.setattr(
-        run_daily,
-        "_utc_now",
-        lambda: datetime(2026, 5, 7, 13, 5, 0, tzinfo=timezone.utc),
+        run_daily.daily_scheduler,
+        "SCHEDULED_JOBS",
+        (
+            ScheduledJob("texas", 13, 0, "run_texas.py"),
+            ScheduledJob("tennessee", 13, 20, "run_tennessee.py"),
+            ScheduledJob("arizona", 13, 40, "run_arizona.py", args=("--pipe", "--notify")),
+            ScheduledJob("georgia_cobb", 14, 0, "run_georgia_cobb.py", args=("--pipe", "--notify")),
+        ),
     )
+    monkeypatch.setattr(run_daily.daily_scheduler, "run_script_once", fake_run_script_once)
+    monkeypatch.setattr(run_daily.asyncio, "sleep", fake_sleep)
+    now_values = iter(
+        [
+            datetime(2026, 5, 7, 12, 40, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 7, 13, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 7, 13, 20, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 7, 13, 40, 0, tzinfo=timezone.utc),
+        ]
+    )
+    monkeypatch.setattr(run_daily, "_utc_now", lambda: next(now_values))
 
     await run_daily.main()
 
-    assert calls == [("texas", None), ("sleep", 900), ("tennessee", None)]
+    assert calls == [
+        ("sleep", 1200),
+        ("run_texas.py", ()),
+        ("sleep", 1200),
+        ("run_tennessee.py", ()),
+        ("sleep", 1200),
+        ("run_arizona.py", ("--pipe", "--notify")),
+        ("sleep", 1200),
+        ("run_georgia_cobb.py", ("--pipe", "--notify")),
+    ]
 
 
 @pytest.mark.asyncio
-async def test_daily_job_continues_to_tennessee_if_texas_fails(monkeypatch):
+async def test_daily_job_continues_after_scheduled_script_failure(monkeypatch):
     from jobs import run_daily
+    from services.daily_scheduler import ScheduledJob
 
     calls: list[str] = []
-
-    async def fake_texas_main() -> None:
-        calls.append("texas")
-        raise RuntimeError("portal failed")
-
-    async def fake_tennessee_main() -> None:
-        calls.append("tennessee")
 
     async def fake_sleep(seconds: int) -> None:
         calls.append(f"sleep:{seconds}")
 
-    async def fake_send_job_error(**kwargs) -> None:
-        calls.append(f"alert:{kwargs['stage']}")
+    async def fake_run_script_once(script_name: str, args: tuple[str, ...] = ()) -> int:
+        calls.append(script_name)
+        return 1 if script_name == "run_texas.py" else 0
 
-    monkeypatch.setattr(run_daily.run_texas, "main", fake_texas_main)
-    monkeypatch.setattr(run_daily.run_tennessee, "main", fake_tennessee_main)
+    monkeypatch.setattr(
+        run_daily.daily_scheduler,
+        "SCHEDULED_JOBS",
+        (
+            ScheduledJob("texas", 13, 0, "run_texas.py"),
+            ScheduledJob("tennessee", 13, 20, "run_tennessee.py"),
+        ),
+    )
+    monkeypatch.setattr(run_daily.daily_scheduler, "run_script_once", fake_run_script_once)
     monkeypatch.setattr(run_daily.asyncio, "sleep", fake_sleep)
-    monkeypatch.setattr(run_daily.notification_service, "send_job_error", fake_send_job_error)
     monkeypatch.setattr(
         run_daily,
         "_utc_now",
@@ -81,4 +103,4 @@ async def test_daily_job_continues_to_tennessee_if_texas_fails(monkeypatch):
 
     await run_daily.main()
 
-    assert calls == ["texas", "alert:texas", "tennessee"]
+    assert calls == ["run_texas.py", "run_tennessee.py"]
