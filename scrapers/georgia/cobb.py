@@ -125,15 +125,14 @@ class CobbMagistrateCourtScraper:
                                     f"{rec.situs_addr}, {city}, GA {geo.postcode}"
                                 )
                 else:
-                    if not self.enrich_addresses:
-                        self.address_match_counts["no_match"] += 1
+                    self.address_match_counts["no_match"] += 1
 
                 filings.append(Filing(
                     case_number=case_num,
                     tenant_name=tenant,
                     property_address=property_address,
                     landlord_name=landlord,
-                    filing_date=None,
+                    filing_date=court_dt or date.today(),
                     court_date=court_dt,
                     state=STATE,
                     county=COUNTY,
