@@ -61,6 +61,7 @@ def test_scheduler_defines_daily_jobs():
         ("tennessee", 13, 20, "run_tennessee.py"),
         ("arizona", 13, 40, "run_arizona.py"),
         ("georgia_cobb", 14, 0, "run_georgia_cobb.py"),
+        ("ohio_franklin_raw", 14, 20, "../scripts/push_franklin_filings.py"),
     ]
     az_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "arizona")
     assert "--pipe" in az_job.args
@@ -79,3 +80,12 @@ def test_georgia_cobb_job_has_pipe_and_notify():
     assert "--pipe" in job.args
     assert "--notify" in job.args
     assert job.script_name == "run_georgia_cobb.py"
+
+
+def test_ohio_franklin_job_is_raw_supabase_only():
+    from services.daily_scheduler import SCHEDULED_JOBS
+
+    job = next(j for j in SCHEDULED_JOBS if j.name == "ohio_franklin_raw")
+
+    assert job.args == ("--lookback-days", "2", "--yes-write-supabase", "--notify")
+    assert "--pipe" not in job.args

@@ -124,3 +124,16 @@ def test_classify_texas_uses_1500_rent_threshold():
     assert below.discard_reason == "rent_below_threshold"
     assert at_threshold.lead_bucket == "residential_approved"
     assert at_threshold.discard_reason is None
+
+
+def test_classify_columbus_ohio_zip_as_residential_fallback_when_rent_missing():
+    outcome = classify_lead(
+        state="OH",
+        property_address="123 Main St, Columbus, OH 43229",
+        filing_date=date(2026, 5, 12),
+        today=date(2026, 5, 14),
+    )
+
+    assert outcome.property_zip == "43229"
+    assert outcome.lead_bucket == "residential_approved"
+    assert outcome.discard_reason is None

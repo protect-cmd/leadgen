@@ -20,6 +20,9 @@ from scrapers.florida.miami_dade import MiamiDadeScraper
 from scrapers.georgia.cobb import CobbMagistrateCourtScraper
 from scrapers.georgia.dekalb import DeKalbDispossessoryScraper
 from scrapers.georgia.researchga import ReSearchGAScraper
+from scrapers.nevada.clark import ClarkCountyJusticeCourtScraper
+from scrapers.ohio.franklin import FranklinCountyMunicipalScraper
+from scrapers.ohio.hamilton import HamiltonCountyMunicipalScraper
 from scrapers.tennessee.davidson import DavidsonTNScraper
 from scrapers.texas.harris import HarrisCountyScraper
 from services import notification_service
@@ -75,6 +78,18 @@ def _georgia_dekalb_scrapers(lookback_days: int, headless: bool) -> list[tuple[s
     return [("DeKalb Magistrate", DeKalbDispossessoryScraper(lookback_days=lookback_days, max_cases=25))]
 
 
+def _ohio_franklin_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, object]]:
+    return [("Franklin Municipal", FranklinCountyMunicipalScraper(lookback_days=lookback_days))]
+
+
+def _ohio_hamilton_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, object]]:
+    return [("Hamilton Municipal", HamiltonCountyMunicipalScraper(lookback_days=lookback_days))]
+
+
+def _nevada_clark_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, object]]:
+    return [("Clark Justice Court", ClarkCountyJusticeCourtScraper(lookback_days=lookback_days, max_cases=25))]
+
+
 SCRAPER_FACTORIES: dict[str, StateFactory] = {
     "texas": _texas_scrapers,
     "tennessee": _tennessee_scrapers,
@@ -83,6 +98,9 @@ SCRAPER_FACTORIES: dict[str, StateFactory] = {
     "arizona": _arizona_scrapers,
     "georgia_cobb": _georgia_cobb_scrapers,
     "georgia_dekalb": _georgia_dekalb_scrapers,
+    "ohio_franklin": _ohio_franklin_scrapers,
+    "ohio_hamilton": _ohio_hamilton_scrapers,
+    "nevada_clark": _nevada_clark_scrapers,
 }
 
 STATE_ALIASES = {
@@ -111,6 +129,21 @@ STATE_ALIASES = {
     "georgia_dekalb": "georgia_dekalb",
     "dekalb": "georgia_dekalb",
     "ga_dekalb": "georgia_dekalb",
+    "ohio_franklin": "ohio_franklin",
+    "franklin_oh": "ohio_franklin",
+    "franklin": "ohio_franklin",
+    "columbus": "ohio_franklin",
+    "oh": "ohio_franklin",
+    "ohio_hamilton": "ohio_hamilton",
+    "hamilton_oh": "ohio_hamilton",
+    "hamilton": "ohio_hamilton",
+    "cincinnati": "ohio_hamilton",
+    "nevada_clark": "nevada_clark",
+    "clark": "nevada_clark",
+    "nv": "nevada_clark",
+    "nevada": "nevada_clark",
+    "las_vegas": "nevada_clark",
+    "henderson": "nevada_clark",
 }
 
 
@@ -201,7 +234,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--states",
         default="texas,tennessee",
-        help="Comma-separated states/aliases: texas, tx, harris, tennessee, tn, davidson, florida, fl, georgia, ga, arizona, az, maricopa, georgia_cobb, cobb, georgia_dekalb, dekalb, all.",
+        help="Comma-separated states/aliases: texas, tx, harris, tennessee, tn, davidson, florida, fl, georgia, ga, arizona, az, maricopa, georgia_cobb, cobb, georgia_dekalb, dekalb, ohio_franklin, franklin, columbus, ohio_hamilton, hamilton, cincinnati, nevada_clark, clark, nevada, henderson, all.",
     )
     parser.add_argument("--lookback-days", type=int, default=2)
     parser.add_argument("--notify", action="store_true", help="Send Pushover summary if enabled.")

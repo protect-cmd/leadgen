@@ -69,6 +69,30 @@
 
 ---
 
+## Franklin County OH Municipal Court — fcmcclerk.com
+
+**Status:** Green address-bearing CSV source as of 2026-05-14.
+
+**Source:**
+- Monthly Civil F.E.D. eviction reports: https://www.fcmcclerk.com/reports/evictions
+
+**Findings:**
+- FCMC publishes monthly Civil F.E.D. eviction case lists as CSV files for the current month and prior 12 months.
+- The page states the reports are created nightly.
+- Confirmed CSV fields include case number, case file date, disposition fields, first plaintiff name/address, and first defendant name/address.
+- Defendant address fields are `FIRST_DEFENDANT_ADDRESS_LINE_1`, `FIRST_DEFENDANT_ADDRESS_LINE_2`, `FIRST_DEFENDANT_CITY`, `FIRST_DEFENDANT_STATE`, and `FIRST_DEFENDANT_ZIP`.
+- Clerk caveat: party mailing addresses may or may not be related to the property referenced in the complaint. Treat this as stronger than calendar-only data, but keep tenant-phone enrichment confidence and DNC gates.
+- Live scraper-only smoke on 2026-05-14: `python scripts/smoke_scrapers.py --states franklin_oh --lookback-days 14` returned 660 filings.
+
+**Implementation:**
+- Scraper: `scrapers/ohio/franklin.py`
+- Smoke alias: `franklin_oh`, `franklin`, `columbus`, `oh`
+- Raw Supabase ingest schedule path: `scripts/push_franklin_filings.py --lookback-days 2 --yes-write-supabase`.
+- This raw ingest path inserts/dedupes filings only and does not call enrichment, GHL, Bland, or outreach.
+- Tenant phone proof on the latest 100 Franklin rows found 10 phones, all DNC clear. Keep paid enrichment and outreach gated until user approves cost/volume.
+
+---
+
 ## Florida — Miami-Dade, Broward, Hillsborough
 
 **Status:** Blocked for no-cost public scraping as of 2026-05-13.
@@ -98,20 +122,27 @@
 
 ## Georgia re:SearchGA — researchga.tylerhost.net
 
-**Status:** Login/search flow repaired 2026-05-13; scraper-only smoke returned 0 filings for both 2-day and 7-day lookbacks.
+**Status:** Yellow source as of 2026-05-14. Hearing export confirmed Magistrate Court dispossessory volume, but no property/defendant address fields are exposed.
 
 **Access:** Uses existing `RESEARCHGA_EMAIL` and `RESEARCHGA_PASSWORD` credentials. Do not add paid search/API products unless explicitly approved by the user.
 
 **Current behavior:**
 - Public home page redirects through Tyler/eFileGA identity.
 - Login uses the `Sign in with Your eFileGA Account` path, then Tyler identity fields `#UserName` and `#Password`.
-- Search endpoint responded normally after login, but returned no dispossessory cases in the tested window.
-- Existing code comments say re:SearchGA search limits may apply, so avoid repeated broad smoke runs unless needed.
+- Advanced Search > Hearings supports `Case Type` + `Hearing Date` filtering and CSV export.
+- A 2026-05-14 export for dispossessory hearing types returned exactly 1,000 rows from a UI result count of ~2.0k, so the export path appears capped at 1,000 rows.
+- The sample export deduped to 946 unique case numbers: 915 Fulton Magistrate rows and 85 Spalding Magistrate rows.
+- A scraper-only smoke on 2026-05-14 using 7-day hearing-date chunks returned 1,496 hearing rows and 1,361 deduped filings for the default 2-day lookback plus 45-day hearing lookahead.
+- Export fields include hearing date/type/location/result, case description, case number, case location, case type, filed date, case status, attorneys, and judge.
+- Export/search data does **not** include property address, defendant address, phone, or email.
+- Search limits may apply; avoid repeated broad smoke runs unless needed.
 
 **Pipeline status:**
+- `scrapers/georgia/researchga.py` now uses the Hearings search shape with dispossessory case-type values captured from the export UI and chunks hearing-date searches into 7-day windows to avoid Tyler's 1,000-row cap.
+- Rows are deduped by case number, parse landlord/tenant from `Case Description` or API party arrays, and keep `property_address="Unknown"` to maximize filing volume.
+- Keep re:SearchGA scraper-only / at bay until Melissa Personator Search tenant enrichment is implemented and proven. `jobs/run_georgia.py` defaults to scraper-only mode; `--pipe` must not be used for production until Melissa match quality is approved.
 - `scripts/smoke_scrapers.py --states georgia` supports scraper-only validation.
-- `jobs/run_georgia.py` is now production-shaped and sends non-empty filings to `pipeline.runner.run(..., state="GA", county="re:SearchGA")`.
-- Do not add Georgia to the daily scheduler until a smoke test returns real filings or the source/county coverage is confirmed.
+- Treat as a volume/tenant proof source until address/contact enrichment quality is validated.
 
 ---
 
@@ -368,11 +399,11 @@ Gated by a session-cookie disclaimer. Must click "I have read, understood, and a
 
 ### Fulton County Magistrate Court
 
-**Status:** Unclear — official site timed out during research.
+**Status:** Confirmed red as of 2026-05-14.
 
-**Finding (2026-05-13):** Official site is `magistratefulton.org`. Homepage timed out during automated scrape. `fultonclerk.org/eServices` references judicial records search. Georgia Courts `georgiacourts.gov/eaccess-court-records/` routes to Tyler/re:SearchGA (requires account).
+**Finding (2026-05-14):** `magistratefulton.org` is an informational-only site. The Tyler portal at `portal-gafulton.tdr.tylerhosting.cloud/portal` now explicitly requires login — registration is mandatory post-2025 system migration. The prior public records portal at `publicrecordsaccess.fultoncountyga.gov/Portal/` has a TLS certificate error. Previous timeout during 2026-05-13 research was caused by the system migration in progress at that time.
 
-**Decision:** Low priority. Test `magistratefulton.org` manually to see if a public calendar or date-enumerable docket exists before building.
+**Decision:** Skip permanently. Do not build a scraper for Fulton GA without a confirmed public-access path. If a public extract or no-login calendar emerges, reassess.
 
 ---
 
@@ -405,3 +436,284 @@ Gated by a session-cookie disclaimer. Must click "I have read, understood, and a
 **Finding (2026-05-13):** Bexar reports page loaded blank (JS-heavy). No JP eviction CSV extract found matching Harris County model. Third-party sites (`bexar-evictions.com`, Texas Housers mapping) exist but are not primary court data sources for automation.
 
 **Decision:** Skip unless a public filing extract is found.
+
+---
+
+## Travis County TX JP Court — odysseypa.traviscountytx.gov
+
+**Status:** Green — date-enumerable, no login, address likely present. Assessed 2026-05-14.
+
+**Portal:** `https://odysseypa.traviscountytx.gov/JPPublicAccess/default.aspx`
+
+**Findings (2026-05-14):**
+- Tyler Odyssey JP Public Access. No login or registration required.
+- Supports Advanced Filter options including date filed range — the same mechanism January Advisors uses to collect Travis County eviction data for Eviction Lab's Austin TX tracking dashboard.
+- Platform is the same Tyler Odyssey stack as Harris County JP. Harris County's extract portal is a custom CSV form-POST system; Travis uses Odyssey search result pages — the scraper approach differs.
+- Defendant address is expected in petition/case data (consistent with Harris County case detail behavior), but must be confirmed by inspecting a case detail page during scraper development.
+- No native bulk CSV export. Rows must be enumerated by date range via Odyssey search results.
+
+**Field mapping (expected, verify against actual response):**
+| Field | Source | Notes |
+|---|---|---|
+| `case_number` | Odyssey case ID | |
+| `landlord_name` | Plaintiff party | |
+| `tenant_name` | Defendant party | Strip occupant suffixes |
+| `filing_date` | Date Filed | |
+| `court_date` | Hearing date | From case events |
+| `property_address` | Defendant/petition address | Must confirm on detail page |
+| `county` | `Travis` | Hardcoded |
+| `state` | `TX` | Hardcoded |
+
+**Live probe findings (2026-05-14):**
+- Court Calendar Date Range search confirmed: `javascript:LaunchSearch('Search.aspx?ID=900', false, true, sbxControlID2)` loads form via AJAX into `default.aspx`. Form action correctly targets `Search.aspx?ID=900`.
+- First probe returned 1,612 civil rows for May 7–14. Hearing types seen: Small Claims, Debt Claims. No Forcible Detainer or Eviction hearing type confirmed.
+- Repeated automated POSTs throw HTTP 500 from `ODY-APP-P.travis.local` backend. Likely rate-limiting or VPN IP blocking on the application server.
+- Session handling is AJAX-based: must navigate `default.aspx` → click Court Calendar link → wait for form AJAX load → fill form → submit. Cannot POST directly with requests library (VIEWSTATE is context-bound to default.aspx AJAX response).
+- Case number format: `J1-CV-24-003871` = Precinct 1, Civil, filed 2024.
+
+**Classification downgrade (2026-05-14):** Yellow — not green. Two gates remain:
+1. Confirm Forcible Detainer / Eviction hearing type exists in the calendar.
+2. Confirm server reliability for daily automation from a fixed IP (not VPN).
+
+**Scraper approach (when both gates clear):**
+- Playwright with session refresh on each run (navigate main → Court Calendar AJAX → fill → submit).
+- Wait for form element visibility after AJAX load, not `networkidle`.
+- 2-day date windows for Civil only (1,612 rows/7 days = ~230/day, well within limit).
+- Dedupe by case number. Follow case detail for address if not in calendar row.
+- Retry logic on 500 errors with 30s backoff.
+
+**Production gate:**
+- Confirm eviction hearing type label in the calendar.
+- Run from a fixed residential or datacenter IP (not VPN) to confirm server reliability.
+- Scraper-only smoke returns eviction rows with landlord and tenant names.
+- Address confirmed on case detail page before wiring enrichment.
+- TX ZIPs in allowlist before scheduling.
+
+---
+
+## Hamilton County OH Municipal Court (Cincinnati) — courtclerk.org
+
+**Status:** Yellow / proof-only as implemented 2026-05-14. Dedicated eviction-by-date search works without login, but returned rows are address-absent.
+
+**Portal:** `https://www.courtclerk.org/records-search/eviction-schedule-search/`
+**Secondary (by name):** `https://www.courtclerk.org/records-search/eviction-schedules-for-public-parties/`
+
+**Findings (2026-05-14):**
+- Hamilton County Municipal Court Clerk has a dedicated eviction schedule search by date — the most purpose-built eviction date-search tool found across all assessed states.
+- No login or registration required.
+- An Ohio Court of Appeals ruling required Hamilton County clerk to rescind a restrictive public records policy and allow online access to all residential eviction cases regardless of age.
+- Direct HTTP GET works with browser-like headers.
+- Address exposure was checked in the schedule and case summary path; no property/defendant address is exposed by the implemented source.
+- Tenant parser strips common occupant suffixes such as `ET AL`, `AND ALL OCCUPANTS`, and `AND ALL OTHER OCCUPANTS`.
+
+**Field mapping (to confirm):**
+| Field | Source | Notes |
+|---|---|---|
+| `case_number` | Court case number | |
+| `landlord_name` | Plaintiff | |
+| `tenant_name` | Defendant | |
+| `filing_date` | Filed date | |
+| `court_date` | Hearing date | Primary search driver |
+| `property_address` | Not exposed | Set to `Unknown`; do not pipeline without a proven address/contact enrichment path. |
+| `county` | `Hamilton` | Hardcoded |
+| `state` | `OH` | Hardcoded |
+
+**Scraper approach:**
+- Test direct HTTP first with full browser headers (User-Agent, Accept, Referer, Accept-Language). If 403 persists, use Playwright for form submission.
+- Filter by eviction case type + hearing date range.
+- Dedupe by court case number.
+
+**Live probe findings (2026-05-14):**
+- Actual endpoint: `GET https://www.courtclerk.org/data/eviction_schedule.php?chosendate=M/D/YYYY&court=MCV&location=EVIM`
+- HTTP 200, no auth, no bot blocking on direct requests with browser User-Agent. No Playwright needed.
+- Live result for 5/13/2026: 57 unique case numbers, case type `G1-EVICTION` confirmed.
+- Fields returned per case block: `Case #`, `Time`, `Plaintiff` (landlord), `Attorney for Plaintiff`, `Defendant` (tenant, may include "et al"), `Attorney for Defendant`, `Next Action`.
+- Case format: `26CV13828` = Municipal Civil, filed 2026. Some older cases (`25CV31511`) from 2025 still on docket.
+- Case detail via `GET /data/case_summary.php?casenumber=26CV13828&court[MCV]=on` returns: case number, court, case caption, judge, filed date, case type. No property address.
+- No property address anywhere in schedule or case detail. The "By Parcel ID / Address" navigation link returned 404.
+- Hearing days are not every day — eviction court sits specific days (May 13 had results, May 12 had none).
+
+**Classification (2026-05-14):** Updated to yellow. Volume confirmed (57 cases/day), case type confirmed, no address. This is a `proof_only` source for phone outreach until Melissa Personator is wired.
+
+**Scraper approach:**
+- Direct HTTP GET to `eviction_schedule.php` endpoint — no Playwright, no session needed.
+- Enumerate each day in the lookback window (use 7-day lookback to catch all hearing days).
+- Parse HTML table rows into case blocks: case number, hearing date (from URL param), time, landlord, tenant, next action.
+- Strip "et al" and occupant suffixes from tenant name.
+- Look up filed date via `case_summary.php` for each case (or skip and use hearing date as `court_date`).
+- Dedupe by case number.
+- `property_address = "Unknown"` — no address source.
+
+**Field mapping:**
+| Field | Source | Notes |
+|---|---|---|
+| `case_number` | `Case #` cell | Format `26CV13828` |
+| `landlord_name` | `Plaintiff` cell | |
+| `tenant_name` | `Defendant` cell | Strip "et al" and occupant suffixes |
+| `filing_date` | `case_summary.php` filed date | Optional — can skip to avoid per-case HTTP call |
+| `court_date` | `chosendate` param | Hearing date (not filing date) |
+| `property_address` | Not available | `Unknown` |
+| `county` | `Hamilton` | Hardcoded |
+| `state` | `OH` | Hardcoded |
+| `notice_type` | `G1-EVICTION` | From case summary; hardcode as "Eviction" |
+| `source_url` | `eviction_schedule.php` URL | Stable per date |
+
+**Production gate:**
+- Parser tests pass on real case blocks (two HTML table structures confirmed).
+- Scraper-only smoke returns expected volume (50+ cases/week); a 2026-05-14 2-day smoke returned 163 filings.
+- OH ZIPs must be in the allowlist before scheduling.
+- Do not run enrichment or outreach until Melissa Personator is live and Hamilton County tenant name match quality is measured.
+- Calendar-only rows are address-poor; keep out of automated tenant phone outreach until proof metrics are collected.
+
+---
+
+## Shelby County TN General Sessions (Memphis) — shelbygeneralsessions.com
+
+**Status:** Yellow — download page exists and warrants hands-on browser test. Assessed 2026-05-14.
+
+**Portal (case search):** `https://gscivildata.shelbycountytn.gov/pls/gnweb/ck_public_qry_main.cp_main_idx` (ACS CourtConnect)
+**Download page:** `https://www.shelbygeneralsessions.com/115/Download-Case-Information`
+
+**Findings (2026-05-14):**
+- The ACS CourtConnect case search requires party name — not date-enumerable. Same backend as other TN counties.
+- The official court website has a dedicated "Download Case Information" page that is unusual for Tennessee General Sessions courts. This page may offer a free bulk export of civil/eviction case data, or it may redirect to a clerk-registration-only form.
+- Address exposure via CourtConnect is unlikely (ACS platform typically shows names, case numbers, dates, and case types without property address).
+- If the download page is a free export with eviction cases, tenant name, and defendant/property address, this becomes the Nashville (Davidson) model applied to Memphis — Tennessee's second-largest city.
+
+**Next step:** Open `shelbygeneralsessions.com/115/Download-Case-Information` in a browser and record: (1) whether a form or direct download appears, (2) whether registration is required, (3) what file format and fields are offered.
+
+**Production gate:** Do not build until download page behavior is confirmed. If gated, reclassify as red.
+
+---
+
+## Cuyahoga County OH — Cleveland Housing Court
+
+**Status:** Yellow — public HTML docket, tenant names and case numbers available, no address. Assessed 2026-05-14.
+
+**Portal:** `https://www.clevelandhousingcourt.org/accessible-civil-docket`
+
+**Findings (2026-05-14):**
+- Accessible civil docket is a static HTML page, no login, updated weekly.
+- Approximately 583 cases visible per two-week window, sorted by hearing date.
+- Confirmed fields on docket: case number, plaintiff (landlord) name, defendant (tenant) name, hearing date, hearing time, case type (`Housing Eviction`, `Housing Default`).
+- No property address or defendant address on the docket page.
+- A criminal XLSX download exists; no equivalent civil case export found.
+- Direct HTTP fetch works (no 403 or bot block encountered).
+
+**Field mapping:**
+| Field | Source | Notes |
+|---|---|---|
+| `case_number` | Docket row | |
+| `landlord_name` | Plaintiff column | |
+| `tenant_name` | Defendant column | Strip occupant suffixes |
+| `court_date` | Hearing date column | |
+| `filing_date` | Unknown | Not on docket; use `court_date` as placeholder |
+| `property_address` | Not available | `Unknown` — enrichment needed |
+| `county` | `Cuyahoga` | Hardcoded |
+| `state` | `OH` | Hardcoded |
+
+**Enrichment path:** Tenant name + county only — too ambiguous for automated phone outreach without a ZIP or address anchor. Source is proof/volume only until Melissa Personator is live and match quality is measured.
+
+**Scraper approach:**
+- Direct HTTP GET to docket URL. Parse HTML table rows.
+- Weekly docket window — run with 14-day lookback to capture the rolling 2-week window.
+- Dedupe by case number.
+
+**Production gate:** Volume/proof source only. Calendar-only rows are address-poor; keep out of automated tenant phone outreach. Do not schedule enrichment until Melissa hit rate is measured on a Cleveland tenant name sample.
+
+---
+
+## Montgomery County OH — Dayton Municipal Court
+
+**Status:** Yellow — filing date search confirmed on clerk portal. Address exposure unconfirmed. Assessed 2026-05-14.
+
+**Portal:** `https://clerkofcourt.daytonohio.gov`
+**Avoid:** `https://pro.mcohio.org` (PRO system — anti-scraping warning, requires prior approval for bulk data)
+
+**Findings (2026-05-14):**
+- Dayton Municipal Court Clerk portal explicitly lists "Filing Date" as one of its six search types (alongside Case Number, Ticket Number, Defendant Information, Defense Attorney, Forms & Costs).
+- No login required on the clerk portal itself.
+- The Montgomery County PRO system (`pro.mcohio.org`) explicitly warns: *"Efforts to mine large quantities of data from the PRO System without prior approval of the Clerk of Courts office will be detected and stopped."* Do not target PRO.
+- Address exposure on clerk portal search results is unconfirmed.
+
+**Scraper approach:**
+- Use Dayton clerk portal (`clerkofcourt.daytonohio.gov`) filing date search only.
+- Do not touch the PRO system.
+- Confirm address field presence on result rows before building.
+
+**Production gate:** Confirm address fields with a direct browser test. If no address, classify as proof/volume source pending Melissa enrichment.
+
+---
+
+## Williamson County TX JP Court — judicialrecords.wilco.org
+
+**Status:** Yellow — same Tyler Odyssey stack as Travis/Harris, but `securepa` subdomain may gate JP records. Assessed 2026-05-14.
+
+**Portal:** `https://judicialrecords.wilco.org`
+**Concern:** `https://judicialrecords.wilco.org/securepa/` — labeled "Secure PA," may require login for JP civil cases.
+
+**Findings (2026-05-14):**
+- Same Tyler Odyssey platform as Travis County and Harris County JP. If the public Odyssey path is accessible without login for JP civil cases, this is effectively a Travis clone.
+- The `securepa` subdomain is the primary unknown. Some Odyssey deployments gate civil/JP records behind registration.
+- Help documentation describes Civil, Family & Probate and Court Calendar search options. No explicit confirmation that JP records are on the public vs. secure path.
+
+**Next step:** Test `judicialrecords.wilco.org` public path for JP Forcible Detainer cases by date. If it returns results without login, classify as green candidate. If it redirects to `securepa`, classify as red.
+
+**Production gate:** Do not build until access path is confirmed. Part of the Austin metro (Williamson County = Round Rock, Georgetown, Cedar Park) — meaningful eviction volume if accessible.
+
+---
+
+## Fort Bend County TX JP Court — tylerpaw.fortbendcountytx.gov
+
+**Status:** Yellow — Tyler PAW exists, part of Houston metro, but no Harris-style bulk extract and date-filed behavior for civil cases is unconfirmed. Assessed 2026-05-14.
+
+**Portal:** `https://tylerpaw.fortbendcountytx.gov/PublicAccess/`
+
+**Findings (2026-05-14):**
+- Tyler PAW (Public Access Web) system — different from Tyler Odyssey JP. No Harris-style `/PublicExtracts/` CSV download system found.
+- Date Filed is a confirmed search parameter for criminal cases in the PAW system. Whether the same parameter works for civil/eviction cases is unconfirmed.
+- Portal returned 522 error on direct fetch during research — intermittently unreachable.
+- Fort Bend is part of the Houston metro (Sugar Land, Missouri City, Pearland). Meaningful eviction volume if accessible.
+
+**Next step:** Test Tyler PAW civil case search with Date Filed filter for Forcible Detainer. If date-enumerable and exposes defendant address, classify as green.
+
+**Production gate:** Do not build until civil date-filed search behavior is confirmed. If address is not exposed, add BatchData enrichment path same as Clark NV / Maricopa AZ.
+
+---
+
+## Pima County AZ — Consolidated Justice Court — jp.pima.gov
+
+**Status:** Red — name or case number required, no date enumeration. Assessed 2026-05-14.
+
+**Portal:** `https://www.jp.pima.gov/CaseSearch/`
+
+**Findings (2026-05-14):**
+- Case search supports three modes: By Name (last/first required), By Case Number, By Complaint Number. No filing date or hearing date range filter.
+- Date-only enumeration is not possible — cannot batch-retrieve eviction cases without knowing names or case IDs.
+- No bulk CSV export found.
+- Pima restricts felony, juvenile, IAH, and OP records from online access; civil eviction access appears available by case but not bulk-enumerable.
+
+**Decision:** Skip permanently. Pima AZ is not scrapeable by date. If a date-enumerable public calendar or court report is discovered later, reassess.
+
+---
+
+## Knox County TN — Civil Sessions Court — knoxcounty.org
+
+**Status:** Yellow — public weekly PDF dockets, no login. Address unlikely. Paid sub for case detail. Assessed 2026-05-14.
+
+**Portal:** `https://www.knoxcounty.org/civil/dockets.php`
+**Paid sub (avoid):** Knox Circuit Records — $120/3-month subscription for case detail online access.
+
+**Findings (2026-05-14):**
+- Public weekly PDF dockets are available at no cost, no login, organized by hearing date. Links labeled "2026 Weekly Court Dates" link to dated PDF files (e.g., `DailyDkt20260512.pdf`).
+- Dockets cover Civil Sessions Court which handles eviction/detainer cases in Knox County (Knoxville metro).
+- Property address is not expected in the PDF docket — typical TN General Sessions dockets show party names, case numbers, and hearing times only.
+- Case detail (including addresses) requires a $120/quarter subscription to Knox Circuit Records — do not pursue this paid path.
+
+**Scraper approach:**
+- Fetch docket page to enumerate current PDF links.
+- Download and parse PDFs with pdfplumber — same approach as Cobb/DeKalb GA.
+- Extract case number, landlord, tenant, hearing date.
+- Set `property_address = "Unknown"`.
+
+**Production gate:** Volume/proof source only. Address-absent; keep out of automated tenant phone outreach. Hold until Melissa Personator can be tested on Knox County tenant names. Do not pay the $120/quarter subscription to unlock address data — use Melissa enrichment instead.

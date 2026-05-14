@@ -28,6 +28,13 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
     ScheduledJob("tennessee", 13, 20, "run_tennessee.py"),
     ScheduledJob("arizona", 13, 40, "run_arizona.py", args=("--pipe", "--notify")),
     ScheduledJob("georgia_cobb", 14, 0, "run_georgia_cobb.py", args=("--pipe", "--notify")),
+    ScheduledJob(
+        "ohio_franklin_raw",
+        14,
+        20,
+        "../scripts/push_franklin_filings.py",
+        args=("--lookback-days", "2", "--yes-write-supabase", "--notify"),
+    ),
 )
 
 

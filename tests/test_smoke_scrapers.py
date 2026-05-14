@@ -103,6 +103,12 @@ def test_parse_states_recognises_dekalb_alias():
     assert parse_states("georgia_dekalb") == ["georgia_dekalb"]
 
 
+def test_parse_states_recognises_franklin_ohio_alias():
+    from scripts.smoke_scrapers import parse_states
+    assert parse_states("franklin_oh") == ["ohio_franklin"]
+    assert parse_states("columbus") == ["ohio_franklin"]
+
+
 def test_georgia_cobb_factory_returns_scraper():
     from scripts.smoke_scrapers import SCRAPER_FACTORIES
     scrapers = SCRAPER_FACTORIES["georgia_cobb"](7, True)
@@ -119,3 +125,46 @@ def test_georgia_dekalb_factory_returns_scraper():
     label, scraper = scrapers[0]
     assert label == "DeKalb Magistrate"
     assert scraper.lookback_days == 7
+
+
+def test_ohio_franklin_factory_returns_scraper():
+    from scripts.smoke_scrapers import SCRAPER_FACTORIES
+    scrapers = SCRAPER_FACTORIES["ohio_franklin"](7, True)
+    assert len(scrapers) == 1
+    label, scraper = scrapers[0]
+    assert label == "Franklin Municipal"
+    assert scraper.lookback_days == 7
+
+
+def test_parse_states_recognises_hamilton_ohio_alias():
+    from scripts.smoke_scrapers import parse_states
+    assert parse_states("hamilton") == ["ohio_hamilton"]
+    assert parse_states("cincinnati") == ["ohio_hamilton"]
+    assert parse_states("hamilton_oh") == ["ohio_hamilton"]
+
+
+def test_ohio_hamilton_factory_returns_scraper():
+    from scripts.smoke_scrapers import SCRAPER_FACTORIES
+    scrapers = SCRAPER_FACTORIES["ohio_hamilton"](7, True)
+    assert len(scrapers) == 1
+    label, scraper = scrapers[0]
+    assert label == "Hamilton Municipal"
+    assert scraper.lookback_days == 7
+
+
+def test_parse_states_recognises_clark_nevada_alias():
+    from scripts.smoke_scrapers import parse_states
+    assert parse_states("clark") == ["nevada_clark"]
+    assert parse_states("nevada") == ["nevada_clark"]
+    assert parse_states("henderson") == ["nevada_clark"]
+    assert parse_states("nevada_clark") == ["nevada_clark"]
+
+
+def test_nevada_clark_factory_returns_scraper():
+    from scripts.smoke_scrapers import SCRAPER_FACTORIES
+    scrapers = SCRAPER_FACTORIES["nevada_clark"](7, True)
+    assert len(scrapers) == 1
+    label, scraper = scrapers[0]
+    assert label == "Clark Justice Court"
+    assert scraper.lookback_days == 7
+    assert scraper.max_cases == 25
