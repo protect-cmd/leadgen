@@ -42,7 +42,7 @@ class EnrichmentCache:
             """, (time.time() - _TTL_SECONDS,))
 
     def _key(self, first: str, last: str, city: str, state: str) -> tuple[str, str, str, str]:
-        return first.lower(), last.lower(), city.lower(), state.lower()
+        return first.strip().lower(), last.strip().lower(), city.strip().lower(), state.strip().lower()
 
     def get(
         self, first: str, last: str, city: str, state: str
