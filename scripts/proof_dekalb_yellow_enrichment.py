@@ -1,12 +1,12 @@
 """
-Proof script: Hamilton County OH yellow-source enrichment via SearchBug.
+Proof script: DeKalb County GA yellow-source enrichment via SearchBug.
 
-Scrapes up to --max-cases filings (property_address="Cincinnati, OH"),
-runs each through enrich_tenant_by_name (the cost-reduction pipeline),
-and prints a summary comparing results to the pre-optimization baseline.
+Scrapes up to --max-cases dispossessory filings from DeKalb Magistrate Court
+PDF calendars, runs each through enrich_tenant_by_name, and prints a cost/hit
+summary comparable to the Hamilton yellow-source baseline.
 
-Baseline (pre-optimization):
-  3/20 phone hits (15%)   5 multi-match rejections paid   ~$3.00/usable number
+Baseline reference (Hamilton OH, pre-green-upgrade):
+  3/20 phone hits (15%)   ~$1.93/usable phone (after surname filter)
 """
 from __future__ import annotations
 
@@ -24,32 +24,23 @@ from dotenv import load_dotenv
 
 from models.contact import EnrichedContact
 from models.filing import Filing
-from scrapers.ohio.hamilton import HamiltonCountyMunicipalScraper
+from scrapers.georgia.dekalb import DeKalbDispossessoryScraper
 from services import batchdata_service
 from services.name_utils import parse_name, split_tenants, is_common_surname
 
-COST_PER_CALL = 0.77  # SearchBug PPD plan $/hit (charged on any response with records)
-
-# ── baseline numbers from initial 20-filing test ──────────────────────────
-BASELINE_TOTAL = 20
-BASELINE_PHONES = 3
-BASELINE_HIT_RATE = BASELINE_PHONES / BASELINE_TOTAL
-BASELINE_MULTIMATCHES = 5
-BASELINE_COST_PER_USABLE = 3.00
+COST_PER_CALL = 0.77  # SearchBug PPD plan $/hit
 
 
-# ── log capture ───────────────────────────────────────────────────────────
+# ── stats ─────────────────────────────────────────────────────────────────
 
 @dataclass
 class _Stats:
-    """Counters populated by log capture + result inspection."""
     surname_skips: int = 0
     cap_hits: int = 0
     cache_hits: int = 0
     unparseable: int = 0
-    multi_tenant_splits: int = 0   # filings that split into 2+ names
-    middle_initial_fixes: int = 0  # names where parse_name strips a middle token
-    sb_calls_estimated: int = 0    # names that reached SearchBug (estimated from logs)
+    multi_tenant_splits: int = 0
+    middle_initial_fixes: int = 0
     sb_phone_only: int = 0
     no_match: int = 0
 
@@ -73,20 +64,16 @@ class _CountingHandler(logging.Handler):
             self._stats.unparseable += 1
 
 
-# ── pre-analysis (no API calls) ───────────────────────────────────────────
+# ── pre-analysis ──────────────────────────────────────────────────────────
 
 def _pre_analyse(filings: list[Filing], stats: _Stats) -> None:
-    """Count name-parsing outcomes before any API call."""
     for filing in filings:
         names = split_tenants(filing.tenant_name.strip())
         if len(names) > 1:
             stats.multi_tenant_splits += 1
-
         for raw_name in names:
             tokens = raw_name.strip().split()
             first, last = parse_name(raw_name)
-            # Middle initial detected when there are 3+ tokens and the middle
-            # token(s) differ from just first+last
             if (
                 len(tokens) >= 3
                 and first
@@ -110,11 +97,9 @@ class ProofRow:
     source_url: str
 
 
-# ── main proof ────────────────────────────────────────────────────────────
+# ── proof run ─────────────────────────────────────────────────────────────
 
-async def run_proof(
-    filings: list[Filing],
-) -> list[ProofRow]:
+async def run_proof(filings: list[Filing]) -> list[ProofRow]:
     rows: list[ProofRow] = []
     for filing in filings:
         contact: EnrichedContact = await batchdata_service.enrich_tenant_by_name(
@@ -138,18 +123,12 @@ def _pct(part: int, total: int) -> str:
     return f"{part / total * 100:.1f}%"
 
 
-def _print_report(
-    rows: list[ProofRow],
-    stats: _Stats,
-    total_filings: int,
-) -> None:
+def _print_report(rows: list[ProofRow], stats: _Stats, total_filings: int) -> None:
     phones = sum(1 for r in rows if r.phone)
     dnc_clear = sum(1 for r in rows if r.phone and r.dnc_status == "clear")
     dnc_unknown = sum(1 for r in rows if r.phone and r.dnc_status == "unknown")
     dnc_blocked = sum(1 for r in rows if r.phone and r.dnc_status == "blocked")
 
-    # Estimate SearchBug calls: names attempted minus pre-call filters
-    # Each filing contributes len(split_tenants(name)) attempts
     total_name_attempts = sum(
         len(split_tenants(r.tenant_name.strip())) for r in rows
     )
@@ -166,15 +145,13 @@ def _print_report(
 
     sep = "-" * 55
     print()
-    print("Hamilton County OH — SearchBug cost-reduction proof")
+    print("DeKalb County GA - SearchBug yellow-source proof")
     print(sep)
 
     print("\nName parsing")
     print(f"  Filings processed:            {total_filings:>4}")
-    print(f"  Multi-tenant splits:          {stats.multi_tenant_splits:>4}  "
-          f"(split into 2 names each)")
-    print(f"  Middle-initial tokens fixed:  {stats.middle_initial_fixes:>4}  "
-          f"(e.g. BRETT L LILLY → first=BRETT last=LILLY)")
+    print(f"  Multi-tenant splits:          {stats.multi_tenant_splits:>4}")
+    print(f"  Middle-initial tokens fixed:  {stats.middle_initial_fixes:>4}")
     print(f"  Unparseable names:            {stats.unparseable:>4}")
 
     print("\nPre-call filters")
@@ -188,33 +165,17 @@ def _print_report(
     print(f"  No match:                     {stats.no_match:>4}")
 
     print("\nResults")
-    print(f"  Phones found:     {phones:>3}/{total_filings}  "
-          f"({_pct(phones, total_filings)})")
+    print(f"  Phones found:     {phones:>3}/{total_filings}  ({_pct(phones, total_filings)})")
     print(f"  DNC-clear:        {dnc_clear:>3}")
     print(f"  DNC-unknown:      {dnc_unknown:>3}")
     print(f"  DNC-blocked:      {dnc_blocked:>3}")
 
     print("\nCost estimate")
-    print(f"  Calls × ${COST_PER_CALL:.2f}:            ${cost_est:>6.2f}")
+    print(f"  Calls x ${COST_PER_CALL:.2f}:            ${cost_est:>6.2f}")
     if phones:
         print(f"  Cost per usable phone:        ${cost_per_phone:>6.2f}")
     else:
         print(f"  Cost per usable phone:           n/a")
-
-    print(f"\n{sep}")
-    print("Baseline vs. now")
-    print(f"{'':30} {'Before':>10}  {'After':>10}")
-    print(f"  {'Phones found':<28} {BASELINE_PHONES:>4}/{BASELINE_TOTAL}       "
-          f"{phones:>4}/{total_filings}")
-    print(f"  {'Hit rate':<28} {_pct(BASELINE_PHONES, BASELINE_TOTAL):>10}  "
-          f"{_pct(phones, total_filings):>10}")
-    print(f"  {'Multi-match rejections paid':<28} {BASELINE_MULTIMATCHES:>10}  "
-          f"{'0 (filtered)':>10}")
-    print(f"  {'Est. cost per usable phone':<28} "
-          f"${BASELINE_COST_PER_USABLE:>9.2f}  "
-          f"${cost_per_phone:>9.2f}" if phones else
-          f"  {'Est. cost per usable phone':<28} "
-          f"${BASELINE_COST_PER_USABLE:>9.2f}  {'n/a':>10}")
     print(sep)
 
 
@@ -230,21 +191,20 @@ def write_csv(rows: list[ProofRow], output_path: Path) -> None:
 async def main_async(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Proof: Hamilton County OH SearchBug cost-reduction pipeline. "
+            "Proof: DeKalb County GA SearchBug yellow-source enrichment pipeline. "
             "Calls SearchBug; costs real money. Does NOT call GHL, Bland, or Supabase."
         )
     )
     parser.add_argument("--max-cases", type=int, default=20)
-    parser.add_argument("--lookback-days", type=int, default=7)
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("tmp/hamilton_yellow_enrichment_proof.csv"),
+        default=Path("tmp/dekalb_yellow_enrichment_proof.csv"),
     )
     parser.add_argument(
         "--yes-spend-credits",
         action="store_true",
-        help="Required — this script calls SearchBug and spends real credits.",
+        help="Required -- this script calls SearchBug and spends real credits.",
     )
     args = parser.parse_args(argv)
 
@@ -256,24 +216,24 @@ async def main_async(argv: list[str] | None = None) -> int:
     stats = _Stats()
     handler = _CountingHandler(stats)
     handler.setLevel(logging.DEBUG)
+    # Must set level on each logger explicitly — basicConfig only sets the root logger,
+    # and child loggers with NOTSET level inherit root's WARNING floor, blocking INFO msgs.
     sb_log = logging.getLogger("services.batchdata_service")
     sb_log.setLevel(logging.DEBUG)
     sb_log.addHandler(handler)
     sbug_log = logging.getLogger("services.searchbug_service")
     sbug_log.setLevel(logging.DEBUG)
     sbug_log.addHandler(handler)
-    logging.basicConfig(level=logging.WARNING)  # suppress noise to stdout
+    logging.basicConfig(level=logging.WARNING)
 
-    scraper = HamiltonCountyMunicipalScraper(lookback_days=args.lookback_days)
+    scraper = DeKalbDispossessoryScraper()
     all_filings = scraper.scrape()
     filings = all_filings[: args.max_cases]
 
-    print(f"Scraped {len(all_filings)} Hamilton County filings -> testing {len(filings)}")
+    print(f"Scraped {len(all_filings)} DeKalb filings -> testing {len(filings)}")
 
     _pre_analyse(filings, stats)
-
     rows = await run_proof(filings)
-
     write_csv(rows, args.output)
     _print_report(rows, stats, len(filings))
     print(f"CSV: {args.output}")

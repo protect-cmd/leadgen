@@ -86,7 +86,7 @@ class DeKalbDispossessoryScraper:
                     Filing(
                         case_number=case_number,
                         tenant_name=case.get("tenant_name") or "Unknown",
-                        property_address="Unknown",
+                        property_address="Decatur, GA",
                         landlord_name=case.get("landlord_name") or "Unknown",
                         filing_date=court_date,
                         court_date=court_date,
