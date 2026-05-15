@@ -284,12 +284,113 @@ async def enrich(
     )
 
 
+async def enrich_tenant_by_name(
+    filing: Filing,
+    lookup_property_if_missing: bool = True,
+) -> EnrichedContact:
+    """NG track for yellow calendar sources — no property address available.
+
+    Chain: split_tenants → parse_name → cache → surname filter →
+           ZIP resolve → daily cap → SearchBug → BatchData → cache store.
+    """
+    from services.name_utils import parse_name, split_tenants, is_common_surname, resolve_zip
+    from services.searchbug_service import search_tenant as _searchbug_search
+    from services.enrichment_cache import get_cache
+
+    cache = get_cache()
+    cap = int(os.environ.get("SEARCHBUG_DAILY_CAP", "100"))
+
+    # Parse city/state from yellow-source address "City, STATE" or "City, STATE ZIP"
+    raw_addr = (filing.property_address or "").strip()
+    addr_parts = [p.strip() for p in raw_addr.split(",")]
+    city = addr_parts[0] if addr_parts else ""
+    state = filing.state
+    postal_from_address = ""
+    if len(addr_parts) >= 2:
+        tokens = addr_parts[1].split()
+        if tokens:
+            state = tokens[0] or filing.state
+        if len(tokens) >= 2 and tokens[1].isdigit():
+            postal_from_address = tokens[1]
+
+    for raw_name in split_tenants(filing.tenant_name.strip()):
+        first_name, last_name = parse_name(raw_name)
+        if not first_name or not last_name:
+            log.info(f"enrich_tenant_by_name: unparseable name segment {raw_name!r} for {filing.case_number}")
+            continue
+
+        # Cache lookup — None = uncached; (None, None) = cached miss
+        cached = cache.get(first_name, last_name, city, state)
+        if cached is not None:
+            phone, resolved_address = cached
+            if resolved_address:
+                patched = filing.model_copy(update={"property_address": resolved_address})
+                result = await enrich_tenant(patched, lookup_property_if_missing=lookup_property_if_missing)
+                if not result.phone and phone:
+                    from dataclasses import replace as _dc_replace
+                    result = _dc_replace(result, phone=phone, dnc_source="searchbug")
+                return result
+            if phone:
+                return EnrichedContact(
+                    filing=filing, track="ng", phone=phone,
+                    dnc_status="unknown", dnc_source="searchbug",
+                )
+            continue  # cached miss — try next name
+
+        # Pre-call common-surname filter
+        if is_common_surname(last_name):
+            log.info(
+                f"enrich_tenant_by_name: common surname skip {last_name!r} "
+                f"for {filing.case_number}"
+            )
+            cache.set(first_name, last_name, city, state, None, None)
+            continue
+
+        # Daily cap check
+        if not cache.check_daily_cap(cap):
+            log.warning(f"enrich_tenant_by_name: daily cap {cap} reached for {filing.case_number}")
+            break
+
+        # ZIP narrowing — use address-derived ZIP first, then city map
+        postal = postal_from_address or resolve_zip(city, state)
+
+        phone, resolved_address = await _searchbug_search(
+            first_name, last_name, city=city, state=state, postal=postal
+        )
+        cache.increment_daily_count()
+        cache.set(first_name, last_name, city, state, phone, resolved_address)
+
+        if resolved_address:
+            patched = filing.model_copy(update={"property_address": resolved_address})
+            result = await enrich_tenant(patched, lookup_property_if_missing=lookup_property_if_missing)
+            if not result.phone and phone:
+                from dataclasses import replace as _dc_replace
+                result = _dc_replace(result, phone=phone, dnc_source="searchbug")
+            return result
+
+        if phone:
+            log.info(f"enrich_tenant_by_name: SearchBug phone-only hit for {filing.case_number}")
+            return EnrichedContact(
+                filing=filing, track="ng", phone=phone,
+                dnc_status="unknown", dnc_source="searchbug",
+            )
+
+    log.info(f"enrich_tenant_by_name: no match for {filing.case_number}")
+    return EnrichedContact(filing=filing, track="ng", phone=None, email=None,
+                           dnc_status="unknown", dnc_source=None)
+
+
 async def enrich_tenant(
     filing: Filing,
     property_info: PropertyInfo | None = None,
     lookup_property_if_missing: bool = True,
+    use_melissa_fallback: bool = True,
 ) -> EnrichedContact:
-    """NG track — skip-traces the tenant by name at the property address."""
+    """NG track — skip-traces the tenant by name at the property address.
+
+    Falls back to Melissa Personator when BatchData returns no name match,
+    provided MELISSA_LICENSE_KEY is set and use_melissa_fallback is True.
+    """
     addr = _split_address(filing.property_address)
     headers = _headers()
 
@@ -344,6 +445,22 @@ async def enrich_tenant(
                 f"Tenant skip-trace {r.status_code} for {filing.case_number}: "
                 f"{r.text[:200]}"
             )
+
+    # Melissa fallback — runs when BatchData returned no name match
+    if not phone and use_melissa_fallback and os.environ.get("MELISSA_LICENSE_KEY"):
+        from services.melissa_service import lookup_tenant as _melissa_lookup
+        name_parts = tenant_name_normalized.strip().split()
+        first_name = name_parts[0] if name_parts else ""
+        last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+        if first_name and last_name:
+            m_phone, m_email, m_matched = await _melissa_lookup(
+                first_name, last_name, filing.property_address
+            )
+            if m_matched and m_phone:
+                phone = m_phone
+                email = email or m_email
+                dnc_source = "melissa"
+                log.info(f"Melissa fallback hit for {filing.case_number}: phone={phone}")
 
     if property_info is None and lookup_property_if_missing and property_type is None:
         property_info = await lookup_property_info(filing)

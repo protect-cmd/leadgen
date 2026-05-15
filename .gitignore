@@ -24,6 +24,9 @@ sniff_log.json
 # Tools
 .firecrawl/
 
+# Data directory (local DB, exports, scratch files)
+data/
+
 # Docs / binaries not for source control
 *.docx
 *.xlsx
