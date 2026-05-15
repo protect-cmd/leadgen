@@ -326,7 +326,11 @@ async def enrich_tenant_by_name(
             phone, resolved_address = cached
             if resolved_address:
                 patched = filing.model_copy(update={"property_address": resolved_address})
-                result = await enrich_tenant(patched, lookup_property_if_missing=lookup_property_if_missing)
+                result = await enrich_tenant(
+                    patched,
+                    lookup_property_if_missing=lookup_property_if_missing,
+                    use_melissa_fallback=False,
+                )
                 if not result.phone and phone:
                     result = _dc_replace(result, phone=phone, dnc_source="searchbug")
                 return result
@@ -362,7 +366,11 @@ async def enrich_tenant_by_name(
 
         if resolved_address:
             patched = filing.model_copy(update={"property_address": resolved_address})
-            result = await enrich_tenant(patched, lookup_property_if_missing=lookup_property_if_missing)
+            result = await enrich_tenant(
+                patched,
+                lookup_property_if_missing=lookup_property_if_missing,
+                use_melissa_fallback=False,
+            )
             if not result.phone and phone:
                 result = _dc_replace(result, phone=phone, dnc_source="searchbug")
             return result

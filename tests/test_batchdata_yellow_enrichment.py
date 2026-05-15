@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -196,3 +196,27 @@ async def test_cache_hit_with_address_triggers_batchdata(mock_cache):
     patched_filing = mock_enrich.call_args[0][0]
     assert patched_filing.property_address == resolved
     assert result.phone == "5559998888"  # BatchData phone wins
+
+
+@pytest.mark.asyncio
+async def test_enrich_tenant_by_name_no_melissa_fallback(mock_cache):
+    """enrich_tenant must be called with use_melissa_fallback=False at both call sites."""
+    filing = _filing(tenant_name="BRETT LILLY")
+    resolved = "456 Oak St, Cincinnati, OH 45202"
+    fake_contact = EnrichedContact(
+        filing=filing, track="ng", phone="5131112222",
+        dnc_status="unknown", dnc_source="searchbug",
+    )
+
+    with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
+         patch("services.searchbug_service.search_tenant", new_callable=AsyncMock,
+               return_value=("5131112222", resolved)) as mock_sb, \
+         patch("services.batchdata_service.enrich_tenant", new_callable=AsyncMock,
+               return_value=fake_contact) as mock_et:
+        result = await batchdata_service.enrich_tenant_by_name(filing)
+
+    assert mock_et.call_count >= 1
+    for call in mock_et.call_args_list:
+        assert call.kwargs.get("use_melissa_fallback") is False, (
+            f"enrich_tenant called without use_melissa_fallback=False: {call}"
+        )
