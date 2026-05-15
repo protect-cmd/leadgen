@@ -15,7 +15,7 @@ import asyncio
 import csv
 import logging
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -114,7 +114,6 @@ class ProofRow:
 
 async def run_proof(
     filings: list[Filing],
-    stats: _Stats,
 ) -> list[ProofRow]:
     rows: list[ProofRow] = []
     for filing in filings:
@@ -165,12 +164,7 @@ def _print_report(
     cost_est = sb_calls_est * COST_PER_CALL
     cost_per_phone = cost_est / phones if phones else float("inf")
 
-    # Baseline
-    baseline_calls_est = BASELINE_TOTAL - 0  # no pre-call filters before
-    baseline_cost = BASELINE_MULTIMATCHES * COST_PER_CALL + BASELINE_PHONES * COST_PER_CALL
-    # (hits + multi-match rejections were all charged)
-
-    sep = "─" * 55
+    sep = "-" * 55
     print()
     print("Hamilton County OH — SearchBug cost-reduction proof")
     print(sep)
@@ -270,11 +264,11 @@ async def main_async(argv: list[str] | None = None) -> int:
     all_filings = scraper.scrape()
     filings = all_filings[: args.max_cases]
 
-    print(f"Scraped {len(all_filings)} Hamilton County filings → testing {len(filings)}")
+    print(f"Scraped {len(all_filings)} Hamilton County filings -> testing {len(filings)}")
 
     _pre_analyse(filings, stats)
 
-    rows = await run_proof(filings, stats)
+    rows = await run_proof(filings)
 
     write_csv(rows, args.output)
     _print_report(rows, stats, len(filings))
