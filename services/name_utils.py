@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-_SUFFIXES = {"jr", "sr", "ii", "iii", "iv"}
-
 
 def _is_middle_initial(token: str) -> bool:
     """Single letter or single letter followed by a period."""
