@@ -99,3 +99,27 @@ class TestResolveZip:
 
     def test_nashville_tn(self):
         assert resolve_zip("Nashville", "TN") == "37201"
+
+
+# ── generational suffix stripping ─────────────────────────────────────────
+
+def test_parse_name_suffix_ii():
+    assert parse_name("KENT ANTHONY MCNEAL II") == ("KENT", "MCNEAL")
+
+def test_parse_name_suffix_jr():
+    assert parse_name("ROBERT SMITH JR") == ("ROBERT", "SMITH")
+
+def test_parse_name_suffix_sr():
+    assert parse_name("JAMES BROWN SR.") == ("JAMES", "BROWN")
+
+def test_parse_name_suffix_iii():
+    assert parse_name("WILLIAM DUPREE III") == ("WILLIAM", "DUPREE")
+
+def test_parse_name_suffix_iv():
+    assert parse_name("CHARLES LILLY IV") == ("CHARLES", "LILLY")
+
+def test_parse_name_no_suffix_unchanged():
+    assert parse_name("KENT MCNEAL") == ("KENT", "MCNEAL")
+
+def test_parse_name_comma_suffix_ignored():
+    assert parse_name("MCNEAL, KENT II") == ("KENT", "MCNEAL")

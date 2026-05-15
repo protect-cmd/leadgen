@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+_GENERATIONAL_SUFFIXES: frozenset[str] = frozenset({"jr", "sr", "ii", "iii", "iv"})
+
 
 def _is_middle_initial(token: str) -> bool:
     """Single letter or single letter followed by a period."""
@@ -12,9 +14,10 @@ def parse_name(raw: str) -> tuple[str, str]:
 
     Handles:
     - "LAST, FIRST"
-    - "LAST, FIRST MIDDLE"  → middle stripped
+    - "LAST, FIRST MIDDLE"  -> middle stripped
     - "FIRST LAST"
-    - "FIRST MIDDLE LAST"   → middle stripped
+    - "FIRST MIDDLE LAST"   -> middle stripped
+    - "FIRST [MIDDLE] LAST JR/SR/II/III/IV"  -> suffix stripped
     """
     raw = raw.strip()
     if not raw:
@@ -28,16 +31,19 @@ def parse_name(raw: str) -> tuple[str, str]:
         first = parts[0] if parts else ""
         return (first, last) if first and last else ("", "")
 
-    # Space-separated: "FIRST [MIDDLE] LAST" or "FIRST LAST"
+    # Space-separated: "FIRST [MIDDLE] LAST [SUFFIX]" or "FIRST LAST"
     tokens = raw.split()
     if len(tokens) < 2:
         return "", ""
 
     first = tokens[0]
-    last = tokens[-1]
+    remaining = list(tokens[1:])
 
-    # If there are middle tokens and last == middle initial, this is ambiguous;
-    # trust first + last (first and last token) regardless.
+    # Strip trailing generational suffixes (Jr, Sr, II, III, IV)
+    while remaining and remaining[-1].rstrip(".").lower() in _GENERATIONAL_SUFFIXES:
+        remaining.pop()
+
+    last = remaining[-1] if remaining else tokens[-1]
     return first, last
 
 
@@ -48,8 +54,8 @@ def split_tenants(raw: str) -> list[str]:
     (single character or single char + dot). All other strings returned as-is.
 
     Examples:
-        "AVONTE THOMAS ASHANTE JOHNSON" → ["AVONTE THOMAS", "ASHANTE JOHNSON"]
-        "BRETT L LILLY"                 → ["BRETT L LILLY"]
+        "AVONTE THOMAS ASHANTE JOHNSON" -> ["AVONTE THOMAS", "ASHANTE JOHNSON"]
+        "BRETT L LILLY"                 -> ["BRETT L LILLY"]
     """
     tokens = raw.strip().split()
     if len(tokens) == 4 and not any(_is_middle_initial(t) for t in tokens):
@@ -98,7 +104,7 @@ def is_common_surname(last_name: str) -> bool:
     return last_name.strip().lower() in _COMMON_SURNAMES
 
 
-# Representative ZIP codes for yellow-source cities (city.lower(), state.upper()) → ZIP
+# Representative ZIP codes for yellow-source cities (city.lower(), state.upper()) -> ZIP
 _CITY_ZIP: dict[tuple[str, str], str] = {
     ("cincinnati", "OH"): "45202",
     ("cleveland", "OH"): "44113",
