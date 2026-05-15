@@ -41,9 +41,8 @@ class OhioRunSummary:
         return [
             "Ohio" + (" pipeline run" if self.piped else " scraper-only proof"),
             f"Franklin Municipal (Columbus): {self.franklin_filings} filings",
-            f"Hamilton Municipal (Cincinnati): {self.hamilton_filings} filings - address-absent, proof only",
+            f"Hamilton Municipal (Cincinnati): {self.hamilton_filings} filings",
             f"Total: {self.total_filings}",
-            "Hamilton address source: none - Melissa Personator enrichment needed before pipeline",
             runner_line,
         ]
 
@@ -80,6 +79,10 @@ async def main(
         from pipeline import runner as pipeline_runner
         await pipeline_runner.run(franklin_filings, state="OH", county="Franklin")
 
+    if pipe and hamilton_filings:
+        from pipeline import runner as pipeline_runner
+        await pipeline_runner.run(hamilton_filings, state="OH", county="Hamilton")
+
     summary = OhioRunSummary(
         franklin_filings=len(franklin_filings),
         hamilton_filings=len(hamilton_filings),
@@ -105,8 +108,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Run Ohio eviction scrapers (Franklin + Hamilton). "
             "Default: scraper-only proof. "
-            "Franklin filings go to pipeline with --pipe; Hamilton is proof-only "
-            "until Melissa Personator address enrichment is wired."
+            "Use --pipe to send filings through the BatchData enrichment pipeline."
         )
     )
     parser.add_argument("--lookback-days", type=int, default=2)

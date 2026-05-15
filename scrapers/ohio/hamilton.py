@@ -183,9 +183,7 @@ def _parse_eviction_schedule(
             Filing(
                 case_number=case_number,
                 tenant_name=tenant or "Unknown",
-                # courtclerk.org/case_summary.php blocks direct links by policy;
-                # eviction schedule exposes no defendant address. Hamilton stays yellow.
-                property_address="Cincinnati, OH",
+                property_address="Cincinnati, OH",  # upgraded to real address in scrape() via party page
                 landlord_name=landlord or "Unknown",
                 filing_date=hearing_date,
                 court_date=hearing_date,
