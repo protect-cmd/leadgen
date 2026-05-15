@@ -293,6 +293,7 @@ async def enrich_tenant_by_name(
     Chain: split_tenants → parse_name → cache → surname filter →
            ZIP resolve → daily cap → SearchBug → BatchData → cache store.
     """
+    from dataclasses import replace as _dc_replace
     from services.name_utils import parse_name, split_tenants, is_common_surname, resolve_zip
     from services.searchbug_service import search_tenant as _searchbug_search
     from services.enrichment_cache import get_cache
@@ -327,7 +328,6 @@ async def enrich_tenant_by_name(
                 patched = filing.model_copy(update={"property_address": resolved_address})
                 result = await enrich_tenant(patched, lookup_property_if_missing=lookup_property_if_missing)
                 if not result.phone and phone:
-                    from dataclasses import replace as _dc_replace
                     result = _dc_replace(result, phone=phone, dnc_source="searchbug")
                 return result
             if phone:
@@ -364,7 +364,6 @@ async def enrich_tenant_by_name(
             patched = filing.model_copy(update={"property_address": resolved_address})
             result = await enrich_tenant(patched, lookup_property_if_missing=lookup_property_if_missing)
             if not result.phone and phone:
-                from dataclasses import replace as _dc_replace
                 result = _dc_replace(result, phone=phone, dnc_source="searchbug")
             return result
 

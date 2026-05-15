@@ -171,3 +171,28 @@ async def test_middle_initial_parsed_correctly(mock_cache):
     assert first.lower() == "brett"
     assert last.lower() == "lilly"
     assert result.phone == "5550009999"
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_with_address_triggers_batchdata(mock_cache):
+    """Cache hit with resolved address → enrich_tenant called, no SearchBug call."""
+    filing = _filing(tenant_name="BRETT LILLY")
+    resolved = "456 Oak Ave, Cincinnati, OH 45202"
+    cached_phone = "5550001111"
+    mock_cache.set("brett", "lilly", "cincinnati", "oh", cached_phone, resolved)
+
+    mock_enriched = EnrichedContact(
+        filing=filing, track="ng", phone="5559998888", dnc_status="clear", dnc_source="batchdata"
+    )
+
+    with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
+         patch("services.searchbug_service.search_tenant", new_callable=AsyncMock) as mock_sb, \
+         patch("services.batchdata_service.enrich_tenant", new_callable=AsyncMock,
+               return_value=mock_enriched) as mock_enrich:
+        result = await batchdata_service.enrich_tenant_by_name(filing)
+
+    mock_sb.assert_not_called()  # SearchBug skipped — used cache
+    mock_enrich.assert_called_once()
+    patched_filing = mock_enrich.call_args[0][0]
+    assert patched_filing.property_address == resolved
+    assert result.phone == "5559998888"  # BatchData phone wins
