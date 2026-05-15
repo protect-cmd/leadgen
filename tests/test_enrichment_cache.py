@@ -51,3 +51,29 @@ class TestCacheGetSet:
         cache.set("john", "doe", "cincinnati", "oh", "5559998888", "456 Oak Ave")
         result = cache.get("john", "doe", "cincinnati", "oh")
         assert result == ("5559998888", "456 Oak Ave")
+
+
+class TestDailyCap:
+    def test_under_cap_returns_true(self, cache):
+        assert cache.check_daily_cap(100) is True
+
+    def test_at_cap_returns_false(self, cache):
+        for _ in range(3):
+            cache.increment_daily_count()
+        assert cache.check_daily_cap(3) is False
+
+    def test_one_under_cap_returns_true(self, cache):
+        for _ in range(2):
+            cache.increment_daily_count()
+        assert cache.check_daily_cap(3) is True
+
+    def test_increment_accumulates(self, cache):
+        cache.increment_daily_count()
+        cache.increment_daily_count()
+        # Check internal count
+        import sqlite3
+        from datetime import date
+        today = date.today().isoformat()
+        with sqlite3.connect(cache._db_path) as con:
+            row = con.execute("SELECT count FROM daily_cap WHERE date=?", (today,)).fetchone()
+        assert row[0] == 2
