@@ -109,11 +109,11 @@ def test_parse_eviction_schedule_sets_county_state_and_notice_type():
     assert filings[0].notice_type == "Eviction"
 
 
-def test_parse_eviction_schedule_property_address_is_unknown():
+def test_parse_eviction_schedule_property_address_is_cincinnati_oh():
     filings = _parse_eviction_schedule(SAMPLE_HTML, hearing_date=HEARING_DATE)
 
     for filing in filings:
-        assert filing.property_address == "Unknown"
+        assert filing.property_address == "Cincinnati, OH"
 
 
 def test_parse_eviction_schedule_filing_date_falls_back_to_hearing_date():
@@ -190,3 +190,100 @@ def test_scraper_dedupes_same_case_across_dates(monkeypatch):
 
     case_numbers = [f.case_number for f in filings]
     assert len(case_numbers) == len(set(case_numbers))
+
+
+from scrapers.ohio.hamilton import _parse_party_address, _fetch_defendant_address
+
+
+class TestParsePartyAddress:
+    def test_standard_address_with_apt(self):
+        from bs4 import BeautifulSoup
+        html = '<td>1451 HILLCREST RD APT 2<br/>CINCINNATI OH 45224</td>'
+        td = BeautifulSoup(html, 'html.parser').find('td')
+        assert _parse_party_address(td) == "1451 HILLCREST RD APT 2, CINCINNATI, OH 45224"
+
+    def test_standard_address_no_apt(self):
+        from bs4 import BeautifulSoup
+        html = '<td>2200 DANA AVE<br/>CINCINNATI OH 45207</td>'
+        td = BeautifulSoup(html, 'html.parser').find('td')
+        assert _parse_party_address(td) == "2200 DANA AVE, CINCINNATI, OH 45207"
+
+    def test_nine_digit_zip_truncated(self):
+        from bs4 import BeautifulSoup
+        html = '<td>9918 CARVER RD STE 110<br/>CINCINNATI OH 452420000</td>'
+        td = BeautifulSoup(html, 'html.parser').find('td')
+        result = _parse_party_address(td)
+        assert "45242" in result
+        assert "452420000" not in result
+
+    def test_empty_td_returns_empty(self):
+        from bs4 import BeautifulSoup
+        html = '<td></td>'
+        td = BeautifulSoup(html, 'html.parser').find('td')
+        assert _parse_party_address(td) == ""
+
+
+class TestFetchDefendantAddress:
+    def test_returns_first_defendant_address(self):
+        from unittest.mock import MagicMock
+        party_html = """
+        <table id="party_info_table">
+          <thead><tr><th>Name</th><th>Address</th><th>Party</th><th>Attorney</th><th>Address</th><th>ID</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>LANDLORD LLC</td>
+              <td>100 MAIN ST<br/>CINCINNATI OH 45202</td>
+              <td>P\xa01</td>
+              <td></td><td></td><td></td>
+            </tr>
+            <tr>
+              <td>JOHN DOE</td>
+              <td>456 ELM ST APT 3<br/>CINCINNATI OH 45219</td>
+              <td>D\xa01</td>
+              <td colspan="3"></td>
+            </tr>
+          </tbody>
+        </table>
+        """
+        mock_session = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = party_html
+        mock_session.post.return_value = mock_resp
+
+        result = _fetch_defendant_address(mock_session, "26CV11460")
+        assert result == "456 ELM ST APT 3, CINCINNATI, OH 45219"
+
+    def test_returns_none_on_exception(self):
+        from unittest.mock import MagicMock
+        mock_session = MagicMock()
+        mock_session.post.side_effect = Exception("timeout")
+        result = _fetch_defendant_address(mock_session, "26CV11460")
+        assert result is None
+
+    def test_returns_none_when_no_defendant_row(self):
+        from unittest.mock import MagicMock
+        party_html = """
+        <table id="party_info_table">
+          <thead><tr><th>Name</th><th>Address</th><th>Party</th></tr></thead>
+          <tbody>
+            <tr><td>LANDLORD</td><td>100 MAIN<br/>CINCINNATI OH 45202</td><td>P\xa01</td></tr>
+          </tbody>
+        </table>
+        """
+        mock_session = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = party_html
+        mock_session.post.return_value = mock_resp
+        result = _fetch_defendant_address(mock_session, "26CV11460")
+        assert result is None
+
+    def test_returns_none_on_non_200(self):
+        from unittest.mock import MagicMock
+        mock_session = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        mock_session.post.return_value = mock_resp
+        result = _fetch_defendant_address(mock_session, "26CV11460")
+        assert result is None

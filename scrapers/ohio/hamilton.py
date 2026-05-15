@@ -20,11 +20,66 @@ NOTICE_TYPE = "Eviction"
 BASE_URL = "https://www.courtclerk.org/data/eviction_schedule.php"
 COURT = "MCV"
 LOCATION = "EVIM"
+CASE_SUMMARY_URL = "https://www.courtclerk.org/data/case_summary.php"
 
 _OCCUPANT_SUFFIXES = re.compile(
     r"\s+(et\.?\s*al\.?|and\s+all\s+(?:other\s+)?(?:occupants?|tenants?|persons?|others?))$",
     flags=re.IGNORECASE,
 )
+
+
+def _parse_party_address(td) -> str:
+    """Convert a BeautifulSoup <td> address cell to 'STREET, CITY, STATE ZIP' format."""
+    parts = [t.strip() for t in td.stripped_strings]
+    if not parts:
+        return ""
+    street = parts[0]
+    if len(parts) < 2:
+        return street
+    city_state_zip = parts[1]
+    tokens = city_state_zip.split()
+    if len(tokens) >= 3:
+        city = " ".join(tokens[:-2])
+        state = tokens[-2]
+        zip_code = tokens[-1][:5]  # first 5 digits only (9-digit ZIPs appear in court records)
+        return f"{street}, {city}, {state} {zip_code}"
+    return f"{street}, {city_state_zip}"
+
+
+def _fetch_defendant_address(session: requests.Session, case_number: str) -> str | None:
+    """POST to the party page and return the first defendant's street address, or None."""
+    try:
+        r = session.post(
+            CASE_SUMMARY_URL,
+            data={"sec": "party", "casenumber": case_number, "submit": ""},
+            headers={"Referer": f"{CASE_SUMMARY_URL}?casenumber={case_number}"},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            return None
+    except Exception as exc:
+        log.warning("Hamilton OH: party fetch failed for %s: %s", case_number, exc)
+        return None
+
+    soup = BeautifulSoup(r.text, "html.parser")
+    party_table = soup.find("table", {"id": "party_info_table"})
+    if not party_table:
+        return None
+
+    tbody = party_table.find("tbody")
+    if not tbody:
+        return None
+
+    for row in tbody.find_all("tr"):
+        tds = row.find_all("td")
+        if len(tds) < 3:
+            continue
+        party_type = tds[2].get_text(strip=True).upper()
+        if party_type.startswith("D"):
+            addr = _parse_party_address(tds[1])
+            if addr:
+                return addr
+    return None
 
 
 class HamiltonCountyMunicipalScraper:
@@ -60,6 +115,14 @@ class HamiltonCountyMunicipalScraper:
                 if filing.case_number in seen_cases:
                     continue
                 seen_cases.add(filing.case_number)
+                # Attempt to upgrade from yellow (city-only) to green (real address)
+                defendant_address = _fetch_defendant_address(self.session, filing.case_number)
+                if defendant_address:
+                    filing = filing.model_copy(update={"property_address": defendant_address})
+                    log.debug(
+                        "Hamilton OH: resolved address for %s: %s",
+                        filing.case_number, defendant_address,
+                    )
                 filings.append(filing)
 
         log.info("Hamilton OH: %s eviction filings found", len(filings))
