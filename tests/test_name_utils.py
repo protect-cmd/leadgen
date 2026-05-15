@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from services.name_utils import parse_name, split_tenants
+from services.name_utils import parse_name, split_tenants, is_common_surname, resolve_zip
 
 
 class TestParseName:
@@ -65,3 +65,37 @@ class TestSplitTenants:
 
     def test_empty_string(self):
         assert split_tenants("") == [""]
+
+
+class TestIsCommonSurname:
+    def test_smith_is_common(self):
+        assert is_common_surname("smith") is True
+
+    def test_uppercase_smith_is_common(self):
+        assert is_common_surname("SMITH") is True
+
+    def test_johnson_is_common(self):
+        assert is_common_surname("JOHNSON") is True
+
+    def test_uncommon_surname(self):
+        assert is_common_surname("kowalczyk") is False
+
+    def test_empty_string(self):
+        assert is_common_surname("") is False
+
+
+class TestResolveZip:
+    def test_cincinnati_oh(self):
+        assert resolve_zip("Cincinnati", "OH") == "45202"
+
+    def test_case_insensitive(self):
+        assert resolve_zip("CINCINNATI", "oh") == "45202"
+
+    def test_atlanta_ga(self):
+        assert resolve_zip("Atlanta", "GA") == "30303"
+
+    def test_unknown_city(self):
+        assert resolve_zip("Nowheresville", "XX") == ""
+
+    def test_nashville_tn(self):
+        assert resolve_zip("Nashville", "TN") == "37201"
