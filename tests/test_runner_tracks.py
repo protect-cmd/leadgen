@@ -153,3 +153,20 @@ async def test_default_config_is_tenant_only(monkeypatch):
 
     mock_enrich.assert_not_called()
     mock_enrich_tenant.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_business_name_tenant_with_landlord_disabled_skips_filing(monkeypatch):
+    """TENANT=true, LANDLORD=false, business-name tenant -> else:continue, neither enrich called."""
+    monkeypatch.setenv("TENANT_TRACK_ENABLED", "true")
+    monkeypatch.setenv("LANDLORD_TRACK_ENABLED", "false")
+    filing = _filing(tenant_name="Apex Properties LLC")
+
+    with contextlib.ExitStack() as stack:
+        mocks = [stack.enter_context(p) for p in _base_patches(filing)]
+        mock_enrich = mocks[-2]
+        mock_enrich_tenant = mocks[-1]
+        from pipeline import runner
+        await runner.run([filing], state="TN", county="Davidson")
+
+    mock_enrich.assert_not_called()
+    mock_enrich_tenant.assert_not_called()
