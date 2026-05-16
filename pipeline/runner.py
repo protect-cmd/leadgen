@@ -350,6 +350,7 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
                 ng_contact = None
                 m["batchdata_calls"] += property_lookup_calls + 1
             else:
+                m["batchdata_calls"] += property_lookup_calls
                 log.info(
                     f"{filing.case_number} skipped: business name tenant and landlord track disabled"
                 )
