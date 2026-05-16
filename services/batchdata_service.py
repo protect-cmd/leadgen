@@ -364,16 +364,42 @@ async def enrich_tenant_by_name(
         cache.increment_daily_count()
         cache.set(first_name, last_name, city, state, phone, resolved_address)
 
-        if resolved_address:
-            patched = filing.model_copy(update={"property_address": resolved_address})
-            result = await enrich_tenant(
-                patched,
-                lookup_property_if_missing=lookup_property_if_missing,
-                use_melissa_fallback=False,
+        if phone and resolved_address:
+            # phone + address: store both; do NOT auto-run a second paid call
+            log.info(
+                f"enrich_tenant_by_name: SearchBug phone+address hit for {filing.case_number}"
             )
-            if not result.phone and phone:
-                result = _dc_replace(result, phone=phone, dnc_source="searchbug")
-            return result
+            return EnrichedContact(
+                filing=filing, track="ng", phone=phone,
+                secondary_address=resolved_address,
+                dnc_status="unknown", dnc_source="searchbug",
+            )
+
+        if resolved_address:
+            # address only: rescue path — second paid call only if explicitly enabled
+            _second_call_enabled = (
+                os.environ.get("YELLOW_SECOND_CALL_ENABLED", "false").lower() == "true"
+            )
+            if _second_call_enabled:
+                log.info(
+                    f"enrich_tenant_by_name: address-only hit, running second call "
+                    f"for {filing.case_number}"
+                )
+                patched = filing.model_copy(update={"property_address": resolved_address})
+                return await enrich_tenant(
+                    patched,
+                    lookup_property_if_missing=lookup_property_if_missing,
+                    use_melissa_fallback=False,
+                )
+            log.info(
+                f"enrich_tenant_by_name: address-only hit, second call disabled "
+                f"for {filing.case_number}"
+            )
+            return EnrichedContact(
+                filing=filing, track="ng", phone=None, email=None,
+                secondary_address=resolved_address,
+                dnc_status="unknown", dnc_source="searchbug",
+            )
 
         if phone:
             log.info(f"enrich_tenant_by_name: SearchBug phone-only hit for {filing.case_number}")
