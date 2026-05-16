@@ -269,6 +269,7 @@ async def test_cache_hit_address_only_no_second_call_by_default(mock_cache):
     mock_enrich.assert_not_called()
     assert result.phone is None
     assert result.secondary_address == resolved
+    assert result.dnc_source == "searchbug"
 
 
 @pytest.mark.asyncio
