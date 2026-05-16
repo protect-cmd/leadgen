@@ -30,7 +30,6 @@ GHL_EC_STAGE_ID = os.getenv("GHL_NEW_FILING_STAGE_ID", "")
 GHL_EC_REVIEW_STAGE_ID = os.getenv("GHL_EC_REVIEW_STAGE_ID", "")
 GHL_NG_RESIDENTIAL_STAGE_ID = os.getenv("GHL_NG_NEW_FILING_STAGE_ID", "")
 GHL_NG_COMMERCIAL_STAGE_ID = os.getenv("GHL_NG_COMMERCIAL_STAGE_ID", "")
-_NG_ENABLED = bool(os.getenv("GHL_NG_LOCATION_ID", ""))
 _AUTO_BLAND_CALLS_ENABLED = os.getenv("AUTO_BLAND_CALLS_ENABLED", "false").lower() == "true"
 
 _BUSINESS_RE = re.compile(
@@ -253,6 +252,14 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
     started_at = datetime.now(timezone.utc)
     log.info(f"Runner received {len(filings)} filings")
 
+    tenant_track_enabled = os.getenv("TENANT_TRACK_ENABLED", "true").lower() == "true"
+    landlord_track_enabled = os.getenv("LANDLORD_TRACK_ENABLED", "false").lower() == "true"
+    if not tenant_track_enabled and not landlord_track_enabled:
+        raise RuntimeError(
+            "Invalid configuration: TENANT_TRACK_ENABLED and LANDLORD_TRACK_ENABLED "
+            "cannot both be false. Set at least one to 'true'."
+        )
+
     m = dict(
         run_at=started_at.isoformat(),
         state=state,
@@ -301,9 +308,9 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
             m["address_skipped"] += 1
             continue
 
-        enrich_ng = _NG_ENABLED and not _is_business_name(filing.tenant_name)
-        if _NG_ENABLED and not enrich_ng:
-            log.info(f"{filing.case_number} NG skipped: tenant looks like business")
+        enrich_tenant_flag = tenant_track_enabled and not _is_business_name(filing.tenant_name)
+        if tenant_track_enabled and not enrich_tenant_flag:
+            log.info(f"{filing.case_number} tenant track skipped: tenant looks like business")
 
         try:
             property_info = None
@@ -312,7 +319,7 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
                 property_info = await batchdata_service.lookup_property_info(filing)
                 property_lookup_calls = 1
 
-            if enrich_ng:
+            if landlord_track_enabled and enrich_tenant_flag:
                 ec_contact, ng_contact = await asyncio.gather(
                     batchdata_service.enrich(
                         filing,
@@ -326,7 +333,15 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
                     ),
                 )
                 m["batchdata_calls"] += property_lookup_calls + 2
-            else:
+            elif enrich_tenant_flag:
+                ng_contact = await batchdata_service.enrich_tenant(
+                    filing,
+                    property_info=property_info,
+                    lookup_property_if_missing=False,
+                )
+                ec_contact = None
+                m["batchdata_calls"] += property_lookup_calls + 1
+            elif landlord_track_enabled:
                 ec_contact = await batchdata_service.enrich(
                     filing,
                     property_info=property_info,
@@ -334,6 +349,11 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
                 )
                 ng_contact = None
                 m["batchdata_calls"] += property_lookup_calls + 1
+            else:
+                log.info(
+                    f"{filing.case_number} skipped: business name tenant and landlord track disabled"
+                )
+                continue
         except Exception as e:
             log.warning(f"Enrichment failed for {filing.case_number}: {e}")
             await notification_service.send_job_error(
@@ -343,26 +363,27 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
             )
             continue
 
-        ec_contact.language_hint = language_hint
+        if ec_contact is not None:
+            ec_contact.language_hint = language_hint
+            if ec_contact.phone:
+                m["phones_found"] += 1
+            await dedup_service.update_enrichment(ec_contact)
         if ng_contact is not None:
             ng_contact.language_hint = language_hint
-
-        if ec_contact.phone:
-            m["phones_found"] += 1
-        if ng_contact is not None and ng_contact.phone:
-            m["phones_found"] += 1
-
-        await dedup_service.update_enrichment(ec_contact)
-        if ng_contact is not None:
+            if ng_contact.phone:
+                m["phones_found"] += 1
             await dedup_service.update_enrichment(ng_contact)
 
-        lead_bucket = await _classify_and_store(filing, ec_contact)
+        classify_contact = ec_contact or ng_contact
+        lead_bucket = await _classify_and_store(filing, classify_contact)
         if lead_bucket == "discarded":
             log.info(f"{filing.case_number} discarded after enrichment")
             m["address_skipped"] += 1
             continue
 
-        tasks = [_process_track(ec_contact)]
+        tasks = []
+        if ec_contact is not None:
+            tasks.append(_process_track(ec_contact))
         if ng_contact is not None:
             tasks.append(_process_track(ng_contact))
         results = await asyncio.gather(*tasks)

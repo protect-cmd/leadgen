@@ -63,7 +63,8 @@ async def test_pipeline_happy_path_ec_queues_bland_without_auto_call(monkeypatch
         raise AssertionError("Auto Bland is disabled; no call should be triggered")
 
     monkeypatch.setenv("INSTANTLY_ENABLED", "false")
-    monkeypatch.setattr(runner, "_NG_ENABLED", False)
+    monkeypatch.setenv("TENANT_TRACK_ENABLED", "false")
+    monkeypatch.setenv("LANDLORD_TRACK_ENABLED", "true")
     monkeypatch.setattr(runner, "_AUTO_BLAND_CALLS_ENABLED", False)
     monkeypatch.setattr(runner, "GHL_EC_STAGE_ID", "stage-ec")
     _mock_common_runner_services(monkeypatch, calls)
@@ -102,7 +103,8 @@ async def test_pipeline_dnc_blocked_never_triggers_bland(monkeypatch):
         raise AssertionError("DNC-blocked contacts must never trigger Bland")
 
     monkeypatch.setenv("INSTANTLY_ENABLED", "false")
-    monkeypatch.setattr(runner, "_NG_ENABLED", False)
+    monkeypatch.setenv("TENANT_TRACK_ENABLED", "false")
+    monkeypatch.setenv("LANDLORD_TRACK_ENABLED", "true")
     monkeypatch.setattr(runner, "_AUTO_BLAND_CALLS_ENABLED", True)
     monkeypatch.setattr(runner, "GHL_EC_STAGE_ID", "stage-ec")
     _mock_common_runner_services(monkeypatch, calls)
@@ -139,7 +141,8 @@ async def test_pipeline_ec_and_ng_tracks_are_processed_separately(monkeypatch):
         calls.append(("bland_status", track, status))
 
     monkeypatch.setenv("INSTANTLY_ENABLED", "false")
-    monkeypatch.setattr(runner, "_NG_ENABLED", True)
+    monkeypatch.setenv("TENANT_TRACK_ENABLED", "true")
+    monkeypatch.setenv("LANDLORD_TRACK_ENABLED", "true")
     monkeypatch.setattr(runner, "_AUTO_BLAND_CALLS_ENABLED", False)
     monkeypatch.setattr(runner, "GHL_EC_STAGE_ID", "stage-ec")
     monkeypatch.setattr(runner, "GHL_NG_RESIDENTIAL_STAGE_ID", "stage-ng")

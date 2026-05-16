@@ -76,7 +76,8 @@ async def test_runner_reuses_one_property_lookup_for_landlord_and_tenant(monkeyp
     async def process_track(contact: EnrichedContact) -> runner.TrackResult:
         return runner.TrackResult(ghl_created=True)
 
-    monkeypatch.setattr(runner, "_NG_ENABLED", True)
+    monkeypatch.setenv("TENANT_TRACK_ENABLED", "true")
+    monkeypatch.setenv("LANDLORD_TRACK_ENABLED", "true")
     monkeypatch.setattr(runner.dedup_service, "is_duplicate", is_duplicate)
     monkeypatch.setattr(runner.dedup_service, "insert_filing", insert_filing)
     monkeypatch.setattr(runner.dedup_service, "update_classification", update_classification)
@@ -123,7 +124,8 @@ async def test_runner_skips_property_lookup_when_scraper_supplies_type(monkeypat
     async def write_run_metrics(metrics: dict) -> None:
         calls.append(f"metrics:{metrics['batchdata_calls']}")
 
-    monkeypatch.setattr(runner, "_NG_ENABLED", False)
+    monkeypatch.setenv("TENANT_TRACK_ENABLED", "false")
+    monkeypatch.setenv("LANDLORD_TRACK_ENABLED", "true")
     monkeypatch.setattr(runner.dedup_service, "is_duplicate", is_duplicate)
     monkeypatch.setattr(runner.dedup_service, "insert_filing", _async_none)
     monkeypatch.setattr(runner.dedup_service, "update_classification", _async_none)
@@ -155,7 +157,8 @@ async def test_runner_alerts_when_enrichment_fails(monkeypatch):
         alerts.append((job, stage, str(error)))
         return True
 
-    monkeypatch.setattr(runner, "_NG_ENABLED", False)
+    monkeypatch.setenv("TENANT_TRACK_ENABLED", "false")
+    monkeypatch.setenv("LANDLORD_TRACK_ENABLED", "true")
     monkeypatch.setattr(runner.dedup_service, "is_duplicate", is_duplicate)
     monkeypatch.setattr(runner.dedup_service, "insert_filing", _async_none)
     monkeypatch.setattr(runner.dedup_service, "update_classification", _async_none)
@@ -193,7 +196,8 @@ async def test_runner_skips_batchdata_when_rent_precheck_discards_low_rent(monke
     async def write_run_metrics(metrics: dict) -> None:
         calls.append(f"metrics:{metrics['batchdata_calls']}:{metrics['address_skipped']}")
 
-    monkeypatch.setattr(runner, "_NG_ENABLED", False)
+    monkeypatch.setenv("TENANT_TRACK_ENABLED", "false")
+    monkeypatch.setenv("LANDLORD_TRACK_ENABLED", "true")
     monkeypatch.setattr(runner, "rent_estimate_service", RentPrecheck, raising=False)
     monkeypatch.setattr(runner.dedup_service, "is_duplicate", _async_false)
     monkeypatch.setattr(runner.dedup_service, "insert_filing", _async_none)
@@ -240,7 +244,8 @@ async def test_runner_skips_rent_precheck_when_disabled(monkeypatch):
     async def write_run_metrics(metrics: dict) -> None:
         calls.append(f"metrics:{metrics['batchdata_calls']}")
 
-    monkeypatch.setattr(runner, "_NG_ENABLED", False)
+    monkeypatch.setenv("TENANT_TRACK_ENABLED", "false")
+    monkeypatch.setenv("LANDLORD_TRACK_ENABLED", "true")
     monkeypatch.setattr(runner, "rent_estimate_service", RentPrecheck, raising=False)
     monkeypatch.setattr(runner.dedup_service, "is_duplicate", _async_false)
     monkeypatch.setattr(runner.dedup_service, "insert_filing", _async_none)
@@ -284,7 +289,8 @@ async def test_runner_skips_rent_precheck_when_scraper_supplies_claim_amount(mon
     async def process_track(contact: EnrichedContact) -> runner.TrackResult:
         return runner.TrackResult(ghl_created=True)
 
-    monkeypatch.setattr(runner, "_NG_ENABLED", False)
+    monkeypatch.setenv("TENANT_TRACK_ENABLED", "false")
+    monkeypatch.setenv("LANDLORD_TRACK_ENABLED", "true")
     monkeypatch.setattr(runner, "rent_estimate_service", RentPrecheck, raising=False)
     monkeypatch.setattr(runner.dedup_service, "is_duplicate", _async_false)
     monkeypatch.setattr(runner.dedup_service, "insert_filing", _async_none)
