@@ -425,6 +425,78 @@ async def enrich_tenant_by_name(
                            dnc_status="unknown", dnc_source=None)
 
 
+async def _searchbug_fallback_gated(
+    filing: Filing,
+    tenant_name_normalized: str,
+) -> str | None:
+    """Green-source SearchBug fallback for a single tenant name with cost gates.
+
+    Returns the phone if a match is found, else None. Routes the call through
+    the same gates as the yellow-source path:
+    1. Name parseable
+    2. Cache hit short-circuits (hit OR cached miss)
+    3. Common-surname filter (skip 'John Smith' style high-noise names)
+    4. Daily cap not exceeded
+    5. Result cached after the call (success or miss)
+    """
+    from services.enrichment_cache import get_cache
+    from services.name_utils import is_common_surname, parse_name
+    from services.searchbug_service import search_tenant as _searchbug_search
+
+    first_name, last_name = parse_name(tenant_name_normalized)
+    if not first_name or not last_name:
+        return None
+
+    # Extract city/state/postal from geocoded address "Street, City, ST ZIP"
+    addr_parts = [p.strip() for p in filing.property_address.split(",")]
+    sb_city = addr_parts[1] if len(addr_parts) >= 2 else ""
+    sb_state = filing.state
+    sb_postal = ""
+    if len(addr_parts) >= 3:
+        tokens = addr_parts[2].split()
+        if tokens:
+            sb_state = tokens[0] or filing.state
+        if len(tokens) >= 2 and tokens[1].isdigit():
+            sb_postal = tokens[1]
+
+    cache = get_cache()
+    cap = int(os.environ.get("SEARCHBUG_DAILY_CAP", "100"))
+
+    cached = cache.get(first_name, last_name, sb_city, sb_state)
+    if cached is not None:
+        phone, _addr = cached
+        if phone:
+            log.info(
+                f"SearchBug cache hit for {filing.case_number}: {first_name} {last_name}"
+            )
+        return phone
+
+    if is_common_surname(last_name):
+        log.info(
+            f"SearchBug skipped (common surname {last_name!r}) for {filing.case_number}"
+        )
+        cache.set(first_name, last_name, sb_city, sb_state, None, None)
+        return None
+
+    if not cache.check_daily_cap(cap):
+        log.warning(
+            f"SearchBug daily cap {cap} reached — skipping {filing.case_number}"
+        )
+        return None
+
+    sb_phone, sb_address = await _searchbug_search(
+        first_name, last_name, sb_city, sb_state, sb_postal
+    )
+    cache.increment_daily_count()
+    cache.set(first_name, last_name, sb_city, sb_state, sb_phone, sb_address)
+
+    if sb_phone:
+        log.info(f"SearchBug fallback hit for {filing.case_number}: phone={sb_phone}")
+    else:
+        log.info(f"SearchBug fallback miss for {filing.case_number}")
+    return sb_phone
+
+
 async def enrich_tenant(
     filing: Filing,
     property_info: PropertyInfo | None = None,
@@ -489,31 +561,15 @@ async def enrich_tenant(
                 f"{r.text[:200]}"
             )
 
-    # SearchBug fallback — runs when BatchData returned no name match
+    # SearchBug fallback — runs when BatchData returned no name match.
+    # Goes through the same cost-control gates as the yellow-source path:
+    # name parse, cache lookup, common-surname filter, daily cap, then cache write.
     if not phone:
-        from services.name_utils import parse_name
-        from services.searchbug_service import search_tenant as _searchbug_search
-        first_name, last_name = parse_name(tenant_name_normalized)
-        if first_name and last_name:
-            # Extract city/state/postal from geocoded address "Street, City, ST ZIP"
-            addr_parts = [p.strip() for p in filing.property_address.split(",")]
-            sb_city = addr_parts[1] if len(addr_parts) >= 2 else ""
-            sb_state = filing.state
-            sb_postal = ""
-            if len(addr_parts) >= 3:
-                tokens = addr_parts[2].split()
-                if tokens:
-                    sb_state = tokens[0] or filing.state
-                if len(tokens) >= 2:
-                    sb_postal = tokens[1]
-            sb_phone, sb_address = await _searchbug_search(
-                first_name, last_name, sb_city, sb_state, sb_postal
-            )
-            if sb_phone:
-                phone = sb_phone
-                dnc_status = "unknown"
-                dnc_source = "searchbug"
-                log.info(f"SearchBug fallback hit for {filing.case_number}: phone={phone}")
+        sb_phone = await _searchbug_fallback_gated(filing, tenant_name_normalized)
+        if sb_phone:
+            phone = sb_phone
+            dnc_status = "unknown"
+            dnc_source = "searchbug"
 
     if property_info is None and lookup_property_if_missing and property_type is None:
         property_info = await lookup_property_info(filing)

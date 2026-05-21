@@ -102,7 +102,19 @@ _default_cache: EnrichmentCache | None = None
 
 
 def get_cache() -> EnrichmentCache:
+    """Singleton SearchBug cache. SEARCHBUG_CACHE_DB_PATH overrides the default
+    'data/enrichment_cache.db'. On Railway, point this at the persistent volume
+    (e.g. /data/dnc/enrichment_cache.db) so the daily cap and cache survive
+    redeploys.
+    """
     global _default_cache
     if _default_cache is None:
-        _default_cache = EnrichmentCache()
+        db_path = os.environ.get("SEARCHBUG_CACHE_DB_PATH", "data/enrichment_cache.db")
+        _default_cache = EnrichmentCache(db_path=db_path)
     return _default_cache
+
+
+def reset_cache_for_tests() -> None:
+    """Test-only helper to drop the singleton (so a different db_path takes effect)."""
+    global _default_cache
+    _default_cache = None
