@@ -163,12 +163,6 @@ async def trigger_voicemail(contact: EnrichedContact) -> str:
             # LLM-based detection is more accurate for IVRs and ambiguous pickups.
             "sensitive": True,
         },
-        # Retry once after 4 hours if first attempt goes to voicemail.
-        "retry": {
-            "wait": 14400,
-            "voicemail_action": "leave_message",
-            "voicemail_message": voicemail_text,
-        },
         "record": True,
         "max_duration": 3,
         "metadata": {

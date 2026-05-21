@@ -89,7 +89,7 @@ Expected production flow:
 
 - `railway.toml` controls the dashboard service start command.
 - Railway cron config-as-code uses `deploy.cronSchedule` and runs the service start command; do not use old `[[cron]] command = ...` blocks.
-- The current daily scrape schedule is launched by the dashboard startup scheduler in `services/daily_scheduler.py`: Texas at 13:00 UTC, Tennessee at 13:20 UTC, Arizona at 13:40 UTC, and Cobb (GA) at 14:00 UTC. `jobs/run_daily.py` is a backward-compatible manual runner that uses the same schedule list.
+- The current daily scrape schedule is launched by the dashboard startup scheduler in `services/daily_scheduler.py`: Texas at 13:00 UTC, Tennessee at 13:20 UTC, Arizona at 13:40 UTC, Cobb (GA) at 14:00 UTC, Franklin raw ingest at 14:20 UTC, and Hamilton (OH) pipeline at 14:40 UTC. `jobs/run_daily.py` is a backward-compatible manual runner that uses the same schedule list.
 - Railway uses the repo state pushed to GitHub, so dashboard changes must be committed and pushed to appear there.
 - Before pushing, check `git diff --stat`, `git diff`, and `git status --short` for unrelated dirty files.
 
