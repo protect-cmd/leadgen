@@ -37,6 +37,13 @@ class EnrichmentCache:
                 )
             """)
             con.execute("""
+                CREATE TABLE IF NOT EXISTS alert_dedupe (
+                    key  TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    PRIMARY KEY (key, date)
+                )
+            """)
+            con.execute("""
                 DELETE FROM searchbug_cache
                 WHERE cached_at < ?
             """, (time.time() - _TTL_SECONDS,))
@@ -96,6 +103,23 @@ class EnrichmentCache:
                 "ON CONFLICT(date) DO UPDATE SET count = count + 1",
                 (today,),
             )
+
+    def claim_alert_once_today(self, key: str) -> bool:
+        """Atomically claim an alert key for today. Returns True if the caller
+        is the first today to claim it (and should fire the alert); False if
+        an earlier call already claimed it (alert was already sent today).
+        Used to throttle SearchBug cap / account_error alerts to once/day.
+        """
+        today = date.today().isoformat()
+        with sqlite3.connect(self._db_path) as con:
+            try:
+                con.execute(
+                    "INSERT INTO alert_dedupe (key, date) VALUES (?, ?)",
+                    (key, today),
+                )
+                return True
+            except sqlite3.IntegrityError:
+                return False
 
 
 _default_cache: EnrichmentCache | None = None

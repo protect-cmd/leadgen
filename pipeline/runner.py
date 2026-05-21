@@ -46,6 +46,8 @@ class TrackResult:
     ghl_created: bool
     instantly_enrolled: bool = False
     instantly_error: str | None = None
+    track: str = ""
+    ftc_upgraded: bool = False
 
 
 def _is_business_name(name: str) -> bool:
@@ -66,18 +68,18 @@ def _has_contact_method(contact: EnrichedContact) -> bool:
     return bool(contact.phone or contact.email)
 
 
-async def _apply_ftc_scrub(contact: EnrichedContact) -> None:
+async def _apply_ftc_scrub(contact: EnrichedContact) -> bool:
     """Upgrade unknown DNC status by consulting the FTC registry.
 
     Mutates the contact in place and persists the change so the dashboard and
-    downstream consumers see the upgraded status. No-op when the contact already
-    has a definitive status or the FTC registry isn't configured.
+    downstream consumers see the upgraded status. Returns True if a status
+    upgrade happened (clear or blocked), False otherwise.
     """
     if dnc_service.normalize_status(contact.dnc_status) != "unknown":
-        return
+        return False
     result = dnc_service.scrub_phone(contact.phone)
     if result is None or result.status == "unknown":
-        return
+        return False
     contact.dnc_status = result.status
     contact.dnc_source = "ftc_registry"
     await dedup_service.update_enrichment(contact)
@@ -85,6 +87,7 @@ async def _apply_ftc_scrub(contact: EnrichedContact) -> None:
         f"{contact.filing.case_number} [{contact.track.upper()}] "
         f"FTC scrub upgraded DNC status to {result.status}"
     )
+    return True
 
 
 async def _process_track(contact: EnrichedContact) -> TrackResult:
@@ -102,7 +105,7 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
     )
 
     if outcome.action == "skip":
-        return TrackResult(False)
+        return TrackResult(False, track=contact.track)
 
     if not _has_contact_method(contact):
         await dedup_service.set_bland_status(
@@ -114,7 +117,7 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
             f"{filing.case_number} [{contact.track.upper()}] skipped: "
             "no phone or email from enrichment"
         )
-        return TrackResult(False)
+        return TrackResult(False, track=contact.track)
 
     if outcome.action == "flag" and is_ec:
         if GHL_EC_REVIEW_STAGE_ID and contact.phone:
@@ -126,7 +129,7 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
                 )
                 await dedup_service.update_ghl_id(filing.case_number, ghl_id, contact.track)
                 log.info(f"GHL review contact created [{contact.track.upper()}]: {ghl_id}")
-                return TrackResult(True)
+                return TrackResult(True, track=contact.track)
             except Exception as e:
                 log.warning(
                     f"GHL review failed [{contact.track.upper()}] "
@@ -137,7 +140,7 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
                     stage=f"ghl_review_{contact.track}",
                     error=e,
                 )
-        return TrackResult(False)
+        return TrackResult(False, track=contact.track)
 
     if outcome.pipeline == "commercial":
         stage_id = GHL_EC_STAGE_ID if is_ec else GHL_NG_COMMERCIAL_STAGE_ID
@@ -152,8 +155,9 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
 
     # DNC gate — block GHL and Instantly for phone contacts that aren't clear.
     # Email-only contacts (no phone) bypass this gate and still reach both platforms.
+    ftc_upgraded = False
     if contact.phone:
-        await _apply_ftc_scrub(contact)
+        ftc_upgraded = await _apply_ftc_scrub(contact)
         dnc_decision = dnc_service.can_call(contact)
         if not dnc_decision.allowed:
             await dedup_service.set_bland_status(
@@ -165,7 +169,7 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
                 f"{filing.case_number} [{contact.track.upper()}] DNC blocked — "
                 f"skipping GHL and Instantly: {dnc_decision.reason}"
             )
-            return TrackResult(False)
+            return TrackResult(False, track=contact.track, ftc_upgraded=ftc_upgraded)
 
     try:
         ghl_id = await ghl_service.create_contact(contact, tags, stage_id)
@@ -178,7 +182,7 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
             stage=f"ghl_create_{contact.track}",
             error=e,
         )
-        return TrackResult(False)
+        return TrackResult(False, track=contact.track, ftc_upgraded=ftc_upgraded)
 
     instantly_result = await instantly_service.enroll(contact)
 
@@ -213,6 +217,8 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
         True,
         instantly_enrolled=instantly_result.enrolled,
         instantly_error=instantly_result.error,
+        track=contact.track,
+        ftc_upgraded=ftc_upgraded,
     )
 
 
@@ -282,6 +288,20 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
             "cannot both be false. Set at least one to 'true'."
         )
 
+    started_searchbug_count = 0
+    try:
+        from services.enrichment_cache import get_cache as _get_sb_cache
+        _sb_cache = _get_sb_cache()
+        # Snapshot today's SearchBug count so we can report this run's delta.
+        with __import__("sqlite3").connect(_sb_cache._db_path) as _con:
+            _row = _con.execute(
+                "SELECT count FROM daily_cap WHERE date=?",
+                (datetime.now(timezone.utc).date().isoformat(),),
+            ).fetchone()
+            started_searchbug_count = _row[0] if _row else 0
+    except Exception:
+        pass
+
     m = dict(
         run_at=started_at.isoformat(),
         state=state,
@@ -290,6 +310,8 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         duplicates_skipped=0,
         address_skipped=0,
         batchdata_calls=0,
+        ftc_scrubs_upgraded=0,
+        ng_phones_pushed=0,
         phones_found=0,
         ghl_created=0,
         bland_triggered=0,
@@ -413,6 +435,10 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         for result in results:
             if result.ghl_created:
                 m["ghl_created"] += 1
+                if result.track == "ng":
+                    m["ng_phones_pushed"] += 1
+            if result.ftc_upgraded:
+                m["ftc_scrubs_upgraded"] += 1
             if result.instantly_error:
                 m.setdefault("instantly_failures", []).append(result.instantly_error)
             if result.instantly_enrolled:
@@ -420,11 +446,29 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
 
     elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
     m["elapsed_seconds"] = elapsed
+
+    # Compute this run's SearchBug call delta vs. the start-of-run snapshot.
+    try:
+        from services.enrichment_cache import get_cache as _get_sb_cache_end
+        _sb_cache = _get_sb_cache_end()
+        with __import__("sqlite3").connect(_sb_cache._db_path) as _con:
+            _row = _con.execute(
+                "SELECT count FROM daily_cap WHERE date=?",
+                (datetime.now(timezone.utc).date().isoformat(),),
+            ).fetchone()
+            ended_count = _row[0] if _row else 0
+            m["searchbug_calls"] = max(0, ended_count - started_searchbug_count)
+            m["searchbug_daily_total"] = ended_count
+    except Exception:
+        m["searchbug_calls"] = 0
+
     log.info(
         f"Run complete in {elapsed:.1f}s: "
         f"received={m['filings_received']} dupes={m['duplicates_skipped']} "
         f"discarded={m['address_skipped']} batchdata={m['batchdata_calls']} "
-        f"phones={m['phones_found']} ghl={m['ghl_created']}"
+        f"phones={m['phones_found']} ghl={m['ghl_created']} "
+        f"ng_pushed={m['ng_phones_pushed']} ftc_upgrades={m['ftc_scrubs_upgraded']} "
+        f"searchbug_calls={m.get('searchbug_calls', 0)}"
     )
     try:
         await dedup_service.write_run_metrics(m)

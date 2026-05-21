@@ -366,6 +366,7 @@ async def enrich_tenant_by_name(
         # Daily cap check
         if not cache.check_daily_cap(cap):
             log.warning(f"enrich_tenant_by_name: daily cap {cap} reached for {filing.case_number}")
+            await _maybe_alert_cap_hit(cap, source=f"yellow/{filing.state}/{filing.county}")
             break
 
         # ZIP narrowing — use address-derived ZIP first, then city map
@@ -425,6 +426,29 @@ async def enrich_tenant_by_name(
                            dnc_status="unknown", dnc_source=None)
 
 
+async def _maybe_alert_cap_hit(cap: int, source: str) -> None:
+    """Fire a Pushover alert the first time the SearchBug daily cap is hit
+    each day. Subsequent cap-hits stay silent so we don't spam during the
+    rest of the day's runs.
+    """
+    from services.enrichment_cache import get_cache
+    from services import notification_service
+    cache = get_cache()
+    if not cache.claim_alert_once_today("searchbug_daily_cap"):
+        return
+    await notification_service.send_alert(
+        "SearchBug daily cap reached",
+        (
+            f"SearchBug daily cap of {cap} lookups has been reached "
+            f"(triggered by {source}). Remaining tenant leads today will "
+            "skip SearchBug enrichment. Bump SEARCHBUG_DAILY_CAP on Railway "
+            "if you want today's afternoon-county runs to keep enriching."
+        ),
+        priority=0,
+        tags={"source": source, "cap": str(cap)},
+    )
+
+
 async def _searchbug_fallback_gated(
     filing: Filing,
     tenant_name_normalized: str,
@@ -482,6 +506,7 @@ async def _searchbug_fallback_gated(
         log.warning(
             f"SearchBug daily cap {cap} reached — skipping {filing.case_number}"
         )
+        await _maybe_alert_cap_hit(cap, source=f"green/{filing.state}/{filing.county}")
         return None
 
     sb_phone, sb_address = await _searchbug_search(
