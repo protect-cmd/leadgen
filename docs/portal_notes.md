@@ -493,7 +493,7 @@ Gated by a session-cookie disclaimer. Must click "I have read, understood, and a
 
 ## Hamilton County OH Municipal Court (Cincinnati) — courtclerk.org
 
-**Status:** Yellow / proof-only as implemented 2026-05-14. Dedicated eviction-by-date search works without login, but returned rows are address-absent.
+**Status:** Green as of 2026-05-16. Dedicated eviction-by-date search works without login, and the implemented scraper now follows each case into party data to retrieve defendant street addresses.
 
 **Portal:** `https://www.courtclerk.org/records-search/eviction-schedule-search/`
 **Secondary (by name):** `https://www.courtclerk.org/records-search/eviction-schedules-for-public-parties/`
@@ -503,7 +503,7 @@ Gated by a session-cookie disclaimer. Must click "I have read, understood, and a
 - No login or registration required.
 - An Ohio Court of Appeals ruling required Hamilton County clerk to rescind a restrictive public records policy and allow online access to all residential eviction cases regardless of age.
 - Direct HTTP GET works with browser-like headers.
-- Address exposure was checked in the schedule and case summary path; no property/defendant address is exposed by the implemented source.
+- The visible schedule is address-poor, but `POST /data/case_summary.php` with `sec=party` exposes defendant addresses in the party table.
 - Tenant parser strips common occupant suffixes such as `ET AL`, `AND ALL OCCUPANTS`, and `AND ALL OTHER OCCUPANTS`.
 
 **Field mapping (to confirm):**
@@ -514,7 +514,7 @@ Gated by a session-cookie disclaimer. Must click "I have read, understood, and a
 | `tenant_name` | Defendant | |
 | `filing_date` | Filed date | |
 | `court_date` | Hearing date | Primary search driver |
-| `property_address` | Not exposed | Set to `Unknown`; do not pipeline without a proven address/contact enrichment path. |
+| `property_address` | Party table on `/data/case_summary.php` | Scraper reads the first defendant row and normalizes street + city/state/ZIP. |
 | `county` | `Hamilton` | Hardcoded |
 | `state` | `OH` | Hardcoded |
 
@@ -529,20 +529,20 @@ Gated by a session-cookie disclaimer. Must click "I have read, understood, and a
 - Live result for 5/13/2026: 57 unique case numbers, case type `G1-EVICTION` confirmed.
 - Fields returned per case block: `Case #`, `Time`, `Plaintiff` (landlord), `Attorney for Plaintiff`, `Defendant` (tenant, may include "et al"), `Attorney for Defendant`, `Next Action`.
 - Case format: `26CV13828` = Municipal Civil, filed 2026. Some older cases (`25CV31511`) from 2025 still on docket.
-- Case detail via `GET /data/case_summary.php?casenumber=26CV13828&court[MCV]=on` returns: case number, court, case caption, judge, filed date, case type. No property address.
-- No property address anywhere in schedule or case detail. The "By Parcel ID / Address" navigation link returned 404.
+- Case detail via `GET /data/case_summary.php?casenumber=26CV13828&court[MCV]=on` returns case metadata, and a second `POST /data/case_summary.php` with `sec=party` returns the party table used for defendant addresses.
+- The first defendant row in `#party_info_table` exposes mailing/address text such as `456 ELM ST APT 3, CINCINNATI, OH 45219`.
 - Hearing days are not every day — eviction court sits specific days (May 13 had results, May 12 had none).
 
-**Classification (2026-05-14):** Updated to yellow. Volume confirmed (57 cases/day), case type confirmed, no address. This is a `proof_only` source for phone outreach until Melissa Personator is wired.
+**Classification (updated 2026-05-16):** Green. Volume confirmed, case type confirmed, and defendant addresses are now available from the party page. Hamilton is eligible for the standard address-bearing pipeline, with DNC/manual-review gates preserved.
 
 **Scraper approach:**
 - Direct HTTP GET to `eviction_schedule.php` endpoint — no Playwright, no session needed.
 - Enumerate each day in the lookback window (use 7-day lookback to catch all hearing days).
 - Parse HTML table rows into case blocks: case number, hearing date (from URL param), time, landlord, tenant, next action.
 - Strip "et al" and occupant suffixes from tenant name.
-- Look up filed date via `case_summary.php` for each case (or skip and use hearing date as `court_date`).
+- For each new case, fetch the party table from `case_summary.php` and replace the city-only fallback with the first defendant address when present.
 - Dedupe by case number.
-- `property_address = "Unknown"` — no address source.
+- Fall back to `property_address = "Cincinnati, OH"` only when party-address retrieval fails; these rows will not qualify without a ZIP.
 
 **Field mapping:**
 | Field | Source | Notes |
@@ -552,7 +552,7 @@ Gated by a session-cookie disclaimer. Must click "I have read, understood, and a
 | `tenant_name` | `Defendant` cell | Strip "et al" and occupant suffixes |
 | `filing_date` | `case_summary.php` filed date | Optional — can skip to avoid per-case HTTP call |
 | `court_date` | `chosendate` param | Hearing date (not filing date) |
-| `property_address` | Not available | `Unknown` |
+| `property_address` | Defendant row in party table | Real address when party-page fetch succeeds; city-only fallback otherwise |
 | `county` | `Hamilton` | Hardcoded |
 | `state` | `OH` | Hardcoded |
 | `notice_type` | `G1-EVICTION` | From case summary; hardcode as "Eviction" |
@@ -561,9 +561,9 @@ Gated by a session-cookie disclaimer. Must click "I have read, understood, and a
 **Production gate:**
 - Parser tests pass on real case blocks (two HTML table structures confirmed).
 - Scraper-only smoke returns expected volume (50+ cases/week); a 2026-05-14 2-day smoke returned 163 filings.
-- OH ZIPs must be in the allowlist before scheduling.
-- Do not run enrichment or outreach until Melissa Personator is live and Hamilton County tenant name match quality is measured.
-- Calendar-only rows are address-poor; keep out of automated tenant phone outreach until proof metrics are collected.
+- Cincinnati OH ZIPs must be in the allowlist before scheduling.
+- Schedule can run through the normal pipeline because rows now carry address anchors; DNC status must still be explicitly `clear` before any phone outreach.
+- Auto Bland remains disabled unless `AUTO_BLAND_CALLS_ENABLED` is explicitly enabled.
 
 ---
 

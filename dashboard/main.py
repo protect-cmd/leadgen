@@ -21,6 +21,7 @@ from services.dedup_service import (
     clear_dnc_status,
     get_dashboard_counts,
     get_dashboard_leads,
+    get_lead_row,
     get_pending_leads,
     get_recent_metrics,
     set_bland_status,
@@ -197,6 +198,36 @@ async def skip(case_number: str, track: str = "ec"):
     return {"status": "skipped"}
 
 
+def _build_contact_from_row(row: dict, track: str) -> EnrichedContact | None:
+    from datetime import date as _date
+    filing_date_raw = row.get("filing_date")
+    if not filing_date_raw:
+        return None
+    filing = Filing(
+        case_number=row["case_number"],
+        tenant_name=row.get("tenant_name", ""),
+        landlord_name=row.get("landlord_name", ""),
+        property_address=row.get("property_address", ""),
+        filing_date=_date.fromisoformat(filing_date_raw),
+        court_date=_date.fromisoformat(row["court_date"]) if row.get("court_date") else None,
+        state=row.get("state", ""),
+        county=row.get("county", ""),
+        notice_type=row.get("notice_type", ""),
+        source_url=row.get("source_url", ""),
+    )
+    return EnrichedContact(
+        filing=filing,
+        track=track,
+        phone=row.get("phone"),
+        email=row.get("email"),
+        property_type=row.get("property_type"),
+        estimated_rent=row.get("estimated_rent"),
+        dnc_status="clear",
+        dnc_source=row.get("dnc_source"),
+        language_hint=row.get("language_hint"),
+    )
+
+
 @app.post("/api/leads/{case_number}/dnc-clear")
 async def clear_dnc(case_number: str, request: DncClearRequest, track: str = "ec"):
     await clear_dnc_status(
@@ -205,6 +236,22 @@ async def clear_dnc(case_number: str, request: DncClearRequest, track: str = "ec
         source=request.source,
         notes=request.notes,
     )
+
+    # If this contact was never pushed to GHL (was blocked/unknown at pipeline time),
+    # push it now that DNC is confirmed clear.
+    row = await get_lead_row(case_number, track)
+    if row and not row.get("ghl_contact_id"):
+        contact = _build_contact_from_row(row, track)
+        if contact and (contact.phone or contact.email):
+            from pipeline.runner import push_cleared_contact
+            try:
+                await push_cleared_contact(contact)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "push_cleared_contact failed for %s [%s]: %s", case_number, track, exc
+                )
+
     return {"status": "clear", "source": request.source}
 
 

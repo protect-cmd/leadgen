@@ -254,6 +254,45 @@ async def update_ghl_id(case_number: str, ghl_contact_id: str, track: str = "ec"
     await update_contact_ghl_id(case_number, ghl_contact_id, track)
 
 
+async def get_lead_row(case_number: str, track: str = "ec") -> dict | None:
+    """Return merged filing + contact data for a single case_number/track.
+
+    Used by the dashboard clear_dnc path to reconstruct an EnrichedContact
+    before pushing a previously-blocked contact to GHL and Instantly.
+    Returns None if no filing exists for the case_number.
+    """
+    def _query() -> dict | None:
+        filing_result = _execute_with_retry(
+            _client.table("filings")
+            .select(
+                "case_number,tenant_name,landlord_name,property_address,"
+                "state,county,filing_date,court_date,notice_type,source_url,lead_bucket"
+            )
+            .eq("case_number", case_number)
+            .limit(1),
+            "get lead row filing",
+        )
+        if not filing_result.data:
+            return None
+        row = dict(filing_result.data[0])
+        contact_result = _execute_with_retry(
+            _client.table("lead_contacts")
+            .select(
+                "phone,email,property_type,estimated_rent,"
+                "dnc_status,dnc_source,language_hint,ghl_contact_id"
+            )
+            .eq("case_number", case_number)
+            .eq("track", track)
+            .limit(1),
+            "get lead row contact",
+        )
+        if contact_result.data:
+            row.update(contact_result.data[0])
+        return row
+
+    return await asyncio.to_thread(_query)
+
+
 async def mark_bland_triggered(case_number: str, track: str = "ec") -> None:
     column = "bland_triggered" if track == "ec" else "ng_bland_triggered"
     def _update() -> None:

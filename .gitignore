@@ -23,6 +23,12 @@ sniff_log.json
 
 # Tools
 .firecrawl/
+.claude/
+.superpowers/
+tmp/
+
+# Local Melissa fallback — not licensed, do not ship
+services/melissa_service.py
 
 # Data directory (local DB, exports, scratch files)
 data/

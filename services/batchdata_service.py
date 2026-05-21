@@ -341,7 +341,6 @@ async def enrich_tenant_by_name(
                     return await enrich_tenant(
                         patched,
                         lookup_property_if_missing=lookup_property_if_missing,
-                        use_melissa_fallback=False,
                     )
                 return EnrichedContact(
                     filing=filing, track="ng", phone=None, email=None,
@@ -403,7 +402,6 @@ async def enrich_tenant_by_name(
                 return await enrich_tenant(
                     patched,
                     lookup_property_if_missing=lookup_property_if_missing,
-                    use_melissa_fallback=False,
                 )
             log.info(
                 f"enrich_tenant_by_name: address-only hit, second call disabled "
@@ -431,12 +429,10 @@ async def enrich_tenant(
     filing: Filing,
     property_info: PropertyInfo | None = None,
     lookup_property_if_missing: bool = True,
-    use_melissa_fallback: bool = True,
 ) -> EnrichedContact:
     """NG track — skip-traces the tenant by name at the property address.
 
-    Falls back to Melissa Personator when BatchData returns no name match,
-    provided MELISSA_LICENSE_KEY is set and use_melissa_fallback is True.
+    Falls back to SearchBug people-search when BatchData returns no name match.
     """
     addr = _split_address(filing.property_address)
     headers = _headers()
@@ -493,21 +489,31 @@ async def enrich_tenant(
                 f"{r.text[:200]}"
             )
 
-    # Melissa fallback — runs when BatchData returned no name match
-    if not phone and use_melissa_fallback and os.environ.get("MELISSA_LICENSE_KEY"):
-        from services.melissa_service import lookup_tenant as _melissa_lookup
-        name_parts = tenant_name_normalized.strip().split()
-        first_name = name_parts[0] if name_parts else ""
-        last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+    # SearchBug fallback — runs when BatchData returned no name match
+    if not phone:
+        from services.name_utils import parse_name
+        from services.searchbug_service import search_tenant as _searchbug_search
+        first_name, last_name = parse_name(tenant_name_normalized)
         if first_name and last_name:
-            m_phone, m_email, m_matched = await _melissa_lookup(
-                first_name, last_name, filing.property_address
+            # Extract city/state/postal from geocoded address "Street, City, ST ZIP"
+            addr_parts = [p.strip() for p in filing.property_address.split(",")]
+            sb_city = addr_parts[1] if len(addr_parts) >= 2 else ""
+            sb_state = filing.state
+            sb_postal = ""
+            if len(addr_parts) >= 3:
+                tokens = addr_parts[2].split()
+                if tokens:
+                    sb_state = tokens[0] or filing.state
+                if len(tokens) >= 2:
+                    sb_postal = tokens[1]
+            sb_phone, sb_address = await _searchbug_search(
+                first_name, last_name, sb_city, sb_state, sb_postal
             )
-            if m_matched and m_phone:
-                phone = m_phone
-                email = email or m_email
-                dnc_source = "melissa"
-                log.info(f"Melissa fallback hit for {filing.case_number}: phone={phone}")
+            if sb_phone:
+                phone = sb_phone
+                dnc_status = "unknown"
+                dnc_source = "searchbug"
+                log.info(f"SearchBug fallback hit for {filing.case_number}: phone={phone}")
 
     if property_info is None and lookup_property_if_missing and property_type is None:
         property_info = await lookup_property_info(filing)

@@ -115,7 +115,7 @@ async def test_pipeline_dnc_blocked_never_triggers_bland(monkeypatch):
 
     await runner.run([filing], state="TX", county="Harris")
 
-    assert ("ghl", "ec") in calls
+    assert ("ghl", "ec") not in calls
     assert ("bland_status", "ec", "blocked_dnc", None) in calls
 
 

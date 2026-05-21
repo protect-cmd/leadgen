@@ -66,6 +66,27 @@ def _has_contact_method(contact: EnrichedContact) -> bool:
     return bool(contact.phone or contact.email)
 
 
+async def _apply_ftc_scrub(contact: EnrichedContact) -> None:
+    """Upgrade unknown DNC status by consulting the FTC registry.
+
+    Mutates the contact in place and persists the change so the dashboard and
+    downstream consumers see the upgraded status. No-op when the contact already
+    has a definitive status or the FTC registry isn't configured.
+    """
+    if dnc_service.normalize_status(contact.dnc_status) != "unknown":
+        return
+    result = dnc_service.scrub_phone(contact.phone)
+    if result is None or result.status == "unknown":
+        return
+    contact.dnc_status = result.status
+    contact.dnc_source = "ftc_registry"
+    await dedup_service.update_enrichment(contact)
+    log.info(
+        f"{contact.filing.case_number} [{contact.track.upper()}] "
+        f"FTC scrub upgraded DNC status to {result.status}"
+    )
+
+
 async def _process_track(contact: EnrichedContact) -> TrackResult:
     """Route, push to GHL, queue/trigger Bland, and enroll in Instantly for one track.
 
@@ -129,6 +150,23 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
         tags = [outcome.tag]
     tags.extend(_language_tags(contact))
 
+    # DNC gate — block GHL and Instantly for phone contacts that aren't clear.
+    # Email-only contacts (no phone) bypass this gate and still reach both platforms.
+    if contact.phone:
+        await _apply_ftc_scrub(contact)
+        dnc_decision = dnc_service.can_call(contact)
+        if not dnc_decision.allowed:
+            await dedup_service.set_bland_status(
+                filing.case_number,
+                contact.track,
+                "blocked_dnc" if dnc_decision.status == "blocked" else "pending_dnc_review",
+            )
+            log.info(
+                f"{filing.case_number} [{contact.track.upper()}] DNC blocked — "
+                f"skipping GHL and Instantly: {dnc_decision.reason}"
+            )
+            return TrackResult(False)
+
     try:
         ghl_id = await ghl_service.create_contact(contact, tags, stage_id)
         await dedup_service.update_ghl_id(filing.case_number, ghl_id, contact.track)
@@ -145,23 +183,7 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
     instantly_result = await instantly_service.enroll(contact)
 
     if contact.phone:
-        dnc_decision = dnc_service.can_call(contact)
-        if not dnc_decision.allowed:
-            await dedup_service.set_bland_status(
-                filing.case_number,
-                contact.track,
-                "blocked_dnc" if dnc_decision.status == "blocked" else "pending_dnc_review",
-            )
-            log.info(
-                f"{filing.case_number} [{contact.track.upper()}] Bland blocked: "
-                f"{dnc_decision.reason}"
-            )
-            return TrackResult(
-                True,
-                instantly_enrolled=instantly_result.enrolled,
-                instantly_error=instantly_result.error,
-            )
-
+        # DNC already confirmed clear above — proceed straight to Bland logic.
         if _AUTO_BLAND_CALLS_ENABLED:
             try:
                 call_id = await bland_service.trigger_voicemail(contact)
@@ -434,3 +456,43 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         )
     except Exception as e:
         log.warning(f"Failed to send run summary notification: {e}")
+
+
+async def push_cleared_contact(contact: EnrichedContact) -> str | None:
+    """Push a DNC-cleared contact to GHL and Instantly.
+
+    Called by the dashboard when a previously unknown/blocked contact is manually
+    cleared. Runs the same routing and tag logic as _process_track but skips the
+    DNC check (caller is responsible for confirming clearance) and skips Bland
+    (dashboard triggers that separately via the approve endpoint).
+
+    Returns the GHL contact ID, or None if routing skips the contact.
+    """
+    is_ec = contact.track == "ec"
+    outcome = router.route_ec(contact) if is_ec else router.route_ng(contact)
+    if outcome.action == "skip":
+        log.info(
+            f"{contact.filing.case_number} [{contact.track.upper()}] "
+            "skipped by router — not pushed to GHL"
+        )
+        return None
+
+    if outcome.pipeline == "commercial":
+        stage_id = GHL_EC_STAGE_ID if is_ec else GHL_NG_COMMERCIAL_STAGE_ID
+        tags = [outcome.tag, "High-Priority"]
+    elif is_ec:
+        stage_id = GHL_EC_STAGE_ID
+        tags = [outcome.tag]
+    else:
+        stage_id = GHL_NG_RESIDENTIAL_STAGE_ID
+        tags = [outcome.tag]
+    tags.extend(_language_tags(contact))
+
+    ghl_id = await ghl_service.create_contact(contact, tags, stage_id)
+    await dedup_service.update_ghl_id(contact.filing.case_number, ghl_id, contact.track)
+    await instantly_service.enroll(contact)
+    log.info(
+        f"{contact.filing.case_number} [{contact.track.upper()}] "
+        f"pushed to GHL ({ghl_id}) and Instantly after DNC clear"
+    )
+    return ghl_id

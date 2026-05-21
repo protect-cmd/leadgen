@@ -166,6 +166,7 @@ async def test_bland_request_data_uses_callback_number(monkeypatch):
     assert payloads[0]["from"] == "+18185550100"
     assert payloads[0]["request_data"]["ec_phone"] == "8 8 8, 5 5 5, 0 1 0 0"
     assert "8 8 8, 5 5 5, 0 1 0 0" in payloads[0]["voicemail"]["message"]
+    assert "retry" not in payloads[0]
 
 
 def test_batchdata_phone_selection_preserves_clear_dnc_status():

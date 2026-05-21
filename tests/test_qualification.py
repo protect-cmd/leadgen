@@ -137,3 +137,16 @@ def test_classify_columbus_ohio_zip_as_residential_fallback_when_rent_missing():
     assert outcome.property_zip == "43229"
     assert outcome.lead_bucket == "residential_approved"
     assert outcome.discard_reason is None
+
+
+def test_classify_cincinnati_ohio_zip_as_residential_fallback_when_rent_missing():
+    outcome = classify_lead(
+        state="OH",
+        property_address="456 Elm St, Cincinnati, OH 45219",
+        filing_date=date(2026, 5, 12),
+        today=date(2026, 5, 14),
+    )
+
+    assert outcome.property_zip == "45219"
+    assert outcome.lead_bucket == "residential_approved"
+    assert outcome.discard_reason is None
