@@ -102,8 +102,8 @@ def main() -> int:
     elapsed = time.time() - started
     size_mb = args.output.stat().st_size / (1024 * 1024)
     print(
-        f"Done in {elapsed:.1f}s — {unique_count:,} unique phones across "
-        f"{area_code_count} area codes ({size_mb:.1f} MB) → {args.output}"
+        f"Done in {elapsed:.1f}s - {unique_count:,} unique phones across "
+        f"{area_code_count} area codes ({size_mb:.1f} MB) -> {args.output}"
     )
     return 0
 
