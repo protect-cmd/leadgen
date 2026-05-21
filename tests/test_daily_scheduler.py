@@ -58,12 +58,15 @@ def test_scheduler_defines_daily_jobs():
 
     assert [(job.name, job.hour, job.minute, job.script_name) for job in daily_scheduler.SCHEDULED_JOBS] == [
         ("texas", 13, 0, "run_texas.py"),
+        ("tarrant", 13, 10, "run_tarrant.py"),
         ("tennessee", 13, 20, "run_tennessee.py"),
         ("arizona", 13, 40, "run_arizona.py"),
         ("georgia_cobb", 14, 0, "run_georgia_cobb.py"),
         ("ohio_franklin_raw", 14, 20, "../scripts/push_franklin_filings.py"),
         ("ohio_hamilton", 14, 40, "run_ohio.py"),
     ]
+    tarrant_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "tarrant")
+    assert "--pipe" in tarrant_job.args
     az_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "arizona")
     assert "--pipe" in az_job.args
     assert "--notify" in az_job.args
