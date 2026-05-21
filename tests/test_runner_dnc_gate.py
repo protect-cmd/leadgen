@@ -59,23 +59,23 @@ def _ng_spanish_contact() -> EnrichedContact:
 @pytest.mark.asyncio
 async def test_process_track_blocks_bland_when_dnc_not_clear(monkeypatch):
     monkeypatch.setattr(runner, "_AUTO_BLAND_CALLS_ENABLED", True)
-    monkeypatch.setattr(runner.ghl_service, "create_contact", _async_return("ghl-123"))
-    monkeypatch.setattr(runner.dedup_service, "update_ghl_id", _async_none)
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("GHL and Bland must not be called when DNC is not clear")
 
     statuses: list[tuple[str, str, str | None]] = []
 
-    async def capture_status(case_number: str, track: str, status: str, call_id: str | None = None):
+    async def capture_status(case_number: str, track: str, status: str, _call_id: str | None = None):
         statuses.append((case_number, track, status))
 
-    async def fail_if_called(contact: EnrichedContact) -> str:
-        raise AssertionError("Bland should not fire when DNC is not clear")
-
+    monkeypatch.setattr(runner.ghl_service, "create_contact", fail_if_called)
+    monkeypatch.setattr(runner.dedup_service, "update_ghl_id", fail_if_called)
     monkeypatch.setattr(runner.dedup_service, "set_bland_status", capture_status)
     monkeypatch.setattr(runner.bland_service, "trigger_voicemail", fail_if_called)
 
     created = await runner._process_track(_contact("blocked"))
 
-    assert created.ghl_created is True
+    assert created.ghl_created is False
     assert statuses == [("TEST-DNC-blocked", "ec", "blocked_dnc")]
 
 
