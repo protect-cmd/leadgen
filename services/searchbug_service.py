@@ -160,7 +160,23 @@ async def search_tenant_detailed(
     if data.get("Status") == "Error":
         error = str(data.get("Error") or "")
         log.warning("SearchBug error for %s %s: %s", first_name, last_name, error)
-        status = "account_error" if _is_account_error(error) else "api_error"
+        is_account = _is_account_error(error)
+        status = "account_error" if is_account else "api_error"
+        if is_account:
+            # Fire a high-priority Pushover once per day so we know to top up
+            # credit before the next scheduled run wastes attempts.
+            from services.enrichment_cache import get_cache
+            from services import notification_service
+            cache = get_cache()
+            if cache.claim_alert_once_today("searchbug_account_error"):
+                await notification_service.send_alert(
+                    "SearchBug account error",
+                    f"SearchBug returned an account/billing error and is no longer "
+                    f"serving lookups. Tenant enrichment is now silently failing. "
+                    f"Detail: {error[:200]}",
+                    priority=1,
+                    tags={"first_name": first_name, "last_name": last_name},
+                )
         return SearchBugResult(
             status,
             error=error,

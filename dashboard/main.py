@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from services import bland_service, daily_scheduler, dnc_service
+from services import bland_service, daily_scheduler, dnc_service, notification_service
 from services.dedup_service import (
     clear_dnc_status,
     get_dashboard_counts,
@@ -37,9 +37,32 @@ _BLAND_TEST_RECIPIENTS = {
 }
 
 
+async def _preload_dnc_registry() -> None:
+    """Eagerly load the FTC DNC registry at startup. Alert if it fails so
+    operators learn about volume-detach / missing-file incidents before the
+    first scheduled run rather than from a silent unknown-DNC pileup.
+    """
+    db_path = os.getenv("FTC_DNC_DB_PATH", "").strip()
+    if not db_path:
+        return
+    registry = dnc_service._load_registry()
+    if registry is None:
+        await notification_service.send_alert(
+            "FTC DNC registry failed to load",
+            (
+                f"FTC_DNC_DB_PATH={db_path} but the registry did not load. "
+                "Phones from licensed area codes will fall through to "
+                "compliance-hold. Check Railway volume mount and dnc.db."
+            ),
+            priority=1,
+            tags={"path": db_path},
+        )
+
+
 async def start_daily_scheduler() -> None:
     global _scheduler_task
     if daily_scheduler.is_enabled() and _scheduler_task is None:
+        await _preload_dnc_registry()
         _scheduler_task = asyncio.create_task(daily_scheduler.run_forever())
 
 

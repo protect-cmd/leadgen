@@ -112,11 +112,20 @@ async def send_run_summary(
         f"BatchData calls: {metrics.get('batchdata_calls', 0)}",
         f"Phones found: {metrics.get('phones_found', 0)}",
         f"GHL created: {metrics.get('ghl_created', 0)}",
-        f"Bland: {bland_text}",
-        f"Elapsed: {elapsed_text}",
     ]
+    if "ng_phones_pushed" in metrics:
+        lines.append(f"NG (tenant) pushed: {metrics['ng_phones_pushed']}")
+    if "searchbug_calls" in metrics:
+        searchbug_line = f"SearchBug calls: {metrics['searchbug_calls']}"
+        if "searchbug_daily_total" in metrics:
+            searchbug_line += f" (today: {metrics['searchbug_daily_total']})"
+        lines.append(searchbug_line)
+    if "ftc_scrubs_upgraded" in metrics:
+        lines.append(f"FTC DNC upgrades: {metrics['ftc_scrubs_upgraded']}")
+    lines.append(f"Bland: {bland_text}")
     if "instantly_enrolled" in metrics:
-        lines.insert(-1, f"Instantly enrolled: {metrics['instantly_enrolled']}")
+        lines.append(f"Instantly enrolled: {metrics['instantly_enrolled']}")
+    lines.append(f"Elapsed: {elapsed_text}")
     message = "\n".join(lines)
 
     return await send_alert(
