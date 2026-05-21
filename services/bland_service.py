@@ -150,6 +150,8 @@ async def trigger_voicemail(contact: EnrichedContact) -> str:
         "phone_number": contact.phone,
         "from": from_number,
         "pathway_id": pathway_id,
+        "wait_for_greeting": True,
+        "answered_by_enabled": True,
         "request_data": {
             "first_name": first_name,
             "county": filing.county,
