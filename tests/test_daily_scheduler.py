@@ -62,6 +62,7 @@ def test_scheduler_defines_daily_jobs():
         ("arizona", 13, 40, "run_arizona.py"),
         ("georgia_cobb", 14, 0, "run_georgia_cobb.py"),
         ("ohio_franklin_raw", 14, 20, "../scripts/push_franklin_filings.py"),
+        ("ohio_hamilton", 14, 40, "run_ohio.py"),
     ]
     az_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "arizona")
     assert "--pipe" in az_job.args
@@ -89,3 +90,19 @@ def test_ohio_franklin_job_is_raw_supabase_only():
 
     assert job.args == ("--lookback-days", "2", "--yes-write-supabase", "--notify")
     assert "--pipe" not in job.args
+
+
+def test_ohio_hamilton_job_is_scheduled_for_pipeline():
+    from services.daily_scheduler import SCHEDULED_JOBS
+
+    job = next(j for j in SCHEDULED_JOBS if j.name == "ohio_hamilton")
+
+    assert job.script_name == "run_ohio.py"
+    assert job.args == (
+        "--lookback-days",
+        "2",
+        "--counties",
+        "hamilton",
+        "--pipe",
+        "--notify",
+    )
