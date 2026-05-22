@@ -244,3 +244,42 @@ def test_ng_counts_spanish_residential_not_affected_by_actionable_filter():
     counts = dedup_service._ng_counts_from_contact_rows(rows)
     assert counts["ng_spanish_residential"] == 1
     assert counts["ng_residential"] == 0
+
+
+# ── dashboard/index.html static config integrity ─────────────────────────────
+
+from pathlib import Path
+
+_INDEX_HTML = Path(__file__).resolve().parents[1] / "dashboard" / "index.html"
+
+
+def test_index_html_brand_views_includes_ng_already_called():
+    """ng_already_called must be in the brandViews.ng tab list."""
+    src = _INDEX_HTML.read_text(encoding="utf-8")
+    # We look for the literal string inside the ng array. The array spans
+    # one or two lines depending on formatting; the substring check is
+    # tolerant of either.
+    assert "'ng_already_called'" in src or '"ng_already_called"' in src, (
+        "ng_already_called is not registered in dashboard/index.html"
+    )
+
+
+def test_index_html_view_labels_full_and_short():
+    """Both full and short labels for ng_already_called must be present."""
+    src = _INDEX_HTML.read_text(encoding="utf-8")
+    assert "Vantage Already Called" in src, "full label missing in viewLabels"
+    assert "Already Called" in src, "short label missing in viewLabelsShort"
+
+
+def test_index_html_already_called_listed_before_discarded():
+    """Tab order intent: actionable → ... → held → already called → discarded."""
+    src = _INDEX_HTML.read_text(encoding="utf-8")
+    idx_already = src.find("'ng_already_called'")
+    idx_discarded = src.find("'ng_discarded'")
+    assert idx_already != -1 and idx_discarded != -1, (
+        "Either ng_already_called or ng_discarded missing from brandViews"
+    )
+    assert idx_already < idx_discarded, (
+        "ng_already_called should appear before ng_discarded in brandViews.ng "
+        f"(found at {idx_already} vs {idx_discarded})"
+    )
