@@ -1015,7 +1015,7 @@
 
     const brandViews = {
       ec: ['ec_residential', 'ec_commercial', 'ec_held', 'ec_discarded'],
-      ng: ['ng_residential', 'ng_commercial', 'ng_spanish_residential', 'ng_spanish_commercial', 'ng_held', 'ng_discarded'],
+      ng: ['ng_residential', 'ng_commercial', 'ng_spanish_residential', 'ng_spanish_commercial', 'ng_held', 'ng_already_called', 'ng_discarded'],
     };
 
     const viewLabels = {
@@ -1028,6 +1028,7 @@
       ng_spanish_residential: 'Spanish Residential Approved',
       ng_spanish_commercial: 'Spanish Commercial',
       ng_held: 'Held',
+      ng_already_called: 'Vantage Already Called',
       ng_discarded: 'Discarded',
     };
 
@@ -1048,7 +1049,7 @@
               ec_held: 'Held', ec_discarded: 'Discarded',
               ng_residential: 'Residential', ng_commercial: 'Commercial',
               ng_spanish_residential: 'Spanish Res', ng_spanish_commercial: 'Spanish Com',
-              ng_held: 'Held', ng_discarded: 'Discarded',
+              ng_held: 'Held', ng_already_called: 'Already Called', ng_discarded: 'Discarded',
             };
             el.textContent = `${shortLabels[viewKey]} (${counts[viewKey] ?? 0})`;
           }
@@ -1114,7 +1115,7 @@
         ec_held: 'Held', ec_discarded: 'Discarded',
         ng_residential: 'Residential', ng_commercial: 'Commercial',
         ng_spanish_residential: 'Spanish Res', ng_spanish_commercial: 'Spanish Com',
-        ng_held: 'Held', ng_discarded: 'Discarded',
+        ng_held: 'Held', ng_already_called: 'Already Called', ng_discarded: 'Discarded',
       };
       // Remove all existing view chips
       document.querySelectorAll('[id^="view-"]').forEach(el => el.remove());
