@@ -522,6 +522,10 @@ def _filter_dashboard_query(query, view: str):
         return query.eq("lead_bucket", "held")
     if view in ("ec_discarded", "ng_discarded"):
         return query.eq("lead_bucket", "discarded")
+    if view == "ng_already_called":
+        return query.eq("lead_bucket", "residential_approved").or_(
+            "language_hint.is.null,language_hint.neq.spanish_likely"
+        )
     # Legacy fallback — residential approved, non-Spanish
     return query.eq("lead_bucket", "residential_approved").or_(
         "language_hint.is.null,language_hint.neq.spanish_likely"
@@ -624,6 +628,17 @@ def _get_ng_dashboard_leads(view: str, limit: int) -> list[dict]:
     )
     if not ng_contacts:
         return []
+
+    # View-specific actionable filtering. Other views (commercial / held /
+    # spanish_* / discarded) intentionally pass through unfiltered — they
+    # still want everything in the bucket regardless of phone/bland state.
+    if view == "ng_residential":
+        ng_contacts = [c for c in ng_contacts if _is_ng_contact_actionable(c)]
+    elif view == "ng_already_called":
+        ng_contacts = [c for c in ng_contacts if _is_ng_contact_already_called(c)]
+    if not ng_contacts:
+        return []
+
     ng_case_numbers = [row["case_number"] for row in ng_contacts]
     query = _client.table("filings").select(_DASHBOARD_SELECT)
     query = _filter_dashboard_query(query, view)
