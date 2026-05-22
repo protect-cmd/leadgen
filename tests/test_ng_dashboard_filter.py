@@ -191,3 +191,56 @@ def test_ng_held_view_unchanged_by_actionable_filter():
 
     # Held leads with no phone still appear — operator reviews them
     assert {r["case_number"] for r in rows} == {"C1"}
+
+
+# ── _ng_counts_from_contact_rows behavior ────────────────────────────────────
+
+def test_ng_counts_actionable_filter_applied_to_residential():
+    """ng_residential count reflects the actionable predicate, not raw count."""
+    rows = [
+        # Actionable
+        {"phone": "+15551111111", "bland_status": "pending",
+         "filings": {"lead_bucket": "residential_approved", "language_hint": None}},
+        {"phone": "+15551111112", "bland_status": None,
+         "filings": {"lead_bucket": "residential_approved", "language_hint": None}},
+        # Already called — counted separately, not in ng_residential
+        {"phone": "+15551111113", "bland_status": "triggered",
+         "filings": {"lead_bucket": "residential_approved", "language_hint": None}},
+        # No phone — excluded everywhere
+        {"phone": None, "bland_status": "missing_contact_data",
+         "filings": {"lead_bucket": "residential_approved", "language_hint": None}},
+    ]
+    counts = dedup_service._ng_counts_from_contact_rows(rows)
+    assert counts["ng_residential"] == 2
+    assert counts["ng_already_called"] == 1
+
+
+def test_ng_counts_already_called_excludes_other_buckets():
+    """Triggered leads in held/discarded buckets don't leak into ng_already_called."""
+    rows = [
+        {"phone": "+15552220001", "bland_status": "triggered",
+         "filings": {"lead_bucket": "residential_approved", "language_hint": None}},
+        {"phone": "+15552220002", "bland_status": "triggered",
+         "filings": {"lead_bucket": "held", "language_hint": None}},
+        {"phone": "+15552220003", "bland_status": "triggered",
+         "filings": {"lead_bucket": "discarded", "language_hint": None}},
+    ]
+    counts = dedup_service._ng_counts_from_contact_rows(rows)
+    assert counts["ng_already_called"] == 1, (
+        "Only the residential_approved triggered lead should count"
+    )
+    assert counts["ng_held"] == 1
+    assert counts["ng_discarded"] == 1
+
+
+def test_ng_counts_spanish_residential_not_affected_by_actionable_filter():
+    """Spanish residential keeps its existing semantics (no phone filter)."""
+    rows = [
+        # Spanish + residential + no phone — still counted in spanish_residential
+        {"phone": None, "bland_status": None,
+         "filings": {"lead_bucket": "residential_approved",
+                     "language_hint": "spanish_likely"}},
+    ]
+    counts = dedup_service._ng_counts_from_contact_rows(rows)
+    assert counts["ng_spanish_residential"] == 1
+    assert counts["ng_residential"] == 0
