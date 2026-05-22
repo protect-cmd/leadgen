@@ -376,7 +376,9 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
                         lookup_property_if_missing=False,
                     ),
                 )
-                m["batchdata_calls"] += property_lookup_calls + 2
+                # enrich (EC) makes 1 BatchData skip-trace; enrich_tenant (NG)
+                # no longer calls BatchData — it goes straight to SearchBug.
+                m["batchdata_calls"] += property_lookup_calls + 1
             elif enrich_tenant_flag:
                 ng_contact = await batchdata_service.enrich_tenant(
                     filing,
@@ -384,7 +386,8 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
                     lookup_property_if_missing=False,
                 )
                 ec_contact = None
-                m["batchdata_calls"] += property_lookup_calls + 1
+                # No BatchData skip-trace for tenant track — SearchBug only.
+                m["batchdata_calls"] += property_lookup_calls
             elif landlord_track_enabled:
                 ec_contact = await batchdata_service.enrich(
                     filing,

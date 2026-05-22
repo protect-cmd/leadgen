@@ -162,36 +162,25 @@ async def test_green_cache_miss_calls_searchbug_and_stores(mock_cache, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_green_batchdata_phone_bypasses_searchbug(mock_cache, monkeypatch):
-    """When BatchData returns a name-matched tenant with phone, SearchBug is not called."""
+async def test_green_tenant_does_not_call_batchdata_skip_trace(mock_cache, monkeypatch):
+    """enrich_tenant goes straight to SearchBug — no BatchData skip-trace call."""
     filing = _filing(tenant_name="Brett Lilly")
+    http_calls = []
 
-    async def fake_post(*args, **kwargs):
-        return httpx.Response(
-            200,
-            json={
-                "results": {
-                    "persons": [
-                        {
-                            "name": {"full": "Brett Lilly"},
-                            "phoneNumbers": [
-                                {"number": "5550000000", "type": "Mobile", "score": 90, "dnc": False}
-                            ],
-                            "emails": [],
-                        }
-                    ]
-                }
-            },
-        )
+    async def fake_post(self, url, *args, **kwargs):
+        http_calls.append(url)
+        return httpx.Response(200, json={"results": {"persons": []}})
 
     with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
-         patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=fake_post)), \
-         patch("services.searchbug_service.search_tenant", new_callable=AsyncMock) as mock_sb:
+         patch("httpx.AsyncClient.post", new=fake_post), \
+         patch("services.searchbug_service.search_tenant", new_callable=AsyncMock,
+               return_value=("5559998888", None)) as mock_sb:
         result = await batchdata_service.enrich_tenant(
             filing, lookup_property_if_missing=False
         )
 
-    mock_sb.assert_not_called()
-    assert result.phone == "5550000000"
-    assert result.dnc_status == "clear"
-    assert result.dnc_source == "batchdata"
+    # No BatchData HTTP call should have been made — only SearchBug
+    assert all("batchdata" not in url.lower() for url in http_calls), http_calls
+    mock_sb.assert_called_once()
+    assert result.phone == "5559998888"
+    assert result.dnc_source == "searchbug"
