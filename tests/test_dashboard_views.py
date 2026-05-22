@@ -133,7 +133,10 @@ def test_ec_counts_spanish_residential_not_counted_in_ec_residential():
 
 def test_ng_counts_split_by_bucket_and_language():
     rows = [
-        {"filings": {"lead_bucket": "residential_approved", "language_hint": None}},
+        # Residential row must be actionable (phone + non-worked bland_status)
+        # to land in ng_residential under the Task 3 actionable filter.
+        {"phone": "+15550001111", "bland_status": "pending",
+         "filings": {"lead_bucket": "residential_approved", "language_hint": None}},
         {"filings": {"lead_bucket": "residential_approved", "language_hint": "spanish_likely"}},
         {"filings": {"lead_bucket": "commercial", "language_hint": None}},
         {"filings": {"lead_bucket": "commercial", "language_hint": "spanish_likely"}},

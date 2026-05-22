@@ -701,6 +701,14 @@ def _ec_counts_from_rows(rows: list[dict]) -> dict:
 
 
 def _ng_counts_from_contact_rows(rows: list[dict]) -> dict:
+    """Tally NG-track dashboard counts. Applies the actionable predicate to
+    residential_approved (so ng_residential matches the table), and adds
+    ng_already_called for Bland-triggered / wrong_brand_review leads.
+
+    Spanish, commercial, held, and discarded counts keep their original
+    semantics (no phone/bland filtering) — those views still surface
+    everything in their bucket.
+    """
     counts = {
         "ng_residential": 0,
         "ng_commercial": 0,
@@ -708,6 +716,7 @@ def _ng_counts_from_contact_rows(rows: list[dict]) -> dict:
         "ng_spanish_commercial": 0,
         "ng_held": 0,
         "ng_discarded": 0,
+        "ng_already_called": 0,
     }
     for row in rows:
         filing = row.get("filings") or {}
@@ -716,8 +725,10 @@ def _ng_counts_from_contact_rows(rows: list[dict]) -> dict:
         if bucket == "residential_approved":
             if spanish:
                 counts["ng_spanish_residential"] += 1
-            else:
+            elif _is_ng_contact_actionable(row):
                 counts["ng_residential"] += 1
+            if not spanish and _is_ng_contact_already_called(row):
+                counts["ng_already_called"] += 1
         elif bucket == "commercial":
             if spanish:
                 counts["ng_spanish_commercial"] += 1
@@ -753,7 +764,10 @@ async def get_dashboard_counts() -> dict:
         }
         ng_rows = (
             _client.table("lead_contacts")
-            .select("case_number,filings(lead_bucket,language_hint)")
+            .select(
+                "case_number,phone,bland_status,"
+                "filings(lead_bucket,language_hint)"
+            )
             .eq("track", "ng")
             .limit(10000)
             .execute()
