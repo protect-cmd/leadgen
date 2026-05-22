@@ -6,6 +6,8 @@ The new "Vantage Already Called" view shows leads where Bland already ran.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from services import dedup_service
 
 
@@ -248,8 +250,6 @@ def test_ng_counts_spanish_residential_not_affected_by_actionable_filter():
 
 # ── dashboard/index.html static config integrity ─────────────────────────────
 
-from pathlib import Path
-
 _INDEX_HTML = Path(__file__).resolve().parents[1] / "dashboard" / "index.html"
 
 
@@ -265,21 +265,33 @@ def test_index_html_brand_views_includes_ng_already_called():
 
 
 def test_index_html_view_labels_full_and_short():
-    """Both full and short labels for ng_already_called must be present."""
+    """Both full and short labels for ng_already_called must be present.
+    The short label needs to be in BOTH viewLabelsShort copies (there are two)."""
     src = _INDEX_HTML.read_text(encoding="utf-8")
-    assert "Vantage Already Called" in src, "full label missing in viewLabels"
-    assert "Already Called" in src, "short label missing in viewLabelsShort"
+    assert "ng_already_called: 'Vantage Already Called'" in src, (
+        "full label missing in viewLabels"
+    )
+    short_label_literal = "ng_already_called: 'Already Called'"
+    assert src.count(short_label_literal) >= 2, (
+        f"Expected short label {short_label_literal!r} in BOTH viewLabelsShort "
+        f"copies; got {src.count(short_label_literal)} occurrence(s)"
+    )
 
 
 def test_index_html_already_called_listed_before_discarded():
-    """Tab order intent: actionable → ... → held → already called → discarded."""
+    """Tab order intent within brandViews.ng: ...held → already_called → discarded."""
     src = _INDEX_HTML.read_text(encoding="utf-8")
-    idx_already = src.find("'ng_already_called'")
-    idx_discarded = src.find("'ng_discarded'")
-    assert idx_already != -1 and idx_discarded != -1, (
-        "Either ng_already_called or ng_discarded missing from brandViews"
+    ng_line = next(
+        (line for line in src.splitlines() if "ng: [" in line and "ng_residential" in line),
+        None,
     )
-    assert idx_already < idx_discarded, (
-        "ng_already_called should appear before ng_discarded in brandViews.ng "
-        f"(found at {idx_already} vs {idx_discarded})"
+    assert ng_line is not None, "Could not find brandViews.ng array line"
+    positions = {
+        key: ng_line.find(f"'{key}'")
+        for key in ("ng_held", "ng_already_called", "ng_discarded")
+    }
+    for key, pos in positions.items():
+        assert pos != -1, f"{key} missing from brandViews.ng line: {ng_line}"
+    assert positions["ng_held"] < positions["ng_already_called"] < positions["ng_discarded"], (
+        f"Tab order wrong in brandViews.ng: {positions}"
     )
