@@ -363,6 +363,16 @@ async def enrich_tenant_by_name(
             cache.set(first_name, last_name, city, state, None, None)
             continue
 
+        # Circuit breaker — if SearchBug account is in error state, skip
+        # without burning the daily cap counter.
+        from services.searchbug_service import is_account_error_tripped
+        if is_account_error_tripped():
+            log.info(
+                f"enrich_tenant_by_name: SearchBug circuit breaker tripped, "
+                f"skipping {filing.case_number}"
+            )
+            break
+
         # Daily cap check
         if not cache.check_daily_cap(cap):
             log.warning(f"enrich_tenant_by_name: daily cap {cap} reached for {filing.case_number}")
@@ -375,7 +385,11 @@ async def enrich_tenant_by_name(
         phone, resolved_address = await _searchbug_search(
             first_name, last_name, city=city, state=state, postal=postal
         )
-        cache.increment_daily_count()
+        # Only count against the daily cap if we actually hit the wire.
+        # If the call short-circuited via the circuit breaker (tripped during
+        # this same call), skip the increment to keep the counter honest.
+        if not is_account_error_tripped():
+            cache.increment_daily_count()
         cache.set(first_name, last_name, city, state, phone, resolved_address)
 
         if phone and resolved_address:
@@ -502,6 +516,15 @@ async def _searchbug_fallback_gated(
         cache.set(first_name, last_name, sb_city, sb_state, None, None)
         return None
 
+    # Circuit breaker — if SearchBug account is in error state, skip without
+    # burning the daily cap counter (and without making a doomed HTTP call).
+    from services.searchbug_service import is_account_error_tripped
+    if is_account_error_tripped():
+        log.info(
+            f"SearchBug circuit breaker tripped, skipping {filing.case_number}"
+        )
+        return None
+
     if not cache.check_daily_cap(cap):
         log.warning(
             f"SearchBug daily cap {cap} reached — skipping {filing.case_number}"
@@ -512,7 +535,10 @@ async def _searchbug_fallback_gated(
     sb_phone, sb_address = await _searchbug_search(
         first_name, last_name, sb_city, sb_state, sb_postal
     )
-    cache.increment_daily_count()
+    # Only count against the daily cap if we actually hit the wire. If the
+    # call just tripped the breaker, we don't want to consume a slot.
+    if not is_account_error_tripped():
+        cache.increment_daily_count()
     cache.set(first_name, last_name, sb_city, sb_state, sb_phone, sb_address)
 
     if sb_phone:

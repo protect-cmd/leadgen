@@ -12,6 +12,25 @@ log = logging.getLogger(__name__)
 
 BASE = "https://data.searchbug.com/api/search.aspx"
 
+# Process-level circuit breaker. Flips True the first time we see an account
+# billing/credit error from SearchBug. Subsequent calls short-circuit so we
+# don't burn the daily-cap counter (or add HTTP latency) on calls that can't
+# succeed until credit is restored. Resets only on process restart — that
+# matches the typical "top up credit → redeploy" recovery flow.
+_account_error_tripped: bool = False
+
+
+def reset_circuit_breaker_for_tests() -> None:
+    """Test-only helper to clear the tripped flag between tests."""
+    global _account_error_tripped
+    _account_error_tripped = False
+
+
+def is_account_error_tripped() -> bool:
+    """Return True if the circuit breaker has tripped this process."""
+    return _account_error_tripped
+
+
 _COMPANY_TERMS = {
     "llc", "inc", "corp", "lp", "llp", "trust", "properties", "apartments",
     "management", "holdings", "group", "realty", "enterprises",
@@ -130,8 +149,18 @@ async def search_tenant_detailed(
     postal: str = "",
 ) -> SearchBugResult:
     """SearchBug People Search with structured miss/error reasons."""
+    global _account_error_tripped
     if not first_name or not last_name:
         return SearchBugResult("invalid_name")
+
+    # Circuit breaker — once SearchBug returns an account/billing error, stop
+    # making HTTP calls until process restart. Top up credit + redeploy to clear.
+    if _account_error_tripped:
+        return SearchBugResult(
+            "account_error",
+            error="Circuit breaker tripped (account error earlier this process)",
+            retryable=False,
+        )
 
     co_code, api_key = _creds()
     payload = {
@@ -163,6 +192,9 @@ async def search_tenant_detailed(
         is_account = _is_account_error(error)
         status = "account_error" if is_account else "api_error"
         if is_account:
+            # Trip the process-level circuit breaker so subsequent calls
+            # short-circuit without burning the daily cap counter.
+            _account_error_tripped = True
             # Fire a high-priority Pushover once per day so we know to top up
             # credit before the next scheduled run wastes attempts.
             from services.enrichment_cache import get_cache
@@ -181,7 +213,7 @@ async def search_tenant_detailed(
             status,
             error=error,
             error_code=_error_code(error),
-            retryable=True,
+            retryable=not is_account,
         )
 
     rows = int(data.get("rows") or 0)
