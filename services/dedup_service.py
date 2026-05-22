@@ -532,6 +532,43 @@ def _track_for_dashboard_view(view: str) -> str:
     return "ng" if view.startswith("ng_") else "ec"
 
 
+# Bland statuses that indicate a tenant lead has already been worked. Such
+# leads are hidden from the main "Vantage Residential" view and surface in
+# the "Vantage Already Called" view instead.
+NG_WORKED_BLAND_STATUSES: frozenset[str] = frozenset({
+    "triggered",            # Bland successfully dialed
+    "wrong_brand_review",   # post-push QA flagged
+    "missing_contact_data", # enrichment returned nothing dialable
+    "blocked_dnc",          # DNC registry block
+})
+
+# Subset of worked statuses that surface in the "Already Called" tab.
+# missing_contact_data and blocked_dnc are excluded — those weren't called.
+NG_ALREADY_CALLED_BLAND_STATUSES: frozenset[str] = frozenset({
+    "triggered",
+    "wrong_brand_review",
+})
+
+
+def _is_ng_contact_actionable(contact: dict) -> bool:
+    """A tenant contact is actionable when it has a phone the operator can
+    dial AND it hasn't already been worked. Both DNC clear and DNC unknown
+    are considered actionable — the operator decides per-row using the DNC
+    badge.
+    """
+    if not contact.get("phone"):
+        return False
+    return contact.get("bland_status") not in NG_WORKED_BLAND_STATUSES
+
+
+def _is_ng_contact_already_called(contact: dict) -> bool:
+    """A tenant contact is 'already called' when Bland completed a dial or
+    post-push QA flagged it. Compliance holds (blocked_dnc) and never-dialed
+    rows (missing_contact_data) are excluded — they belong elsewhere.
+    """
+    return contact.get("bland_status") in NG_ALREADY_CALLED_BLAND_STATUSES
+
+
 def _target_metadata(track: str, view: str) -> dict:
     is_spanish = view in {"ng_spanish_residential", "ng_spanish_commercial"}
     if track == "ng":
