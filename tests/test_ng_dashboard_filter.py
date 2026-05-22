@@ -72,7 +72,12 @@ from unittest.mock import MagicMock, patch
 
 
 def _fake_supabase_pair(ng_contact_rows: list[dict], filing_rows: list[dict]):
-    """Build a MagicMock _client that returns the given contact/filing data."""
+    """Build a MagicMock _client that returns the given contact/filing data.
+
+    The filings mock honors `in_(column, values)` against `filing_rows`,
+    so removing the predicate filter in _get_ng_dashboard_leads would
+    cause un-filtered case_numbers to leak through and fail assertions.
+    """
     client = MagicMock()
 
     contact_table = MagicMock()
@@ -80,12 +85,29 @@ def _fake_supabase_pair(ng_contact_rows: list[dict], filing_rows: list[dict]):
     contact_table.eq.return_value = contact_table
     contact_table.execute.return_value = MagicMock(data=ng_contact_rows)
 
+    # State shared across the filings chain — captures the in_() filter
+    # so execute() can apply it.
+    state = {"in_column": None, "in_values": None}
+
     filing_table = MagicMock()
-    # All chainable filings methods (select/eq/or_/in_/order/limit) return self;
-    # only execute() returns data.
-    for method in ("select", "eq", "or_", "in_", "order", "limit"):
+    for method in ("select", "eq", "or_", "order", "limit"):
         getattr(filing_table, method).return_value = filing_table
-    filing_table.execute.return_value = MagicMock(data=filing_rows)
+
+    def _in_(column: str, values):
+        state["in_column"] = column
+        state["in_values"] = list(values)
+        return filing_table
+
+    def _execute():
+        if state["in_values"] is None:
+            return MagicMock(data=list(filing_rows))
+        col = state["in_column"]
+        vals = set(state["in_values"])
+        filtered = [r for r in filing_rows if r.get(col) in vals]
+        return MagicMock(data=filtered)
+
+    filing_table.in_.side_effect = _in_
+    filing_table.execute.side_effect = _execute
 
     def _table(name: str):
         return contact_table if name == "lead_contacts" else filing_table
@@ -111,6 +133,8 @@ def test_ng_residential_returns_only_actionable():
     ]
     filings = [
         {"case_number": "A1", "tenant_name": "T1", "lead_bucket": "residential_approved"},
+        {"case_number": "A2", "tenant_name": "T2", "lead_bucket": "residential_approved"},
+        {"case_number": "A3", "tenant_name": "T3", "lead_bucket": "residential_approved"},
         {"case_number": "A4", "tenant_name": "T4", "lead_bucket": "residential_approved"},
     ]
     fake_client = _fake_supabase_pair(ng_contacts, filings)
@@ -138,6 +162,7 @@ def test_ng_already_called_returns_only_worked():
     ]
     filings = [
         {"case_number": "B1", "tenant_name": "T1", "lead_bucket": "residential_approved"},
+        {"case_number": "B2", "tenant_name": "T2", "lead_bucket": "residential_approved"},
         {"case_number": "B3", "tenant_name": "T3", "lead_bucket": "residential_approved"},
     ]
     fake_client = _fake_supabase_pair(ng_contacts, filings)
