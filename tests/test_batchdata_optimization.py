@@ -94,7 +94,9 @@ async def test_runner_reuses_one_property_lookup_for_landlord_and_tenant(monkeyp
     assert calls.count("lookup") == 1
     assert "ec:residential:False" in calls
     assert "ng:residential:False" in calls
-    assert "metrics:3" in calls
+    # 1 shared property lookup + 1 BatchData skip-trace for EC track only.
+    # NG (tenant) track no longer makes a BatchData skip-trace — SearchBug only.
+    assert "metrics:2" in calls
 
 
 @pytest.mark.asyncio

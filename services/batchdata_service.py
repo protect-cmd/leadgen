@@ -527,22 +527,23 @@ async def enrich_tenant(
     property_info: PropertyInfo | None = None,
     lookup_property_if_missing: bool = True,
 ) -> EnrichedContact:
-    """NG track — skip-traces the tenant by name at the property address.
+    """NG track — find the tenant's phone via SearchBug people-search.
 
-    Falls back to SearchBug people-search when BatchData returns no name match.
+    BatchData's property skip-trace returns the property *owner*, not the
+    resident, so historically only ~9% of tenant queries matched the filing
+    name. Calling BatchData first burned a call to confirm "not the tenant"
+    before falling through to SearchBug anyway. We now go straight to
+    SearchBug (gated by cache, common-surname filter, daily cap) and rely
+    on the shared property_info lookup for commercial/residential routing.
     """
-    addr = _split_address(filing.property_address)
-    headers = _headers()
-
     phone: str | None = None
     dnc_status = "unknown"
     dnc_source: str | None = None
     email: str | None = None
     property_type: str | None = filing.property_type_hint
     estimated_rent: float | None = filing.claim_amount
-    name_matched = False
 
-    # Normalize "LAST,FIRST" → "FIRST LAST" so name matching works
+    # Normalize "LAST,FIRST" → "FIRST LAST" so name parsing works downstream
     raw_name = filing.tenant_name.strip()
     if "," in raw_name and raw_name.index(",") < len(raw_name) - 1:
         last, _, first = raw_name.partition(",")
@@ -550,51 +551,11 @@ async def enrich_tenant(
     else:
         tenant_name_normalized = raw_name
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        # Skip-trace by property address — same endpoint as EC track
-        # /api/v1/people/search does not exist; skip-trace returns the resident at the unit
-        r = await client.post(
-            f"{BASE}{SKIP_TRACE_EP}",
-            json={"requests": [{"propertyAddress": addr}]},
-            headers=headers,
-        )
-        if r.status_code == 200:
-            persons = r.json().get("results", {}).get("persons", [])
-            if persons:
-                p = persons[0]
-                # name field is a dict {first, last, middle, full}; fall back to fullName string
-                name_field = p.get("name") or {}
-                returned_name = (
-                    name_field.get("full") if isinstance(name_field, dict) else name_field
-                ) or p.get("fullName") or ""
-                if _tenant_name_matches(tenant_name_normalized, returned_name):
-                    name_matched = True
-                    phone_selection = _best_phone_result(p.get("phoneNumbers", []))
-                    phone = phone_selection.number
-                    dnc_status = phone_selection.dnc_status
-                    dnc_source = phone_selection.dnc_source
-                    email = _best_email(p.get("emails", []))
-                else:
-                    log.info(
-                        f"Tenant name mismatch for {filing.case_number}: "
-                        f"expected={tenant_name_normalized!r}, got={returned_name!r} "
-                        f"→ tenant_not_matched"
-                    )
-        else:
-            log.warning(
-                f"Tenant skip-trace {r.status_code} for {filing.case_number}: "
-                f"{r.text[:200]}"
-            )
-
-    # SearchBug fallback — runs when BatchData returned no name match.
-    # Goes through the same cost-control gates as the yellow-source path:
-    # name parse, cache lookup, common-surname filter, daily cap, then cache write.
-    if not phone:
-        sb_phone = await _searchbug_fallback_gated(filing, tenant_name_normalized)
-        if sb_phone:
-            phone = sb_phone
-            dnc_status = "unknown"
-            dnc_source = "searchbug"
+    sb_phone = await _searchbug_fallback_gated(filing, tenant_name_normalized)
+    if sb_phone:
+        phone = sb_phone
+        dnc_status = "unknown"
+        dnc_source = "searchbug"
 
     if property_info is None and lookup_property_if_missing and property_type is None:
         property_info = await lookup_property_info(filing)
@@ -605,11 +566,9 @@ async def enrich_tenant(
     )
 
     log.info(
-        f"BatchData (tenant) enriched {filing.case_number}: "
+        f"SearchBug (tenant) enriched {filing.case_number}: "
         f"phone={'yes' if phone else 'no'}, "
-        f"email={'yes' if email else 'no'}, "
-        f"property_type={property_type}, "
-        f"name_matched={'yes' if name_matched else 'no'}"
+        f"property_type={property_type}"
     )
 
     return EnrichedContact(
