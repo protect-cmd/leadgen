@@ -36,7 +36,7 @@ async def main() -> None:
             if not filings:
                 log.info(f"{name}: no filings found")
                 continue
-            await run(filings)
+            await run(filings, state="IN", county=name)
         except NotImplementedError as e:
             log.warning(f"{name}: scraper not yet implemented — {e}")
         except Exception as e:

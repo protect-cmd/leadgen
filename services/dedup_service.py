@@ -305,9 +305,75 @@ async def mark_bland_triggered(case_number: str, track: str = "ec") -> None:
     await asyncio.to_thread(_update)
 
 
+_run_metrics_columns_cache: set[str] | None = None
+
+
+def _run_metrics_known_columns() -> set[str]:
+    """Discover existing columns on run_metrics (cached per process).
+
+    Used by write_run_metrics to drop fields that haven't been migrated yet,
+    so a single new metric doesn't blow up the entire run summary write.
+    """
+    global _run_metrics_columns_cache
+    if _run_metrics_columns_cache is not None:
+        return _run_metrics_columns_cache
+    try:
+        sample = _execute_with_retry(
+            _client.table("run_metrics").select("*").limit(1),
+            "discover run_metrics columns",
+        )
+        if sample.data:
+            _run_metrics_columns_cache = set(sample.data[0].keys())
+        else:
+            # Empty table — fall back to a known-safe baseline so we at least
+            # write something. The known columns will be re-derived next time
+            # there's data, or after migration.
+            _run_metrics_columns_cache = {
+                "run_at", "state", "county", "filings_received",
+                "duplicates_skipped", "address_skipped", "batchdata_calls",
+                "phones_found", "ghl_created", "bland_triggered",
+                "instantly_enrolled", "elapsed_seconds",
+            }
+    except Exception as exc:
+        log.warning("Could not discover run_metrics columns: %s", exc)
+        _run_metrics_columns_cache = set()
+    return _run_metrics_columns_cache
+
+
+def _reset_run_metrics_columns_cache_for_tests() -> None:
+    """Test-only helper to clear the column cache between tests."""
+    global _run_metrics_columns_cache
+    _run_metrics_columns_cache = None
+
+
 async def write_run_metrics(metrics: dict) -> None:
+    """Insert a run summary into run_metrics, dropping fields whose columns
+    don't exist yet. This makes schema drift non-fatal: new metric fields
+    can land in code before the migration runs, and the write still saves
+    whatever DOES match the schema instead of erroring out entirely.
+    """
+    known = _run_metrics_known_columns()
+
     def _insert() -> None:
-        _execute_with_retry(_client.table("run_metrics").insert(metrics), "write run metrics")
+        if known:
+            filtered = {k: v for k, v in metrics.items() if k in known}
+            dropped = sorted(set(metrics) - set(filtered))
+            if dropped:
+                log.warning(
+                    "write_run_metrics: dropped unknown columns %s — "
+                    "run schema migration to capture them",
+                    dropped,
+                )
+            payload = filtered
+        else:
+            # Couldn't introspect the schema; try the original payload and
+            # let Supabase reject if a column is missing.
+            payload = metrics
+        _execute_with_retry(
+            _client.table("run_metrics").insert(payload),
+            "write run metrics",
+        )
+
     await asyncio.to_thread(_insert)
 
 

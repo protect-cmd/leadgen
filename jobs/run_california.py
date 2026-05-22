@@ -34,7 +34,7 @@ async def main() -> None:
         try:
             filings = await scraper.scrape()
             log.info(f"{county}: {len(filings)} filings scraped")
-            await run(filings)
+            await run(filings, state="CA", county=county)
         except NotImplementedError as e:
             log.warning(f"{county} scraper not yet implemented: {e}")
         except Exception as e:

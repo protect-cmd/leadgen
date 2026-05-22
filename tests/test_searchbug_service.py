@@ -76,7 +76,9 @@ async def test_search_tenant_detailed_reports_account_error(monkeypatch):
     )
 
     assert result.status == "account_error"
-    assert result.retryable is True
+    # Account errors are non-retryable within the same process — credit must be
+    # restored externally and the container restarted to clear the circuit breaker.
+    assert result.retryable is False
     assert result.error_code == "12730510"
 
 
