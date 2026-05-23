@@ -522,6 +522,10 @@ def _filter_dashboard_query(query, view: str):
         return query.eq("lead_bucket", "held")
     if view in ("ec_discarded", "ng_discarded"):
         return query.eq("lead_bucket", "discarded")
+    if view == "ng_already_called":
+        return query.eq("lead_bucket", "residential_approved").or_(
+            "language_hint.is.null,language_hint.neq.spanish_likely"
+        )
     # Legacy fallback — residential approved, non-Spanish
     return query.eq("lead_bucket", "residential_approved").or_(
         "language_hint.is.null,language_hint.neq.spanish_likely"
@@ -530,6 +534,43 @@ def _filter_dashboard_query(query, view: str):
 
 def _track_for_dashboard_view(view: str) -> str:
     return "ng" if view.startswith("ng_") else "ec"
+
+
+# Bland statuses that indicate a tenant lead has already been worked. Such
+# leads are hidden from the main "Vantage Residential" view and surface in
+# the "Vantage Already Called" view instead.
+NG_WORKED_BLAND_STATUSES: frozenset[str] = frozenset({
+    "triggered",            # Bland successfully dialed
+    "wrong_brand_review",   # post-push QA flagged
+    "missing_contact_data", # enrichment returned nothing dialable
+    "blocked_dnc",          # DNC registry block
+})
+
+# Subset of worked statuses that surface in the "Already Called" tab.
+# missing_contact_data and blocked_dnc are excluded — those weren't called.
+NG_ALREADY_CALLED_BLAND_STATUSES: frozenset[str] = frozenset({
+    "triggered",
+    "wrong_brand_review",
+})
+
+
+def _is_ng_contact_actionable(contact: dict) -> bool:
+    """A tenant contact is actionable when it has a phone the operator can
+    dial AND it hasn't already been worked. Both DNC clear and DNC unknown
+    are considered actionable — the operator decides per-row using the DNC
+    badge.
+    """
+    if not contact.get("phone"):
+        return False
+    return contact.get("bland_status") not in NG_WORKED_BLAND_STATUSES
+
+
+def _is_ng_contact_already_called(contact: dict) -> bool:
+    """A tenant contact is 'already called' when Bland completed a dial or
+    post-push QA flagged it. Compliance holds (blocked_dnc) and never-dialed
+    rows (missing_contact_data) are excluded — they belong elsewhere.
+    """
+    return contact.get("bland_status") in NG_ALREADY_CALLED_BLAND_STATUSES
 
 
 def _target_metadata(track: str, view: str) -> dict:
@@ -587,6 +628,17 @@ def _get_ng_dashboard_leads(view: str, limit: int) -> list[dict]:
     )
     if not ng_contacts:
         return []
+
+    # View-specific actionable filtering. Other views (commercial / held /
+    # spanish_* / discarded) intentionally pass through unfiltered — they
+    # still want everything in the bucket regardless of phone/bland state.
+    if view == "ng_residential":
+        ng_contacts = [c for c in ng_contacts if _is_ng_contact_actionable(c)]
+    elif view == "ng_already_called":
+        ng_contacts = [c for c in ng_contacts if _is_ng_contact_already_called(c)]
+    if not ng_contacts:
+        return []
+
     ng_case_numbers = [row["case_number"] for row in ng_contacts]
     query = _client.table("filings").select(_DASHBOARD_SELECT)
     query = _filter_dashboard_query(query, view)
@@ -649,6 +701,14 @@ def _ec_counts_from_rows(rows: list[dict]) -> dict:
 
 
 def _ng_counts_from_contact_rows(rows: list[dict]) -> dict:
+    """Tally NG-track dashboard counts. Applies the actionable predicate to
+    residential_approved (so ng_residential matches the table), and adds
+    ng_already_called for Bland-triggered / wrong_brand_review leads.
+
+    Spanish, commercial, held, and discarded counts keep their original
+    semantics (no phone/bland filtering) — those views still surface
+    everything in their bucket.
+    """
     counts = {
         "ng_residential": 0,
         "ng_commercial": 0,
@@ -656,6 +716,7 @@ def _ng_counts_from_contact_rows(rows: list[dict]) -> dict:
         "ng_spanish_commercial": 0,
         "ng_held": 0,
         "ng_discarded": 0,
+        "ng_already_called": 0,
     }
     for row in rows:
         filing = row.get("filings") or {}
@@ -664,8 +725,10 @@ def _ng_counts_from_contact_rows(rows: list[dict]) -> dict:
         if bucket == "residential_approved":
             if spanish:
                 counts["ng_spanish_residential"] += 1
-            else:
+            elif _is_ng_contact_actionable(row):
                 counts["ng_residential"] += 1
+            if not spanish and _is_ng_contact_already_called(row):
+                counts["ng_already_called"] += 1
         elif bucket == "commercial":
             if spanish:
                 counts["ng_spanish_commercial"] += 1
@@ -701,7 +764,10 @@ async def get_dashboard_counts() -> dict:
         }
         ng_rows = (
             _client.table("lead_contacts")
-            .select("case_number,filings(lead_bucket,language_hint)")
+            .select(
+                "case_number,phone,bland_status,"
+                "filings(lead_bucket,language_hint)"
+            )
             .eq("track", "ng")
             .limit(10000)
             .execute()
