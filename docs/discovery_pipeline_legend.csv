@@ -1,0 +1,16 @@
+Column,Allowed values / rule
+Builder,Nourul / Franz / Donnald
+State,Two-letter state code (TX / OH / TN / AZ / CA / KS / IN)
+County / Source,County name + court level (e.g. Travis County JP Court)
+Source URL,Live link to the portal — builder fills as soon as they find it
+Stage,"Researching → Classified-pending-approval → Approved-to-build → Building → Submitted-for-review → Live (terminal: Rejected, Skipped, Upgrade-proposed)"
+Classification,Green / Yellow / Red / TBD (uses source_discovery_matrix.md definitions — Green requires tenant name + property/defendant address)
+Date-enumerable?,"Y / N / TBD — can you list filings by filing date with no party name, no CAPTCHA, no login?"
+Tenant name exposed?,Y / N / TBD
+Property/defendant address exposed?,Y / N / TBD — required for Green; Yellow if only tenant name
+Est. weekly filings,Number from live probe (count rows over 7-day lookback) — leave blank if unmeasured
+Evidence,Link to screenshot / probe script / sample CSV / Loom — anything lead can click to verify
+Blocker,Free text. Empty = no blocker. Update when stuck.
+Last updated,YYYY-MM-DD. **Builders touch this daily even if nothing changed.** Stale > 2 days = stuck signal.
+Lead notes,Lead-only column. Builders do not edit.
+PR link,GitHub pull request URL — filled when stage moves to Submitted-for-review
