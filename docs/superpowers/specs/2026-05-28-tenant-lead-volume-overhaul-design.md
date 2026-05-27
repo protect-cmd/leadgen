@@ -188,19 +188,37 @@ Each failed gate increments a run metric so telemetry shows where leads are drop
 
 **Address-regex regression budget**: before shipping, a one-time audit pass counts how many currently-approved historical rows would fail the stricter address regex. If >5% of approved rows would fail, the regex relaxes; otherwise it ships.
 
-#### 2.2 — DNC removal
+#### 2.2 — DNC removal (complete)
 
-DNC scrubbing is removed entirely. **This is a deliberate policy decision by the project owner.**
+DNC scrubbing is removed entirely — code, data, and schema. **This is a deliberate policy decision by the project owner.**
 
-> **Legal-exposure note**: removing DNC scrubbing increases TCPA / FTC exposure. Federal penalties are $500–$1,500 per violation (per outbound call or text to a listed number). State attorneys general have been active in eviction-defense and debt-relief space. This spec captures the removal as an explicit choice; the rationale (volume constraints, fail-closed behavior on `unknown`) is the owner's call.
+> **Legal-exposure note**: removing DNC scrubbing increases TCPA / FTC exposure. Federal penalties are $500–$1,500 per violation (per outbound call or text to a listed number). State attorneys general have been active in eviction-defense and debt-relief space. This spec captures the removal as an explicit policy choice.
 
-**Changes:**
-- Remove `dnc_service` import and all call sites in [pipeline/runner.py](pipeline/runner.py).
-- Remove `_apply_ftc_scrub()` and the `dnc_decision = dnc_service.can_call(contact)` gate.
-- Phone contacts no longer check DNC status before GHL push.
-- DNC columns in Supabase (`dnc_status`, `dnc_source`, `dnc_checked_at`, `ng_dnc_status`, etc.) stay (no migration); they're simply no longer written.
-- `bland_status` values `blocked_dnc` / `pending_dnc_review` are no longer emitted.
-- Keep the Pushover error infrastructure; remove only DNC-specific alerts.
+**Code deletions:**
+- Delete [services/dnc_service.py](services/dnc_service.py).
+- Delete [services/ftc_dnc_registry.py](services/ftc_dnc_registry.py).
+- Delete [scripts/build_dnc_sqlite.py](scripts/build_dnc_sqlite.py) and [scripts/check_dnc_download.py](scripts/check_dnc_download.py).
+- Delete the local `dnc.db` SQLite file and any references in `.gitignore` / Railway volume mounts.
+- Remove all `dnc_service` imports and call sites in [pipeline/runner.py](pipeline/runner.py): `_apply_ftc_scrub()`, `dnc_service.can_call()`, `dnc_service.normalize_status()`.
+- Remove DNC-status conditionals: `if not dnc_decision.allowed: …`, FTC-scrub upgrade logic, `bland_status` values `blocked_dnc` and `pending_dnc_review` are no longer set.
+- Remove DNC override paths from [dashboard/main.py](dashboard/main.py) (any endpoints, UI sections, or admin views).
+- Keep the Pushover infrastructure; remove only DNC-specific alerts.
+
+**Schema deletions (new migration `012_drop_dnc.sql`):**
+- `ALTER TABLE filings DROP COLUMN dnc_status, dnc_source, dnc_checked_at, ng_dnc_status, ng_dnc_source, ng_dnc_checked_at, dnc_override_source, dnc_override_notes, dnc_override_at;`
+- `ALTER TABLE lead_contacts DROP COLUMN dnc_status, dnc_source, dnc_checked_at;`
+- `DROP TABLE IF EXISTS dnc_override_audit;` (created by migration 008).
+- Migration is one-way; no down-migration. The owner accepts that prior DNC status history is discarded.
+
+**Models and contracts:**
+- Remove `dnc_status`, `dnc_source` fields from `EnrichedContact` and any pydantic/dataclass schemas.
+- Remove DNC-related fields from any JSON payloads to GHL, Bland, Instantly, or dashboard APIs.
+- Remove DNC tags from GHL routing (`DNC-Listed`, etc.).
+
+**Tests:**
+- Delete `tests/test_dnc_service.py`, `tests/test_ftc_dnc_registry.py`, `tests/test_dnc_override_audit.py`, and any DNC-only test modules.
+- Remove DNC assertions from `tests/test_runner.py`.
+- Add a regression test: a phone contact reaches GHL + Instantly + Bland regardless of any prior DNC signal (which no longer exists).
 
 #### 2.3 — Review-stage routing for ambiguous + name_mismatch
 
@@ -262,7 +280,7 @@ Per-phase projection of incremental NG GHL contacts per month, against the curre
 | Phase 1 (capture mode) | 0 | Captures data only; no enrichment |
 | Phase 1.5 (manual promote 3 TX ZIPs) | +20–30 contacts/mo | Hand-pick top discarded TX ZIPs (e.g., 77090 + 77042 + 77077). Volume scales with how many ZIPs are flipped on |
 | Phase 2.1 (9-gate) | 0 new; -$50–100/mo SearchBug spend | Efficiency. Frees cap headroom for promoted cohorts |
-| Phase 2.2 (DNC removal) | +3–8 contacts/mo | Recovers leads previously DNC-blocked or fail-closed on `unknown` |
+| Phase 2.2 (DNC removal) | +3–8 contacts/mo | Recovers leads previously held by DNC routing |
 | Phase 2.3 (review-stage) | +10–15 contacts/mo entering Review | Lane shift, not Auto-lane growth. Human-followed leads that previously dropped |
 | Phase 2.4 (Franklin backlog) | +5 contacts/mo (depends on OH yield) | Most rows land as `captured`; some land approved if ZIP-matched. Requires Phase 2.5 fix to convert |
 | Phase 2.5 (OH SearchBug fix) | +15–25 contacts/mo if fixable | Lifts OH from 0% phone-hit to ~20% (matching TN) |
@@ -287,7 +305,7 @@ Phase 3 brainstorm should start no later than Day 30.
 
 - **Capture mode is one flag.** `CAPTURE_EXPANDED_ZIPS=false` reverts to legacy ZIP-discard behavior immediately.
 - **9-gate retrofit is purely additive** in the rejection direction.
-- **DNC removal increases TCPA / FTC exposure.** See note in Phase 2.2. This is a deliberate policy choice; the spec captures it explicitly so future maintainers don't treat it as an oversight.
+- **DNC removal increases TCPA / FTC exposure.** See note in Phase 2.2. This is a deliberate policy choice; the spec captures it explicitly so future maintainers don't treat it as an oversight. The migration that drops the columns is one-way — there is no rollback path for DNC behavior short of reintroducing the feature.
 - **Phase 1.5 promote-by-ZIP** can over-enrich if the operator picks high-volume ZIPs without budget awareness. `--dry-run` mitigates; daily cap still applies as a backstop.
 - **Phase 0 name hygiene** is shared-helper extraction with regex broadening. Worst case: an over-aggressive trailer regex strips legitimate name suffix. Tests use real production strings to bound that risk.
 - **Franklin backlog script** is idempotent and dry-runnable.
@@ -307,9 +325,15 @@ Phase 3 brainstorm should start no later than Day 30.
 |---|---|
 | `services/name_utils.py` | New `clean_tenant_name`, compound-particle support in `parse_name`, new `infer_property_type` helper |
 | `services/searchbug_service.py` | `name_mismatch` response now extracts and returns the phone |
-| `services/dnc_service.py` | Deleted or its usage removed; module may stay for any landlord-track residual |
+| `services/dnc_service.py` | **Deleted** |
+| `services/ftc_dnc_registry.py` | **Deleted** |
+| `scripts/build_dnc_sqlite.py` | **Deleted** |
+| `scripts/check_dnc_download.py` | **Deleted** |
+| `dnc.db` (local SQLite) | **Deleted** |
+| `migrations/012_drop_dnc.sql` | **New** — drops DNC columns from `filings` and `lead_contacts`, drops `dnc_override_audit` table |
 | `pipeline/qualification.py` | `classify_lead(capture_expanded)` param, `captured` outcome, legacy comment on `APPROVED_ZIPS` |
-| `pipeline/runner.py` | Read `CAPTURE_EXPANDED_ZIPS`, capture-mode short-circuit, 9-gate retrofit, remove tenant-only `lookup_property_info` call, broadened `_BUSINESS_RE`, **DNC removal**, **review-stage routing** for `name_mismatch` / `ambiguous`, skip Instantly + Bland for Review lane |
+| `pipeline/runner.py` | Read `CAPTURE_EXPANDED_ZIPS`, capture-mode short-circuit, 9-gate retrofit, remove tenant-only `lookup_property_info` call, broadened `_BUSINESS_RE`, **remove all DNC code paths**, **review-stage routing** for `name_mismatch` / `ambiguous`, skip Instantly + Bland for Review lane |
+| `models/contact.py` | Remove `dnc_status`, `dnc_source` fields from `EnrichedContact` |
 | `pipeline/router.py` | (verified) no change |
 | `dashboard/main.py` | "Captured (expanded ZIPs)" read-only view |
 | `scrapers/texas/harris.py` | Call shared `clean_tenant_name` |
@@ -325,5 +349,8 @@ Phase 3 brainstorm should start no later than Day 30.
 | `tests/test_searchbug_service.py` | Updated for name_mismatch phone extraction |
 | `tests/test_reclassify_franklin_backlog.py` | New |
 | `tests/test_promote_captured_zips.py` | New |
-| `tests/test_dnc_service.py` | Deleted (or trimmed to landlord-only if anything survives) |
+| `tests/test_dnc_service.py` | **Deleted** |
+| `tests/test_ftc_dnc_registry.py` | **Deleted** |
+| `tests/test_dnc_override_audit.py` | **Deleted** |
+| `dashboard/main.py` DNC sections | **Deleted** (any DNC views, endpoints, override UI) |
 | Env / Railway | New: `CAPTURE_EXPANDED_ZIPS`, `ENRICHMENT_WINDOW_DAYS`, `GHL_NG_REVIEW_STAGE_ID` |
