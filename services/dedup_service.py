@@ -102,9 +102,6 @@ def _enrichment_payload(contact: EnrichedContact) -> dict:
         "secondary_address": contact.secondary_address,
         "estimated_rent": contact.estimated_rent,
         "property_type": contact.property_type,
-        "dnc_status": contact.dnc_status,
-        "dnc_source": contact.dnc_source,
-        "dnc_checked_at": datetime.now(timezone.utc).isoformat(),
         "language_hint": contact.language_hint,
     }
 
@@ -120,22 +117,9 @@ def _lead_contact_payload(contact: EnrichedContact) -> dict:
         "secondary_address": contact.secondary_address,
         "estimated_rent": contact.estimated_rent,
         "property_type": contact.property_type,
-        "dnc_status": contact.dnc_status,
-        "dnc_source": contact.dnc_source,
-        "dnc_checked_at": now,
         "language_hint": contact.language_hint,
         "enrichment_source": "batchdata",
         "updated_at": now,
-    }
-
-
-def _ng_legacy_enrichment_payload(contact: EnrichedContact) -> dict:
-    now = datetime.now(timezone.utc).isoformat()
-    return {
-        "ng_dnc_status": contact.dnc_status,
-        "ng_dnc_source": contact.dnc_source,
-        "ng_dnc_checked_at": now,
-        "language_hint": contact.language_hint,
     }
 
 
@@ -147,17 +131,23 @@ async def upsert_contact_enrichment(contact: EnrichedContact) -> None:
                 on_conflict="case_number,track",
             )
         )
+        # EC track mirrors enrichment fields onto the legacy filings columns.
+        # NG track now persists only via lead_contacts.
         if contact.track == "ec":
-            legacy_payload = _enrichment_payload(contact)
+            _execute_with_retry(
+                _client.table("filings").update(_enrichment_payload(contact)).eq(
+                    "case_number",
+                    contact.filing.case_number,
+                ),
+                "update enrichment",
+            )
         else:
-            legacy_payload = _ng_legacy_enrichment_payload(contact)
-        _execute_with_retry(
-            _client.table("filings").update(legacy_payload).eq(
-                "case_number",
-                contact.filing.case_number,
-            ),
-            "update enrichment",
-        )
+            _execute_with_retry(
+                _client.table("filings").update(
+                    {"language_hint": contact.language_hint}
+                ).eq("case_number", contact.filing.case_number),
+                "update enrichment",
+            )
     await asyncio.to_thread(_update)
 
 
@@ -187,51 +177,6 @@ async def update_language_hint(case_number: str, language_hint: str | None) -> N
                 "language_hint": language_hint,
             }).eq("case_number", case_number),
             "update language hint",
-        )
-    await asyncio.to_thread(_update)
-
-
-def _manual_dnc_payload(source: str, notes: str | None = None) -> dict:
-    now = datetime.now(timezone.utc).isoformat()
-    clean_source = (source or "manual_review").strip() or "manual_review"
-    return {
-        "dnc_status": "clear",
-        "dnc_source": f"manual_override:{clean_source}",
-        "dnc_checked_at": now,
-        "dnc_override_source": clean_source,
-        "dnc_override_notes": notes,
-        "dnc_override_at": now,
-    }
-
-
-async def clear_dnc_status(
-    case_number: str,
-    track: str = "ec",
-    source: str = "manual_review",
-    notes: str | None = None,
-) -> None:
-    payload = _manual_dnc_payload(source=source, notes=notes)
-    lead_payload = {
-        "dnc_status": "clear",
-        "dnc_source": payload["dnc_source"],
-        "dnc_checked_at": payload["dnc_checked_at"],
-        "updated_at": payload["dnc_checked_at"],
-    }
-    if track != "ec":
-        payload["ng_dnc_status"] = payload.pop("dnc_status")
-        payload["ng_dnc_source"] = payload.pop("dnc_source")
-        payload["ng_dnc_checked_at"] = payload.pop("dnc_checked_at")
-
-    def _update() -> None:
-        _execute_optional_lead_contact_write(
-            _client.table("lead_contacts").update(lead_payload).eq(
-                "case_number",
-                case_number,
-            ).eq("track", track)
-        )
-        _execute_with_retry(
-            _client.table("filings").update(payload).eq("case_number", case_number),
-            "clear dnc",
         )
     await asyncio.to_thread(_update)
 
@@ -294,7 +239,7 @@ async def get_lead_row(case_number: str, track: str = "ec") -> dict | None:
             _client.table("lead_contacts")
             .select(
                 "phone,email,property_type,estimated_rent,"
-                "dnc_status,dnc_source,language_hint,ghl_contact_id"
+                "language_hint,ghl_contact_id"
             )
             .eq("case_number", case_number)
             .eq("track", track)
@@ -417,7 +362,7 @@ async def set_bland_status(case_number: str, track: str, status: str, call_id: s
 _PENDING_FILING_SELECT = (
     "case_number,tenant_name,landlord_name,property_address,"
     "state,county,filing_date,court_date,phone,email,"
-    "property_type,dnc_status,dnc_source"
+    "property_type"
 )
 
 
@@ -436,16 +381,12 @@ def _overlay_contact_rows(
             row["email"] = contact_row.get("email")
             row["property_type"] = contact_row.get("property_type") or row.get("property_type")
             row["estimated_rent"] = contact_row.get("estimated_rent") or row.get("estimated_rent")
-            row["dnc_status"] = contact_row.get("dnc_status", "unknown")
-            row["dnc_source"] = contact_row.get("dnc_source")
             row["language_hint"] = contact_row.get("language_hint") or row.get("language_hint")
             row["bland_status"] = contact_row.get("bland_status")
             row["ghl_contact_id"] = contact_row.get("ghl_contact_id")
         elif clear_missing_contact:
             row["phone"] = None
             row["email"] = None
-            row["dnc_status"] = "unknown"
-            row["dnc_source"] = None
             row["bland_status"] = None
             row["ghl_contact_id"] = None
         merged.append(row)
@@ -457,7 +398,7 @@ def _get_pending_leads_from_contacts(track: str, limit: int) -> list[dict]:
         _client.table("lead_contacts")
         .select(
             "case_number,track,phone,email,property_type,estimated_rent,"
-            "dnc_status,dnc_source,language_hint,bland_status,ghl_contact_id"
+            "language_hint,bland_status,ghl_contact_id"
         )
         .eq("track", track)
         .eq("bland_status", "pending")
@@ -515,7 +456,7 @@ _DASHBOARD_SELECT = (
     "case_number,tenant_name,landlord_name,property_address,"
     "state,county,filing_date,court_date,scraped_at,phone,email,"
     "property_type,estimated_rent,property_zip,lead_bucket,"
-    "discard_reason,qualification_notes,dnc_status,dnc_source,language_hint,"
+    "discard_reason,qualification_notes,language_hint,"
     "bland_status,ghl_contact_id"
 )
 
@@ -560,11 +501,10 @@ NG_WORKED_BLAND_STATUSES: frozenset[str] = frozenset({
     "triggered",            # Bland successfully dialed
     "wrong_brand_review",   # post-push QA flagged
     "missing_contact_data", # enrichment returned nothing dialable
-    "blocked_dnc",          # DNC registry block
 })
 
 # Subset of worked statuses that surface in the "Already Called" tab.
-# missing_contact_data and blocked_dnc are excluded — those weren't called.
+# missing_contact_data is excluded — those weren't called.
 NG_ALREADY_CALLED_BLAND_STATUSES: frozenset[str] = frozenset({
     "triggered",
     "wrong_brand_review",
@@ -573,9 +513,7 @@ NG_ALREADY_CALLED_BLAND_STATUSES: frozenset[str] = frozenset({
 
 def _is_ng_contact_actionable(contact: dict) -> bool:
     """A tenant contact is actionable when it has a phone the operator can
-    dial AND it hasn't already been worked. Both DNC clear and DNC unknown
-    are considered actionable — the operator decides per-row using the DNC
-    badge.
+    dial AND it hasn't already been worked.
     """
     if not contact.get("phone"):
         return False
@@ -622,7 +560,7 @@ def _overlay_dashboard_contact_data(rows: list[dict], track: str) -> list[dict]:
         _client.table("lead_contacts")
         .select(
             "case_number,track,phone,email,property_type,estimated_rent,"
-            "dnc_status,dnc_source,language_hint,bland_status,ghl_contact_id"
+            "language_hint,bland_status,ghl_contact_id"
         )
         .eq("track", track)
         .in_("case_number", case_numbers)
@@ -637,7 +575,7 @@ def _get_ng_dashboard_leads(view: str, limit: int) -> list[dict]:
         _client.table("lead_contacts")
         .select(
             "case_number,track,phone,email,property_type,estimated_rent,"
-            "dnc_status,dnc_source,language_hint,bland_status,ghl_contact_id"
+            "language_hint,bland_status,ghl_contact_id"
         )
         .eq("track", "ng")
         .execute()
