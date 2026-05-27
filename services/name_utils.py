@@ -40,6 +40,28 @@ def clean_tenant_name(raw: str) -> str:
     return cleaned
 
 
+_BUSINESS_RE = re.compile(
+    r"\b(LLC|INC|CORP|LTD|LP|LLP|PLLC|PROPERTIES|PROPERTY|MANAGEMENT|MGMT|"
+    r"REALTY|INVESTMENTS|HOLDINGS|TRUST|PARTNERS|GROUP|ENTERPRISES|VENTURES|"
+    r"ESTATE\s+OF|DBA|C/O|S\.A\.|BANK)\b",
+    re.IGNORECASE,
+)
+
+_COMMERCIAL_NOTICE_RE = re.compile(r"\b(commercial|retail|office)\b", re.IGNORECASE)
+
+
+def infer_property_type(filing) -> str:
+    """Return 'commercial' or 'residential' from notice_type + tenant_name signals.
+
+    Replaces the per-filing BatchData lookup_property_info call for tenant-only mode.
+    """
+    if _COMMERCIAL_NOTICE_RE.search(filing.notice_type or ""):
+        return "commercial"
+    if _BUSINESS_RE.search(filing.tenant_name or ""):
+        return "commercial"
+    return "residential"
+
+
 def _is_middle_initial(token: str) -> bool:
     """Single letter or single letter followed by a period."""
     t = token.rstrip(".")
