@@ -12,8 +12,8 @@ class EnrichedContact:
     secondary_address: str | None = None
     estimated_rent: float | None = None
     property_type: str | None = None  # "residential" | "commercial"
-    dnc_status: str = "unknown"       # "clear" | "blocked" | "unknown"
-    dnc_source: str | None = None
+    # NOTE: dnc_status / dnc_source removed per 2026-05-28 spec — no longer
+    # checked or persisted. Deliberate policy choice; see design doc.
     language_hint: str | None = None  # "spanish_likely" language-routing hint
 
     @property

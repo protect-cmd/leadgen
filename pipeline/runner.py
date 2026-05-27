@@ -15,7 +15,6 @@ from services import (
     batchdata_service,
     bland_service,
     dedup_service,
-    dnc_service,
     geocode_service,
     ghl_service,
     instantly_service,
@@ -50,7 +49,6 @@ class TrackResult:
     instantly_enrolled: bool = False
     instantly_error: str | None = None
     track: str = ""
-    ftc_upgraded: bool = False
 
 
 def _is_business_name(name: str) -> bool:
@@ -69,28 +67,6 @@ def _language_tags(contact: EnrichedContact) -> list[str]:
 
 def _has_contact_method(contact: EnrichedContact) -> bool:
     return bool(contact.phone or contact.email)
-
-
-async def _apply_ftc_scrub(contact: EnrichedContact) -> bool:
-    """Upgrade unknown DNC status by consulting the FTC registry.
-
-    Mutates the contact in place and persists the change so the dashboard and
-    downstream consumers see the upgraded status. Returns True if a status
-    upgrade happened (clear or blocked), False otherwise.
-    """
-    if dnc_service.normalize_status(contact.dnc_status) != "unknown":
-        return False
-    result = dnc_service.scrub_phone(contact.phone)
-    if result is None or result.status == "unknown":
-        return False
-    contact.dnc_status = result.status
-    contact.dnc_source = "ftc_registry"
-    await dedup_service.update_enrichment(contact)
-    log.info(
-        f"{contact.filing.case_number} [{contact.track.upper()}] "
-        f"FTC scrub upgraded DNC status to {result.status}"
-    )
-    return True
 
 
 async def _process_track(contact: EnrichedContact) -> TrackResult:
@@ -156,24 +132,7 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
         tags = [outcome.tag]
     tags.extend(_language_tags(contact))
 
-    # DNC gate — block GHL and Instantly for phone contacts that aren't clear.
-    # Email-only contacts (no phone) bypass this gate and still reach both platforms.
-    ftc_upgraded = False
-    if contact.phone:
-        ftc_upgraded = await _apply_ftc_scrub(contact)
-        dnc_decision = dnc_service.can_call(contact)
-        if not dnc_decision.allowed:
-            await dedup_service.set_bland_status(
-                filing.case_number,
-                contact.track,
-                "blocked_dnc" if dnc_decision.status == "blocked" else "pending_dnc_review",
-            )
-            log.info(
-                f"{filing.case_number} [{contact.track.upper()}] DNC blocked — "
-                f"skipping GHL and Instantly: {dnc_decision.reason}"
-            )
-            return TrackResult(False, track=contact.track, ftc_upgraded=ftc_upgraded)
-
+    # DNC removed per 2026-05-28 spec — phone contacts proceed unconditionally.
     try:
         ghl_id = await ghl_service.create_contact(contact, tags, stage_id)
         await dedup_service.update_ghl_id(filing.case_number, ghl_id, contact.track)
@@ -185,12 +144,11 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
             stage=f"ghl_create_{contact.track}",
             error=e,
         )
-        return TrackResult(False, track=contact.track, ftc_upgraded=ftc_upgraded)
+        return TrackResult(False, track=contact.track)
 
     instantly_result = await instantly_service.enroll(contact)
 
     if contact.phone:
-        # DNC already confirmed clear above — proceed straight to Bland logic.
         if _AUTO_BLAND_CALLS_ENABLED:
             try:
                 call_id = await bland_service.trigger_voicemail(contact)
@@ -221,7 +179,6 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
         instantly_enrolled=instantly_result.enrolled,
         instantly_error=instantly_result.error,
         track=contact.track,
-        ftc_upgraded=ftc_upgraded,
     )
 
 
@@ -321,7 +278,6 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         gate_existing_phone=0,
         gate_duplicate_in_run=0,
         batchdata_calls=0,
-        ftc_scrubs_upgraded=0,
         ng_phones_pushed=0,
         phones_found=0,
         ghl_created=0,
@@ -503,8 +459,6 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
                 m["ghl_created"] += 1
                 if result.track == "ng":
                     m["ng_phones_pushed"] += 1
-            if result.ftc_upgraded:
-                m["ftc_scrubs_upgraded"] += 1
             if result.instantly_error:
                 m.setdefault("instantly_failures", []).append(result.instantly_error)
             if result.instantly_enrolled:
@@ -533,7 +487,7 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         f"received={m['filings_received']} dupes={m['duplicates_skipped']} "
         f"discarded={m['address_skipped']} batchdata={m['batchdata_calls']} "
         f"phones={m['phones_found']} ghl={m['ghl_created']} "
-        f"ng_pushed={m['ng_phones_pushed']} ftc_upgrades={m['ftc_scrubs_upgraded']} "
+        f"ng_pushed={m['ng_phones_pushed']} "
         f"searchbug_calls={m.get('searchbug_calls', 0)}"
     )
     try:
@@ -568,41 +522,3 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         log.warning(f"Failed to send run summary notification: {e}")
 
 
-async def push_cleared_contact(contact: EnrichedContact) -> str | None:
-    """Push a DNC-cleared contact to GHL and Instantly.
-
-    Called by the dashboard when a previously unknown/blocked contact is manually
-    cleared. Runs the same routing and tag logic as _process_track but skips the
-    DNC check (caller is responsible for confirming clearance) and skips Bland
-    (dashboard triggers that separately via the approve endpoint).
-
-    Returns the GHL contact ID, or None if routing skips the contact.
-    """
-    is_ec = contact.track == "ec"
-    outcome = router.route_ec(contact) if is_ec else router.route_ng(contact)
-    if outcome.action == "skip":
-        log.info(
-            f"{contact.filing.case_number} [{contact.track.upper()}] "
-            "skipped by router — not pushed to GHL"
-        )
-        return None
-
-    if outcome.pipeline == "commercial":
-        stage_id = GHL_EC_STAGE_ID if is_ec else GHL_NG_COMMERCIAL_STAGE_ID
-        tags = [outcome.tag, "High-Priority"]
-    elif is_ec:
-        stage_id = GHL_EC_STAGE_ID
-        tags = [outcome.tag]
-    else:
-        stage_id = GHL_NG_RESIDENTIAL_STAGE_ID
-        tags = [outcome.tag]
-    tags.extend(_language_tags(contact))
-
-    ghl_id = await ghl_service.create_contact(contact, tags, stage_id)
-    await dedup_service.update_ghl_id(contact.filing.case_number, ghl_id, contact.track)
-    await instantly_service.enroll(contact)
-    log.info(
-        f"{contact.filing.case_number} [{contact.track.upper()}] "
-        f"pushed to GHL ({ghl_id}) and Instantly after DNC clear"
-    )
-    return ghl_id
