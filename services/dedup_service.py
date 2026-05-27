@@ -50,6 +50,21 @@ def _execute_optional_lead_contact_write(query) -> None:
         return
 
 
+async def has_ng_phone(case_number: str) -> bool:
+    """True if a tenant-side (track='ng') phone already exists in lead_contacts."""
+    def _query() -> bool:
+        result = _execute_with_retry(
+            _client.table("lead_contacts")
+            .select("case_number")
+            .eq("case_number", case_number)
+            .eq("track", "ng")
+            .not_.is_("phone", "null"),
+            "ng phone existence",
+        )
+        return len(result.data) > 0
+    return await asyncio.to_thread(_query)
+
+
 async def is_duplicate(case_number: str) -> bool:
     def _query() -> bool:
         result = _execute_with_retry(

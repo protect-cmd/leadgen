@@ -318,6 +318,7 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         gate_overdue=0,
         gate_invalid_address=0,
         gate_bad_name=0,
+        gate_existing_phone=0,
         gate_duplicate_in_run=0,
         batchdata_calls=0,
         ftc_scrubs_upgraded=0,
@@ -392,6 +393,11 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         if not _gates.gate_name(filing.tenant_name):
             log.info(f"{filing.case_number} skipped: bad tenant name")
             m["gate_bad_name"] += 1
+            continue
+
+        if await dedup_service.has_ng_phone(filing.case_number):
+            log.info(f"{filing.case_number} skipped: tenant phone already in lead_contacts")
+            m["gate_existing_phone"] = m.get("gate_existing_phone", 0) + 1
             continue
 
         _first, _last = _parse_name(filing.tenant_name)

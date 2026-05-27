@@ -138,6 +138,7 @@ async def test_runner_skips_overdue_filing():
          patch("services.dedup_service.insert_filing", new=AsyncMock()), \
          patch("services.dedup_service.update_classification", new=AsyncMock()), \
          patch("services.dedup_service.update_enrichment", new=AsyncMock()), \
+         patch("services.dedup_service.has_ng_phone", new=AsyncMock(return_value=False)), \
          patch("services.geocode_service.normalize_address", new=AsyncMock(return_value=None)), \
          patch("services.notification_service.send_run_summary", new=AsyncMock()), \
          patch("services.dedup_service.write_run_metrics", new=AsyncMock()):
@@ -157,6 +158,27 @@ async def test_runner_skips_bad_name():
          patch("services.dedup_service.insert_filing", new=AsyncMock()), \
          patch("services.dedup_service.update_classification", new=AsyncMock()), \
          patch("services.dedup_service.update_enrichment", new=AsyncMock()), \
+         patch("services.dedup_service.has_ng_phone", new=AsyncMock(return_value=False)), \
+         patch("services.geocode_service.normalize_address", new=AsyncMock(return_value=None)), \
+         patch("services.notification_service.send_run_summary", new=AsyncMock()), \
+         patch("services.dedup_service.write_run_metrics", new=AsyncMock()):
+
+        await runner.run([filing], state="TX", county="Harris")
+
+    mock_tenant.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_runner_skips_when_ng_phone_already_in_lead_contacts():
+    filing = _filing()
+
+    mock_tenant = AsyncMock(return_value=_ng_return(filing))
+    with patch("services.batchdata_service.enrich_tenant", new=mock_tenant), \
+         patch("services.dedup_service.is_duplicate", new=AsyncMock(return_value=False)), \
+         patch("services.dedup_service.insert_filing", new=AsyncMock()), \
+         patch("services.dedup_service.update_classification", new=AsyncMock()), \
+         patch("services.dedup_service.update_enrichment", new=AsyncMock()), \
+         patch("services.dedup_service.has_ng_phone", new=AsyncMock(return_value=True)), \
          patch("services.geocode_service.normalize_address", new=AsyncMock(return_value=None)), \
          patch("services.notification_service.send_run_summary", new=AsyncMock()), \
          patch("services.dedup_service.write_run_metrics", new=AsyncMock()):
@@ -182,6 +204,7 @@ async def test_runner_skips_duplicate_query_in_run():
          patch("services.dedup_service.insert_filing", new=AsyncMock()), \
          patch("services.dedup_service.update_classification", new=AsyncMock()), \
          patch("services.dedup_service.update_enrichment", new=AsyncMock()), \
+         patch("services.dedup_service.has_ng_phone", new=AsyncMock(return_value=False)), \
          patch("services.geocode_service.normalize_address", new=AsyncMock(return_value=None)), \
          patch("services.notification_service.send_run_summary", new=AsyncMock()), \
          patch("services.dedup_service.write_run_metrics", new=AsyncMock()):
