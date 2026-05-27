@@ -42,6 +42,7 @@ class _Response:
 class _Client:
     def __init__(self, payload):
         self.payload = payload
+        self.calls = []
 
     async def __aenter__(self):
         return self
@@ -50,6 +51,7 @@ class _Client:
         return None
 
     async def post(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
         return _Response(self.payload)
 
 
@@ -103,3 +105,51 @@ async def test_search_tenant_detailed_reports_ambiguous(monkeypatch):
 
     assert result.status == "ambiguous"
     assert result.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_search_tenant_detailed_sends_street_address_without_unit(monkeypatch):
+    client = _Client({"rows": 0})
+    monkeypatch.setenv("SEARCHBUG_CO_CODE", "co")
+    monkeypatch.setenv("SEARCHBUG_API_KEY", "key")
+    monkeypatch.setattr(
+        searchbug_service.httpx,
+        "AsyncClient",
+        lambda **kwargs: client,
+    )
+
+    await searchbug_service.search_tenant_detailed(
+        "Alajanae",
+        "Byrd",
+        "Nashville",
+        "TN",
+        "37209",
+        address="6680 Charlotte Pike, UNIT H2, Nashville, TN 37209",
+    )
+
+    payload = client.calls[0][1]["data"]
+    assert payload["ADDRESS"] == "6680 Charlotte Pike"
+
+
+@pytest.mark.asyncio
+async def test_search_tenant_detailed_strips_abbreviated_apartment(monkeypatch):
+    client = _Client({"rows": 0})
+    monkeypatch.setenv("SEARCHBUG_CO_CODE", "co")
+    monkeypatch.setenv("SEARCHBUG_API_KEY", "key")
+    monkeypatch.setattr(
+        searchbug_service.httpx,
+        "AsyncClient",
+        lambda **kwargs: client,
+    )
+
+    await searchbug_service.search_tenant_detailed(
+        "Jane",
+        "Tenant",
+        "Houston",
+        "TX",
+        "77006",
+        address="306 McGowen St. Apt. 1405, Houston, TX 77006",
+    )
+
+    payload = client.calls[0][1]["data"]
+    assert payload["ADDRESS"] == "306 McGowen St."

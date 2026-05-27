@@ -17,7 +17,7 @@ def _filing(**kwargs) -> Filing:
         "tenant_name": "Brett Lilly",
         "property_address": "Cincinnati, OH",
         "landlord_name": "Apex LLC",
-        "filing_date": date(2026, 5, 15),
+        "filing_date": date.today(),
         "state": "OH",
         "county": "Hamilton",
         "notice_type": "Eviction",
@@ -58,7 +58,10 @@ async def test_common_surname_skips_searchbug(mock_cache):
 async def test_cache_hit_skips_searchbug(mock_cache):
     """Cached phone hit → SearchBug never called."""
     filing = _filing(tenant_name="BRETT LILLY")
-    mock_cache.set("brett", "lilly", "cincinnati", "oh", "5551234567", None)
+    mock_cache.set(
+        "brett", "lilly", "cincinnati", "oh", "5551234567", None,
+        postal="45202",
+    )
 
     with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
          patch("services.searchbug_service.search_tenant", new_callable=AsyncMock) as mock_sb:
@@ -66,8 +69,6 @@ async def test_cache_hit_skips_searchbug(mock_cache):
 
     mock_sb.assert_not_called()
     assert result.phone == "5551234567"
-    assert result.dnc_source == "searchbug"
-
 
 @pytest.mark.asyncio
 async def test_cache_miss_calls_searchbug_and_stores(mock_cache):
@@ -82,7 +83,7 @@ async def test_cache_miss_calls_searchbug_and_stores(mock_cache):
     mock_sb.assert_called_once()
     assert result.phone == "5559876543"
     # Verify stored in cache
-    cached = mock_cache.get("brett", "lilly", "cincinnati", "oh")
+    cached = mock_cache.get("brett", "lilly", "cincinnati", "oh", postal="45202")
     assert cached == ("5559876543", None)
 
 
@@ -157,10 +158,10 @@ async def test_cache_hit_address_only_and_second_call_enabled_calls_batchdata(mo
     monkeypatch.setenv("YELLOW_SECOND_CALL_ENABLED", "true")
     filing = _filing(tenant_name="BRETT LILLY")
     resolved = "456 Oak Ave, Cincinnati, OH 45202"
-    mock_cache.set("brett", "lilly", "cincinnati", "oh", None, resolved)
+    mock_cache.set("brett", "lilly", "cincinnati", "oh", None, resolved, postal="45202")
 
     mock_enriched = EnrichedContact(
-        filing=filing, track="ng", phone="5559998888", dnc_status="clear", dnc_source="batchdata"
+        filing=filing, track="ng", phone="5559998888"
     )
 
     with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
@@ -192,8 +193,6 @@ async def test_searchbug_phone_and_address_stores_both_no_second_call(mock_cache
     mock_enrich.assert_not_called()
     assert result.phone == "5131112222"
     assert result.secondary_address == resolved
-    assert result.dnc_source == "searchbug"
-
 
 @pytest.mark.asyncio
 async def test_searchbug_address_only_no_second_call_by_default(mock_cache):
@@ -210,8 +209,6 @@ async def test_searchbug_address_only_no_second_call_by_default(mock_cache):
     mock_enrich.assert_not_called()
     assert result.phone is None
     assert result.secondary_address == resolved
-    assert result.dnc_source == "searchbug"
-
 
 @pytest.mark.asyncio
 async def test_searchbug_address_only_triggers_second_call_when_enabled(mock_cache, monkeypatch):
@@ -220,7 +217,7 @@ async def test_searchbug_address_only_triggers_second_call_when_enabled(mock_cac
     filing = _filing(tenant_name="BRETT LILLY")
     resolved = "123 Elm St, Cincinnati, OH 45202"
     mock_enriched = EnrichedContact(
-        filing=filing, track="ng", phone="5550001111", dnc_status="clear", dnc_source="batchdata"
+        filing=filing, track="ng", phone="5550001111"
     )
 
     with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
@@ -241,7 +238,10 @@ async def test_cache_hit_phone_and_address_no_second_call(mock_cache):
     """Cache hit with phone+address → return both; do NOT call enrich_tenant."""
     filing = _filing(tenant_name="BRETT LILLY")
     resolved = "456 Oak Ave, Cincinnati, OH 45202"
-    mock_cache.set("brett", "lilly", "cincinnati", "oh", "5550001111", resolved)
+    mock_cache.set(
+        "brett", "lilly", "cincinnati", "oh", "5550001111", resolved,
+        postal="45202",
+    )
 
     with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
          patch("services.searchbug_service.search_tenant", new_callable=AsyncMock) as mock_sb, \
@@ -252,15 +252,13 @@ async def test_cache_hit_phone_and_address_no_second_call(mock_cache):
     mock_enrich.assert_not_called()
     assert result.phone == "5550001111"
     assert result.secondary_address == resolved
-    assert result.dnc_source == "searchbug"
-
 
 @pytest.mark.asyncio
 async def test_cache_hit_address_only_no_second_call_by_default(mock_cache):
     """Cache hit with address but no phone → no second paid call when YELLOW_SECOND_CALL_ENABLED=false."""
     filing = _filing(tenant_name="BRETT LILLY")
     resolved = "456 Oak Ave, Cincinnati, OH 45202"
-    mock_cache.set("brett", "lilly", "cincinnati", "oh", None, resolved)
+    mock_cache.set("brett", "lilly", "cincinnati", "oh", None, resolved, postal="45202")
 
     with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
          patch("services.batchdata_service.enrich_tenant", new_callable=AsyncMock) as mock_enrich:
@@ -269,8 +267,6 @@ async def test_cache_hit_address_only_no_second_call_by_default(mock_cache):
     mock_enrich.assert_not_called()
     assert result.phone is None
     assert result.secondary_address == resolved
-    assert result.dnc_source == "searchbug"
-
 
 @pytest.mark.asyncio
 async def test_cache_hit_address_only_triggers_second_call_when_enabled(mock_cache, monkeypatch):
@@ -278,9 +274,9 @@ async def test_cache_hit_address_only_triggers_second_call_when_enabled(mock_cac
     monkeypatch.setenv("YELLOW_SECOND_CALL_ENABLED", "true")
     filing = _filing(tenant_name="BRETT LILLY")
     resolved = "456 Oak Ave, Cincinnati, OH 45202"
-    mock_cache.set("brett", "lilly", "cincinnati", "oh", None, resolved)
+    mock_cache.set("brett", "lilly", "cincinnati", "oh", None, resolved, postal="45202")
     mock_enriched = EnrichedContact(
-        filing=filing, track="ng", phone="5559998888", dnc_status="clear", dnc_source="batchdata"
+        filing=filing, track="ng", phone="5559998888"
     )
 
     with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \

@@ -15,7 +15,7 @@ def _filing(**kwargs) -> Filing:
         "tenant_name": "Jane Tenant",
         "property_address": "123 Main St, Houston, TX 77002",
         "landlord_name": "Grant Owner",
-        "filing_date": date(2026, 5, 6),
+        "filing_date": date.today(),
         "state": "TX",
         "county": "Harris",
         "notice_type": "Eviction",
@@ -27,7 +27,7 @@ def _filing(**kwargs) -> Filing:
     return Filing(**values)
 
 
-def _contact(filing: Filing, *, track: str = "ec", dnc_status: str = "clear") -> EnrichedContact:
+def _contact(filing: Filing, *, track: str = "ec") -> EnrichedContact:
     return EnrichedContact(
         filing=filing,
         track=track,
@@ -35,8 +35,6 @@ def _contact(filing: Filing, *, track: str = "ec", dnc_status: str = "clear") ->
         email=f"{track}@example.test",
         estimated_rent=2000,
         property_type="residential",
-        dnc_status=dnc_status,
-        dnc_source="test",
     )
 
 
@@ -54,7 +52,7 @@ async def test_pipeline_happy_path_ec_queues_bland_without_auto_call(monkeypatch
         return "ghl-ec"
 
     async def update_enrichment(contact: EnrichedContact):
-        calls.append(("enrichment_saved", contact.track, contact.dnc_status))
+        calls.append(("enrichment_saved", contact.track))
 
     async def set_bland_status(case_number: str, track: str, status: str, call_id: str | None = None):
         calls.append(("bland_status", case_number, track, status, call_id))
@@ -78,47 +76,13 @@ async def test_pipeline_happy_path_ec_queues_bland_without_auto_call(monkeypatch
 
     assert ("insert", "TEST-E2E-001") in calls
     assert ("enrich", "TEST-E2E-001", False) in calls
-    assert ("enrichment_saved", "ec", "clear") in calls
+    assert ("enrichment_saved", "ec") in calls
     assert ("ghl", "ec", ["EC-New-Filing"], "stage-ec") in calls
     assert ("ghl_id", "TEST-E2E-001", "ec", "ghl-ec") in calls
     assert ("bland_status", "TEST-E2E-001", "ec", "pending", None) in calls
 
 
 @pytest.mark.asyncio
-async def test_pipeline_dnc_blocked_never_triggers_bland(monkeypatch):
-    filing = _filing()
-    calls: list[tuple] = []
-
-    async def enrich(filing: Filing, **kwargs):
-        return _contact(filing, dnc_status="blocked")
-
-    async def create_contact(contact: EnrichedContact, tags: list[str], pipeline_stage_id: str):
-        calls.append(("ghl", contact.track))
-        return "ghl-ec"
-
-    async def set_bland_status(case_number: str, track: str, status: str, call_id: str | None = None):
-        calls.append(("bland_status", track, status, call_id))
-
-    async def trigger_voicemail(contact: EnrichedContact):
-        raise AssertionError("DNC-blocked contacts must never trigger Bland")
-
-    monkeypatch.setenv("INSTANTLY_ENABLED", "false")
-    monkeypatch.setenv("TENANT_TRACK_ENABLED", "false")
-    monkeypatch.setenv("LANDLORD_TRACK_ENABLED", "true")
-    monkeypatch.setattr(runner, "_AUTO_BLAND_CALLS_ENABLED", True)
-    monkeypatch.setattr(runner, "GHL_EC_STAGE_ID", "stage-ec")
-    _mock_common_runner_services(monkeypatch, calls)
-    monkeypatch.setattr(runner.batchdata_service, "enrich", enrich)
-    monkeypatch.setattr(runner.ghl_service, "create_contact", create_contact)
-    monkeypatch.setattr(runner.dedup_service, "set_bland_status", set_bland_status)
-    monkeypatch.setattr(runner.bland_service, "trigger_voicemail", trigger_voicemail)
-
-    await runner.run([filing], state="TX", county="Harris")
-
-    assert ("ghl", "ec") not in calls
-    assert ("bland_status", "ec", "blocked_dnc", None) in calls
-
-
 @pytest.mark.asyncio
 async def test_pipeline_ec_and_ng_tracks_are_processed_separately(monkeypatch):
     filing = _filing(case_number="TEST-E2E-002")
@@ -169,6 +133,9 @@ def _mock_common_runner_services(monkeypatch, calls: list[tuple]) -> None:
     async def is_duplicate(case_number: str) -> bool:
         return False
 
+    async def has_ng_phone(case_number: str) -> bool:
+        return False
+
     async def insert_filing(filing: Filing) -> None:
         calls.append(("insert", filing.case_number))
 
@@ -176,7 +143,7 @@ def _mock_common_runner_services(monkeypatch, calls: list[tuple]) -> None:
         calls.append(("classification", case_number, outcome.lead_bucket))
 
     async def update_enrichment(contact: EnrichedContact) -> None:
-        calls.append(("enrichment_saved", contact.track, contact.dnc_status))
+        calls.append(("enrichment_saved", contact.track))
 
     async def update_ghl_id(case_number: str, ghl_contact_id: str, track: str = "ec") -> None:
         calls.append(("ghl_id", case_number, track, ghl_contact_id))
@@ -199,6 +166,7 @@ def _mock_common_runner_services(monkeypatch, calls: list[tuple]) -> None:
 
     monkeypatch.setattr(runner.rent_estimate_service, "is_enabled", lambda: False)
     monkeypatch.setattr(runner.dedup_service, "is_duplicate", is_duplicate)
+    monkeypatch.setattr(runner.dedup_service, "has_ng_phone", has_ng_phone)
     monkeypatch.setattr(runner.dedup_service, "insert_filing", insert_filing)
     monkeypatch.setattr(runner.dedup_service, "update_classification", update_classification)
     monkeypatch.setattr(runner.dedup_service, "update_enrichment", update_enrichment)

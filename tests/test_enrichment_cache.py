@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import time
 import pytest
 from services.enrichment_cache import EnrichmentCache
@@ -51,6 +52,49 @@ class TestCacheGetSet:
         cache.set("john", "doe", "cincinnati", "oh", "5559998888", "456 Oak Ave")
         result = cache.get("john", "doe", "cincinnati", "oh")
         assert result == ("5559998888", "456 Oak Ave")
+
+    def test_address_qualified_queries_are_isolated(self, cache):
+        cache.set(
+            "john", "doe", "cincinnati", "oh", "5551234567", None,
+            postal="45202", query_address="123 Main St",
+        )
+
+        assert cache.get(
+            "john", "doe", "cincinnati", "oh",
+            postal="45202", query_address="456 Oak Ave",
+        ) is None
+        assert cache.get(
+            "john", "doe", "cincinnati", "oh",
+            postal="45202", query_address="123 Main St",
+        ) == ("5551234567", None)
+
+    def test_legacy_cache_rows_remain_unqualified_after_schema_upgrade(self, tmp_path):
+        db_path = tmp_path / "legacy.db"
+        with sqlite3.connect(db_path) as con:
+            con.execute("""
+                CREATE TABLE searchbug_cache (
+                    first_name TEXT NOT NULL,
+                    last_name TEXT NOT NULL,
+                    city TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    phone TEXT,
+                    address TEXT,
+                    cached_at REAL NOT NULL,
+                    PRIMARY KEY (first_name, last_name, city, state)
+                )
+            """)
+            con.execute(
+                "INSERT INTO searchbug_cache VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("john", "doe", "cincinnati", "oh", "5551234567", None, time.time()),
+            )
+
+        upgraded = EnrichmentCache(db_path=str(db_path))
+
+        assert upgraded.get("john", "doe", "cincinnati", "oh") == ("5551234567", None)
+        assert upgraded.get(
+            "john", "doe", "cincinnati", "oh",
+            postal="45202", query_address="123 Main St",
+        ) is None
 
 
 class TestDailyCap:

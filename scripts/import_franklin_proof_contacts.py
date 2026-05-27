@@ -42,8 +42,6 @@ def proof_rows_to_contacts(
         phone = (row.get("phone") or "").strip()
         if not phone or not _truthy(row.get("callable")):
             continue
-        if (row.get("dnc_status") or "").strip().lower() != "clear":
-            continue
         contacts.append(
             EnrichedContact(
                 filing=filing,
@@ -51,8 +49,6 @@ def proof_rows_to_contacts(
                 phone=phone,
                 email=(row.get("email") or "").strip() or None,
                 property_type="residential",
-                dnc_status="clear",
-                dnc_source=(row.get("dnc_source") or "batchdata").strip() or "batchdata",
             )
         )
     return contacts

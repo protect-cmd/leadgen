@@ -16,12 +16,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from services import bland_service, daily_scheduler, dnc_service, notification_service
+from services import bland_service, daily_scheduler, notification_service
 from services.dedup_service import (
-    clear_dnc_status,
     get_dashboard_counts,
     get_dashboard_leads,
-    get_lead_row,
     get_pending_leads,
     get_recent_metrics,
     set_bland_status,
@@ -37,32 +35,9 @@ _BLAND_TEST_RECIPIENTS = {
 }
 
 
-async def _preload_dnc_registry() -> None:
-    """Eagerly load the FTC DNC registry at startup. Alert if it fails so
-    operators learn about volume-detach / missing-file incidents before the
-    first scheduled run rather than from a silent unknown-DNC pileup.
-    """
-    db_path = os.getenv("FTC_DNC_DB_PATH", "").strip()
-    if not db_path:
-        return
-    registry = dnc_service._load_registry()
-    if registry is None:
-        await notification_service.send_alert(
-            "FTC DNC registry failed to load",
-            (
-                f"FTC_DNC_DB_PATH={db_path} but the registry did not load. "
-                "Phones from licensed area codes will fall through to "
-                "compliance-hold. Check Railway volume mount and dnc.db."
-            ),
-            priority=1,
-            tags={"path": db_path},
-        )
-
-
 async def start_daily_scheduler() -> None:
     global _scheduler_task
     if daily_scheduler.is_enabled() and _scheduler_task is None:
-        await _preload_dnc_registry()
         _scheduler_task = asyncio.create_task(daily_scheduler.run_forever())
 
 
@@ -85,11 +60,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Grant Ellis Group Lead Queue", lifespan=lifespan)
 
 _HTML = Path(__file__).parent / "index.html"
-
-
-class DncClearRequest(BaseModel):
-    source: str = "manual_review"
-    notes: str | None = None
 
 
 def _truthy(value: str | None) -> bool:
@@ -122,8 +92,6 @@ def _build_bland_test_contact(track: str) -> EnrichedContact:
         track="ec" if is_ec else "ng",
         phone=_BLAND_TEST_RECIPIENTS[track],
         property_type="residential",
-        dnc_status="clear",
-        dnc_source="internal_qa",
         language_hint="spanish_likely" if is_spanish else None,
     )
 
@@ -196,15 +164,7 @@ async def approve(case_number: str, track: str = "ec"):
         phone=phone,
         email=row.get("email"),
         property_type=row.get("property_type"),
-        dnc_status=row.get("dnc_status", "unknown"),
-        dnc_source=row.get("dnc_source"),
     )
-
-    dnc_decision = dnc_service.can_call(contact)
-    if not dnc_decision.allowed:
-        status = "blocked_dnc" if dnc_decision.status == "blocked" else "pending_dnc_review"
-        await set_bland_status(case_number, track, status)
-        raise HTTPException(400, f"DNC gate blocked Bland: {dnc_decision.reason}")
 
     try:
         call_id = await bland_service.trigger_voicemail(contact)
@@ -219,63 +179,6 @@ async def approve(case_number: str, track: str = "ec"):
 async def skip(case_number: str, track: str = "ec"):
     await set_bland_status(case_number, track, "skipped")
     return {"status": "skipped"}
-
-
-def _build_contact_from_row(row: dict, track: str) -> EnrichedContact | None:
-    from datetime import date as _date
-    filing_date_raw = row.get("filing_date")
-    if not filing_date_raw:
-        return None
-    filing = Filing(
-        case_number=row["case_number"],
-        tenant_name=row.get("tenant_name", ""),
-        landlord_name=row.get("landlord_name", ""),
-        property_address=row.get("property_address", ""),
-        filing_date=_date.fromisoformat(filing_date_raw),
-        court_date=_date.fromisoformat(row["court_date"]) if row.get("court_date") else None,
-        state=row.get("state", ""),
-        county=row.get("county", ""),
-        notice_type=row.get("notice_type", ""),
-        source_url=row.get("source_url", ""),
-    )
-    return EnrichedContact(
-        filing=filing,
-        track=track,
-        phone=row.get("phone"),
-        email=row.get("email"),
-        property_type=row.get("property_type"),
-        estimated_rent=row.get("estimated_rent"),
-        dnc_status="clear",
-        dnc_source=row.get("dnc_source"),
-        language_hint=row.get("language_hint"),
-    )
-
-
-@app.post("/api/leads/{case_number}/dnc-clear")
-async def clear_dnc(case_number: str, request: DncClearRequest, track: str = "ec"):
-    await clear_dnc_status(
-        case_number,
-        track=track,
-        source=request.source,
-        notes=request.notes,
-    )
-
-    # If this contact was never pushed to GHL (was blocked/unknown at pipeline time),
-    # push it now that DNC is confirmed clear.
-    row = await get_lead_row(case_number, track)
-    if row and not row.get("ghl_contact_id"):
-        contact = _build_contact_from_row(row, track)
-        if contact and (contact.phone or contact.email):
-            from pipeline.runner import push_cleared_contact
-            try:
-                await push_cleared_contact(contact)
-            except Exception as exc:
-                import logging
-                logging.getLogger(__name__).warning(
-                    "push_cleared_contact failed for %s [%s]: %s", case_number, track, exc
-                )
-
-    return {"status": "clear", "source": request.source}
 
 
 if __name__ == "__main__":

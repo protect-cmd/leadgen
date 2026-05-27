@@ -4,8 +4,7 @@ Covers:
 1. EnrichmentCache.claim_alert_once_today — once-per-day dedupe primitive.
 2. SearchBug account_error fires a Pushover alert (high priority).
 3. SearchBug daily-cap hit fires a Pushover alert (deduped per day).
-4. FTC DNC registry load failure fires a Pushover alert at startup.
-5. send_run_summary surfaces NG / SearchBug / FTC counters when present.
+4. send_run_summary surfaces NG / SearchBug counters when present.
 """
 from __future__ import annotations
 
@@ -143,34 +142,6 @@ async def test_daily_cap_alert_deduped_per_day(mock_cache, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_ftc_registry_load_failure_fires_startup_alert(monkeypatch):
-    monkeypatch.setenv("FTC_DNC_DB_PATH", "/nonexistent/dnc.db")
-    monkeypatch.setenv("DASHBOARD_DAILY_SCHEDULER_ENABLED", "true")
-    from services import dnc_service
-    dnc_service.reset_registry_for_tests()
-
-    from dashboard import main as dashboard_main
-
-    with patch.object(notification_service, "send_alert", new=AsyncMock()) as mock_alert:
-        await dashboard_main._preload_dnc_registry()
-
-    mock_alert.assert_awaited_once()
-    assert "FTC DNC" in mock_alert.call_args.args[0]
-    assert mock_alert.call_args.kwargs.get("priority") == 1
-
-
-@pytest.mark.asyncio
-async def test_ftc_registry_unset_skips_alert(monkeypatch):
-    monkeypatch.delenv("FTC_DNC_DB_PATH", raising=False)
-    from dashboard import main as dashboard_main
-
-    with patch.object(notification_service, "send_alert", new=AsyncMock()) as mock_alert:
-        await dashboard_main._preload_dnc_registry()
-
-    mock_alert.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 async def test_send_run_summary_includes_new_counters():
     metrics = {
         "state": "OH",
@@ -184,7 +155,6 @@ async def test_send_run_summary_includes_new_counters():
         "ng_phones_pushed": 12,
         "searchbug_calls": 30,
         "searchbug_daily_total": 45,
-        "ftc_scrubs_upgraded": 8,
         "instantly_enrolled": 5,
         "elapsed_seconds": 42.0,
     }
@@ -196,4 +166,3 @@ async def test_send_run_summary_includes_new_counters():
     body = mock_alert.call_args.args[1]
     assert "NG (tenant) pushed: 12" in body
     assert "SearchBug calls: 30 (today: 45)" in body
-    assert "FTC DNC upgrades: 8" in body

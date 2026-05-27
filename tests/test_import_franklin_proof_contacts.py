@@ -49,8 +49,6 @@ async def test_proof_rows_to_contacts_imports_only_callable_rows():
             track="ng",
             phone="5551110000",
             email="tenant@example.test",
-            dnc_status="clear",
-            dnc_source="batchdata",
             property_type="residential",
         )
     ]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 
 import httpx
@@ -10,6 +11,7 @@ from models.contact import EnrichedContact
 from models.filing import Filing
 
 log = logging.getLogger(__name__)
+_STATE_ZIP_RE = re.compile(r"\b([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b", re.IGNORECASE)
 
 BASE = "https://api.batchdata.com"
 SKIP_TRACE_EP = "/api/v1/property/skip-trace"
@@ -19,20 +21,12 @@ LOOKUP_EP = "/api/v1/property/lookup/all-attributes"
 @dataclass(frozen=True)
 class PhoneSelection:
     number: str | None
-    dnc_status: str = "unknown"
-    dnc_source: str | None = None
 
 
 @dataclass(frozen=True)
 class PropertyInfo:
     property_type: str | None = None
     secondary_address: str | None = None
-
-
-def _dnc_status(phone: dict) -> str:
-    if "dnc" not in phone or phone.get("dnc") is None:
-        return "unknown"
-    return "blocked" if phone.get("dnc") else "clear"
 
 
 def _headers() -> dict[str, str]:
@@ -136,23 +130,12 @@ def _tenant_name_matches(expected: str, returned: str | None) -> bool:
 def _best_phone_result(phone_list: list[dict]) -> PhoneSelection:
     if not phone_list:
         return PhoneSelection(None)
-    # Prefer confirmed-clear numbers, then unknowns, and only use DNC hits if no alternative exists.
-    pool = [p for p in phone_list if _dnc_status(p) == "clear"]
-    if not pool:
-        pool = [p for p in phone_list if _dnc_status(p) == "unknown"]
-    if not pool:
-        pool = phone_list
     ranked = sorted(
-        pool,
+        phone_list,
         key=lambda p: (p.get("type", "") == "Mobile", p.get("score", 0)),
         reverse=True,
     )
-    selected = ranked[0]
-    return PhoneSelection(
-        selected.get("number"),
-        _dnc_status(selected),
-        "batchdata",
-    )
+    return PhoneSelection(ranked[0].get("number"))
 
 
 def _best_phone(phone_list: list[dict]) -> str | None:
@@ -229,8 +212,6 @@ async def enrich(
     headers = _headers()
 
     phone: str | None = None
-    dnc_status = "unknown"
-    dnc_source: str | None = None
     email: str | None = None
     secondary_address: str | None = None
     property_type: str | None = filing.property_type_hint
@@ -247,10 +228,7 @@ async def enrich(
             persons = r.json().get("results", {}).get("persons", [])
             if persons:
                 p = persons[0]
-                phone_selection = _best_phone_result(p.get("phoneNumbers", []))
-                phone = phone_selection.number
-                dnc_status = phone_selection.dnc_status
-                dnc_source = phone_selection.dnc_source
+                phone = _best_phone(p.get("phoneNumbers", []))
                 email = _best_email(p.get("emails", []))
         else:
             log.warning(f"Skip-trace {r.status_code} for {filing.case_number}: {r.text[:200]}")
@@ -279,8 +257,6 @@ async def enrich(
         secondary_address=secondary_address,
         estimated_rent=estimated_rent,
         property_type=property_type,
-        dnc_status=dnc_status,
-        dnc_source=dnc_source,
     )
 
 
@@ -313,6 +289,7 @@ async def enrich_tenant_by_name(
             state = tokens[0] or filing.state
         if len(tokens) >= 2 and tokens[1].isdigit():
             postal_from_address = tokens[1]
+    postal = postal_from_address or resolve_zip(city, state)
 
     for raw_name in split_tenants(filing.tenant_name.strip()):
         first_name, last_name = parse_name(raw_name)
@@ -321,7 +298,7 @@ async def enrich_tenant_by_name(
             continue
 
         # Cache lookup — None = uncached; (None, None) = cached miss
-        cached = cache.get(first_name, last_name, city, state)
+        cached = cache.get(first_name, last_name, city, state, postal=postal)
         if cached is not None:
             phone, resolved_address = cached
             if phone and resolved_address:
@@ -329,7 +306,6 @@ async def enrich_tenant_by_name(
                 return EnrichedContact(
                     filing=filing, track="ng", phone=phone,
                     secondary_address=resolved_address,
-                    dnc_status="unknown", dnc_source="searchbug",
                 )
             if resolved_address:
                 # address only cached: rescue path — second paid call only if explicitly enabled
@@ -345,12 +321,10 @@ async def enrich_tenant_by_name(
                 return EnrichedContact(
                     filing=filing, track="ng", phone=None, email=None,
                     secondary_address=resolved_address,
-                    dnc_status="unknown", dnc_source="searchbug",
                 )
             if phone:
                 return EnrichedContact(
                     filing=filing, track="ng", phone=phone,
-                    dnc_status="unknown", dnc_source="searchbug",
                 )
             continue  # cached miss — try next name
 
@@ -360,7 +334,7 @@ async def enrich_tenant_by_name(
                 f"enrich_tenant_by_name: common surname skip {last_name!r} "
                 f"for {filing.case_number}"
             )
-            cache.set(first_name, last_name, city, state, None, None)
+            cache.set(first_name, last_name, city, state, None, None, postal=postal)
             continue
 
         # Circuit breaker — if SearchBug account is in error state, skip
@@ -380,8 +354,6 @@ async def enrich_tenant_by_name(
             break
 
         # ZIP narrowing — use address-derived ZIP first, then city map
-        postal = postal_from_address or resolve_zip(city, state)
-
         phone, resolved_address = await _searchbug_search(
             first_name, last_name, city=city, state=state, postal=postal
         )
@@ -390,7 +362,10 @@ async def enrich_tenant_by_name(
         # this same call), skip the increment to keep the counter honest.
         if not is_account_error_tripped():
             cache.increment_daily_count()
-        cache.set(first_name, last_name, city, state, phone, resolved_address)
+        cache.set(
+            first_name, last_name, city, state, phone, resolved_address,
+            postal=postal,
+        )
 
         if phone and resolved_address:
             # phone + address: store both; do NOT auto-run a second paid call
@@ -400,7 +375,6 @@ async def enrich_tenant_by_name(
             return EnrichedContact(
                 filing=filing, track="ng", phone=phone,
                 secondary_address=resolved_address,
-                dnc_status="unknown", dnc_source="searchbug",
             )
 
         if resolved_address:
@@ -425,19 +399,16 @@ async def enrich_tenant_by_name(
             return EnrichedContact(
                 filing=filing, track="ng", phone=None, email=None,
                 secondary_address=resolved_address,
-                dnc_status="unknown", dnc_source="searchbug",
             )
 
         if phone:
             log.info(f"enrich_tenant_by_name: SearchBug phone-only hit for {filing.case_number}")
             return EnrichedContact(
                 filing=filing, track="ng", phone=phone,
-                dnc_status="unknown", dnc_source="searchbug",
             )
 
     log.info(f"enrich_tenant_by_name: no match for {filing.case_number}")
-    return EnrichedContact(filing=filing, track="ng", phone=None, email=None,
-                           dnc_status="unknown", dnc_source=None)
+    return EnrichedContact(filing=filing, track="ng", phone=None, email=None)
 
 
 async def _maybe_alert_cap_hit(cap: int, source: str) -> None:
@@ -479,28 +450,36 @@ async def _searchbug_fallback_gated(
     """
     from services.enrichment_cache import get_cache
     from services.name_utils import is_common_surname, parse_name
-    from services.searchbug_service import search_tenant as _searchbug_search
+    from services.searchbug_service import (
+        query_street_address,
+        search_tenant as _searchbug_search,
+    )
 
     first_name, last_name = parse_name(tenant_name_normalized)
     if not first_name or not last_name:
         return None
 
-    # Extract city/state/postal from geocoded address "Street, City, ST ZIP"
+    # Extract city/state/postal from the tail of addresses like:
+    # "Street, City, ST ZIP" or "Street, UNIT 2, City, ST ZIP".
     addr_parts = [p.strip() for p in filing.property_address.split(",")]
-    sb_city = addr_parts[1] if len(addr_parts) >= 2 else ""
+    sb_city = addr_parts[-2] if len(addr_parts) >= 2 else ""
     sb_state = filing.state
     sb_postal = ""
-    if len(addr_parts) >= 3:
-        tokens = addr_parts[2].split()
-        if tokens:
-            sb_state = tokens[0] or filing.state
-        if len(tokens) >= 2 and tokens[1].isdigit():
-            sb_postal = tokens[1]
+    if addr_parts:
+        match = _STATE_ZIP_RE.search(addr_parts[-1])
+        if match:
+            sb_state = match.group(1).upper()
+            sb_postal = match.group(2)
+    query_address = query_street_address(filing.property_address)
 
     cache = get_cache()
     cap = int(os.environ.get("SEARCHBUG_DAILY_CAP", "100"))
 
-    cached = cache.get(first_name, last_name, sb_city, sb_state)
+    cached = cache.get(
+        first_name, last_name, sb_city, sb_state,
+        postal=sb_postal,
+        query_address=query_address,
+    )
     if cached is not None:
         phone, _addr = cached
         if phone:
@@ -513,7 +492,11 @@ async def _searchbug_fallback_gated(
         log.info(
             f"SearchBug skipped (common surname {last_name!r}) for {filing.case_number}"
         )
-        cache.set(first_name, last_name, sb_city, sb_state, None, None)
+        cache.set(
+            first_name, last_name, sb_city, sb_state, None, None,
+            postal=sb_postal,
+            query_address=query_address,
+        )
         return None
 
     # Circuit breaker — if SearchBug account is in error state, skip without
@@ -533,13 +516,18 @@ async def _searchbug_fallback_gated(
         return None
 
     sb_phone, sb_address = await _searchbug_search(
-        first_name, last_name, sb_city, sb_state, sb_postal
+        first_name, last_name, sb_city, sb_state, sb_postal,
+        address=query_address,
     )
     # Only count against the daily cap if we actually hit the wire. If the
     # call just tripped the breaker, we don't want to consume a slot.
     if not is_account_error_tripped():
         cache.increment_daily_count()
-    cache.set(first_name, last_name, sb_city, sb_state, sb_phone, sb_address)
+    cache.set(
+        first_name, last_name, sb_city, sb_state, sb_phone, sb_address,
+        postal=sb_postal,
+        query_address=query_address,
+    )
 
     if sb_phone:
         log.info(f"SearchBug fallback hit for {filing.case_number}: phone={sb_phone}")
@@ -563,8 +551,6 @@ async def enrich_tenant(
     on the shared property_info lookup for commercial/residential routing.
     """
     phone: str | None = None
-    dnc_status = "unknown"
-    dnc_source: str | None = None
     email: str | None = None
     property_type: str | None = filing.property_type_hint
     estimated_rent: float | None = filing.claim_amount
@@ -580,9 +566,7 @@ async def enrich_tenant(
     sb_phone = await _searchbug_fallback_gated(filing, tenant_name_normalized)
     if sb_phone:
         phone = sb_phone
-        dnc_status = "unknown"
-        dnc_source = "searchbug"
-
+    
     if property_info is None and lookup_property_if_missing and property_type is None:
         property_info = await lookup_property_info(filing)
     property_type, _ = _apply_property_info(
@@ -604,6 +588,4 @@ async def enrich_tenant(
         email=email,
         estimated_rent=estimated_rent,
         property_type=property_type,
-        dnc_status=dnc_status,
-        dnc_source=dnc_source,
     )

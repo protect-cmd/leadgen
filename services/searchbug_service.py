@@ -37,6 +37,10 @@ _COMPANY_TERMS = {
 }
 _NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv"}
 _STRIP_CHARS = str.maketrans("", "", ".,'-")
+_UNIT_SUFFIX_RE = re.compile(
+    r"\s+(?:APT\.?|APARTMENT|UNIT|STE\.?|SUITE|#)\s*#?\s*[A-Z0-9-]+(?:\s.*)?$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -129,15 +133,24 @@ def _most_recent_address(addresses_raw) -> dict | None:
     return max(addrs, key=_parse_last_date)
 
 
+def query_street_address(raw_address: str | None) -> str:
+    """Return SearchBug's street-address input without unit identifiers."""
+    street = (raw_address or "").split(",", 1)[0].strip()
+    return _UNIT_SUFFIX_RE.sub("", street).strip(" ,")
+
+
 async def search_tenant(
     first_name: str,
     last_name: str,
     city: str,
     state: str,
     postal: str = "",
+    address: str = "",
 ) -> tuple[str | None, str | None]:
     """Backward-compatible wrapper returning (phone, resolved_address)."""
-    result = await search_tenant_detailed(first_name, last_name, city, state, postal)
+    result = await search_tenant_detailed(
+        first_name, last_name, city, state, postal, address=address
+    )
     return result.phone, result.resolved_address
 
 
@@ -147,6 +160,7 @@ async def search_tenant_detailed(
     city: str,
     state: str,
     postal: str = "",
+    address: str = "",
 ) -> SearchBugResult:
     """SearchBug People Search with structured miss/error reasons."""
     global _account_error_tripped
@@ -176,6 +190,9 @@ async def search_tenant_detailed(
     }
     if postal:
         payload["ZIP"] = postal
+    street_address = query_street_address(address)
+    if street_address:
+        payload["ADDRESS"] = street_address
 
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(BASE, data=payload)

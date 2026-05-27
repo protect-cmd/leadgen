@@ -16,7 +16,7 @@ def _filing(**kwargs) -> Filing:
         "tenant_name": "Jane Tenant",
         "property_address": "123 Main St, Houston, TX 77002",
         "landlord_name": "Grant Owner",
-        "filing_date": date(2026, 5, 6),
+        "filing_date": date.today(),
         "state": "TX",
         "county": "Harris",
         "notice_type": "Eviction",
@@ -60,7 +60,6 @@ async def test_runner_reuses_one_property_lookup_for_landlord_and_tenant(monkeyp
             track="ec",
             phone="+12135550100",
             property_type=property_info.property_type,
-            dnc_status="clear",
         )
 
     async def enrich_tenant(filing: Filing, property_info=None, lookup_property_if_missing=True):
@@ -70,7 +69,6 @@ async def test_runner_reuses_one_property_lookup_for_landlord_and_tenant(monkeyp
             track="ng",
             phone="+12135550101",
             property_type=property_info.property_type,
-            dnc_status="clear",
         )
 
     async def process_track(contact: EnrichedContact) -> runner.TrackResult:
@@ -117,7 +115,6 @@ async def test_runner_skips_property_lookup_when_scraper_supplies_type(monkeypat
             track="ec",
             phone="+12135550100",
             property_type=filing.property_type_hint,
-            dnc_status="clear",
         )
 
     async def process_track(contact: EnrichedContact) -> runner.TrackResult:
@@ -237,7 +234,6 @@ async def test_runner_skips_rent_precheck_when_disabled(monkeypatch):
             track="ec",
             phone="+12135550100",
             property_type=filing.property_type_hint,
-            dnc_status="clear",
         )
 
     async def process_track(contact: EnrichedContact) -> runner.TrackResult:
@@ -285,7 +281,6 @@ async def test_runner_skips_rent_precheck_when_scraper_supplies_claim_amount(mon
             phone="+12135550100",
             estimated_rent=filing.claim_amount,
             property_type=filing.property_type_hint,
-            dnc_status="clear",
         )
 
     async def process_track(contact: EnrichedContact) -> runner.TrackResult:

@@ -18,18 +18,24 @@ class EnrichmentCache:
 
     def _init_db(self) -> None:
         with sqlite3.connect(self._db_path) as con:
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS searchbug_cache (
-                    first_name TEXT NOT NULL,
-                    last_name  TEXT NOT NULL,
-                    city       TEXT NOT NULL,
-                    state      TEXT NOT NULL,
-                    phone      TEXT,
-                    address    TEXT,
-                    cached_at  REAL NOT NULL,
-                    PRIMARY KEY (first_name, last_name, city, state)
-                )
-            """)
+            columns = {
+                row[1] for row in con.execute("PRAGMA table_info(searchbug_cache)")
+            }
+            if not columns:
+                self._create_searchbug_cache(con)
+            elif "postal" not in columns or "query_address" not in columns:
+                con.execute("DROP TABLE IF EXISTS searchbug_cache_v2")
+                self._create_searchbug_cache(con, table_name="searchbug_cache_v2")
+                con.execute("""
+                    INSERT OR REPLACE INTO searchbug_cache_v2
+                    (first_name, last_name, city, state, postal, query_address,
+                     phone, address, cached_at)
+                    SELECT first_name, last_name, city, state, '', '',
+                           phone, address, cached_at
+                    FROM searchbug_cache
+                """)
+                con.execute("DROP TABLE searchbug_cache")
+                con.execute("ALTER TABLE searchbug_cache_v2 RENAME TO searchbug_cache")
             con.execute("""
                 CREATE TABLE IF NOT EXISTS daily_cap (
                     date  TEXT PRIMARY KEY,
@@ -48,19 +54,55 @@ class EnrichmentCache:
                 WHERE cached_at < ?
             """, (time.time() - _TTL_SECONDS,))
 
-    def _key(self, first: str, last: str, city: str, state: str) -> tuple[str, str, str, str]:
-        return first.strip().lower(), last.strip().lower(), city.strip().lower(), state.strip().lower()
+    @staticmethod
+    def _create_searchbug_cache(
+        con: sqlite3.Connection, table_name: str = "searchbug_cache"
+    ) -> None:
+        con.execute(f"""
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                first_name    TEXT NOT NULL,
+                last_name     TEXT NOT NULL,
+                city          TEXT NOT NULL,
+                state         TEXT NOT NULL,
+                postal        TEXT NOT NULL DEFAULT '',
+                query_address TEXT NOT NULL DEFAULT '',
+                phone         TEXT,
+                address       TEXT,
+                cached_at     REAL NOT NULL,
+                PRIMARY KEY (first_name, last_name, city, state, postal, query_address)
+            )
+        """)
+
+    def _key(
+        self,
+        first: str,
+        last: str,
+        city: str,
+        state: str,
+        postal: str = "",
+        query_address: str = "",
+    ) -> tuple[str, str, str, str, str, str]:
+        return (
+            first.strip().lower(),
+            last.strip().lower(),
+            city.strip().lower(),
+            state.strip().lower(),
+            postal.strip().lower(),
+            query_address.strip().lower(),
+        )
 
     def get(
-        self, first: str, last: str, city: str, state: str
+        self, first: str, last: str, city: str, state: str, *,
+        postal: str = "", query_address: str = "",
     ) -> tuple[str | None, str | None] | None:
         """Return (phone, address) if cached and fresh; None if not cached or expired."""
-        k = self._key(first, last, city, state)
+        k = self._key(first, last, city, state, postal, query_address)
         cutoff = time.time() - _TTL_SECONDS
         with sqlite3.connect(self._db_path) as con:
             row = con.execute(
                 "SELECT phone, address FROM searchbug_cache "
-                "WHERE first_name=? AND last_name=? AND city=? AND state=? AND cached_at>=?",
+                "WHERE first_name=? AND last_name=? AND city=? AND state=? "
+                "AND postal=? AND query_address=? AND cached_at>=?",
                 (*k, cutoff),
             ).fetchone()
         if row is None:
@@ -75,13 +117,17 @@ class EnrichmentCache:
         state: str,
         phone: str | None,
         address: str | None,
+        *,
+        postal: str = "",
+        query_address: str = "",
     ) -> None:
-        k = self._key(first, last, city, state)
+        k = self._key(first, last, city, state, postal, query_address)
         with sqlite3.connect(self._db_path) as con:
             con.execute(
                 "INSERT OR REPLACE INTO searchbug_cache "
-                "(first_name, last_name, city, state, phone, address, cached_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "(first_name, last_name, city, state, postal, query_address, "
+                "phone, address, cached_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (*k, phone, address, time.time()),
             )
 

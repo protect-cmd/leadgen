@@ -13,10 +13,10 @@ from models.filing import Filing
 def _filing(**kwargs) -> Filing:
     values = dict(
         case_number="TEST-001",
-        tenant_name="Jane Doe",
+        tenant_name="Maria Garcia",
         property_address="123 Main St, Nashville, TN 37211",
         landlord_name="Bob Smith",
-        filing_date=date(2026, 5, 16),
+        filing_date=date.today(),
         state="TN",
         county="Davidson",
         notice_type="Eviction",
@@ -30,7 +30,6 @@ def _filing(**kwargs) -> Filing:
 def _ec_contact(filing):
     return EnrichedContact(
         filing=filing, track="ec", phone="6151111111",
-        dnc_status="clear", dnc_source="batchdata",
         property_type="residential", estimated_rent=1800,
     )
 
@@ -38,7 +37,6 @@ def _ec_contact(filing):
 def _ng_contact(filing):
     return EnrichedContact(
         filing=filing, track="ng", phone="6152222222",
-        dnc_status="clear", dnc_source="batchdata",
         property_type="residential", estimated_rent=1800,
     )
 
@@ -55,6 +53,7 @@ def _base_patches(filing, ec_ret=None, ng_ret=None):
         patch("services.dedup_service.set_bland_status", new_callable=AsyncMock),
         patch("services.dedup_service.write_run_metrics", new_callable=AsyncMock),
         patch("services.geocode_service.normalize_address", new_callable=AsyncMock, return_value=None),
+        patch("services.dedup_service.has_ng_phone", new_callable=AsyncMock, return_value=False),
         patch("services.language_service.language_hint_for_name", return_value=None),
         patch("services.notification_service.send_run_summary", new_callable=AsyncMock),
         patch("pipeline.runner._process_track", new_callable=AsyncMock,

@@ -34,7 +34,6 @@ async def test_bland_test_call_triggers_ec_internal_recipient(monkeypatch):
     assert result == {"status": "triggered", "track": "ec", "call_id": "call-ec"}
     assert contacts[0].track == "ec"
     assert contacts[0].phone == dashboard_main._BLAND_TEST_RECIPIENTS["ec"]
-    assert contacts[0].dnc_status == "clear"
 
 
 @pytest.mark.asyncio

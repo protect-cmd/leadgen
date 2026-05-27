@@ -59,7 +59,7 @@ def _contact(track: str, phone: str | None) -> EnrichedContact:
         tenant_name="Maria Garcia",
         property_address="123 Main St, Houston, TX 77002",
         landlord_name="Grant Owner LLC",
-        filing_date=date(2026, 5, 8),
+        filing_date=date.today(),
         state="TX",
         county="Harris",
         notice_type="Eviction",
@@ -72,8 +72,6 @@ def _contact(track: str, phone: str | None) -> EnrichedContact:
         email=f"{track}@example.test" if phone else None,
         property_type="residential",
         estimated_rent=1800,
-        dnc_status="clear",
-        dnc_source="batchdata:test",
         language_hint="spanish_likely" if track == "ng" else None,
     )
 
@@ -94,7 +92,6 @@ def test_ng_enrichment_writes_tenant_contact_without_overwriting_shared_filing_c
     filing_call = next(call for call in fake.calls if call["table"] == "filings")
     assert "phone" not in filing_call["payload"]
     assert "email" not in filing_call["payload"]
-    assert filing_call["payload"]["ng_dnc_status"] == "clear"
     assert filing_call["payload"]["language_hint"] == "spanish_likely"
 
 
@@ -111,7 +108,6 @@ def test_ec_enrichment_keeps_legacy_filing_contact_for_grant_dashboard(monkeypat
     filing_call = next(call for call in fake.calls if call["table"] == "filings")
     assert filing_call["payload"]["phone"] == "+12135550100"
     assert filing_call["payload"]["email"] == "ec@example.test"
-    assert filing_call["payload"]["dnc_status"] == "clear"
 
 
 def test_status_updates_write_track_specific_contact_and_legacy_columns(monkeypatch):
@@ -119,7 +115,7 @@ def test_status_updates_write_track_specific_contact_and_legacy_columns(monkeypa
     monkeypatch.setattr(dedup_service, "_client", fake)
 
     asyncio.run(dedup_service.update_contact_ghl_id("CASE-1", "ghl-ng", "ng"))
-    asyncio.run(dedup_service.set_bland_status("CASE-1", "ng", "pending_dnc_review"))
+    asyncio.run(dedup_service.set_bland_status("CASE-1", "ng", "pending"))
 
     lead_updates = [
         call for call in fake.calls
@@ -127,7 +123,7 @@ def test_status_updates_write_track_specific_contact_and_legacy_columns(monkeypa
     ]
     assert lead_updates[0]["payload"] == {"ghl_contact_id": "ghl-ng"}
     assert ("eq", "track", "ng") in lead_updates[0]["filters"]
-    assert lead_updates[1]["payload"] == {"bland_status": "pending_dnc_review"}
+    assert lead_updates[1]["payload"] == {"bland_status": "pending"}
     assert ("eq", "track", "ng") in lead_updates[1]["filters"]
 
     filing_updates = [
@@ -135,7 +131,7 @@ def test_status_updates_write_track_specific_contact_and_legacy_columns(monkeypa
         if call["table"] == "filings" and call["operation"] == "update"
     ]
     assert filing_updates[0]["payload"] == {"ng_ghl_contact_id": "ghl-ng"}
-    assert filing_updates[1]["payload"] == {"ng_bland_status": "pending_dnc_review"}
+    assert filing_updates[1]["payload"] == {"ng_bland_status": "pending"}
 
 
 def test_vantage_dashboard_overlay_clears_shared_contact_when_no_ng_contact_exists():
@@ -145,8 +141,6 @@ def test_vantage_dashboard_overlay_clears_shared_contact_when_no_ng_contact_exis
                 "case_number": "CASE-1",
                 "phone": "+12135550100",
                 "email": "grant@example.test",
-                "dnc_status": "clear",
-                "dnc_source": "grant-source",
             }
         ],
         [],
@@ -155,5 +149,3 @@ def test_vantage_dashboard_overlay_clears_shared_contact_when_no_ng_contact_exis
 
     assert rows[0]["phone"] is None
     assert rows[0]["email"] is None
-    assert rows[0]["dnc_status"] == "unknown"
-    assert rows[0]["dnc_source"] is None

@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from services.name_utils import parse_name
-from services.searchbug_service import search_tenant_detailed
+from services.searchbug_service import query_street_address, search_tenant_detailed
 
 
 def split_address(addr: str) -> dict[str, str]:
@@ -72,6 +72,14 @@ def already_processed(case_number: str, previous_rows: list[dict[str, str]]) -> 
     )
 
 
+def should_persist_hit(result: dict[str, Any]) -> bool:
+    """Only store phone hits supported by the filing's address anchor."""
+    return (
+        result.get("status") == "phone_found"
+        and result.get("address_match") in {"exact", "same_street", "near_street"}
+    )
+
+
 def persist_hit(client, result: dict[str, Any]) -> bool:
     phone = (result.get("phone") or "").strip()
     if not phone:
@@ -119,6 +127,7 @@ async def enrich_row(row: dict[str, str], index: int) -> dict[str, Any]:
         "query_city": addr["city"],
         "query_state": addr["state"],
         "query_zip": addr["zipcode"],
+        "query_address": query_street_address(row["property_address"]),
     }
     if not first or not last:
         return {
@@ -133,7 +142,10 @@ async def enrich_row(row: dict[str, str], index: int) -> dict[str, Any]:
             "persisted": False,
         }
 
-    search = await search_tenant_detailed(first, last, addr["city"], addr["state"], addr["zipcode"])
+    search = await search_tenant_detailed(
+        first, last, addr["city"], addr["state"], addr["zipcode"],
+        address=row["property_address"],
+    )
     return {
         **base,
         "status": search.status,
@@ -190,7 +202,7 @@ async def main_async(argv: list[str] | None = None) -> int:
         if args.resume_from_output and already_processed(row["case_number"], results):
             continue
         result = await enrich_row(row, index)
-        if result["status"] == "phone_found":
+        if should_persist_hit(result):
             result["persisted"] = persist_hit(client, result)
         results.append(result)
         write_csv(args.output, results)

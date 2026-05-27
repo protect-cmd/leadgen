@@ -26,14 +26,14 @@ def test_actionable_requires_phone():
 
 
 def test_actionable_excludes_worked_bland_statuses():
-    for worked in ("triggered", "wrong_brand_review", "missing_contact_data", "blocked_dnc"):
+    for worked in ("triggered", "wrong_brand_review", "missing_contact_data"):
         assert dedup_service._is_ng_contact_actionable(
             {"phone": "+15551112222", "bland_status": worked}
         ) is False, f"{worked} should be excluded"
 
 
 def test_actionable_includes_visible_bland_statuses():
-    for visible in ("pending", "pending_dnc_review", "skipped", None):
+    for visible in ("pending", "skipped", None):
         assert dedup_service._is_ng_contact_actionable(
             {"phone": "+15551112222", "bland_status": visible}
         ) is True, f"{visible!r} should be visible"

@@ -1,0 +1,62 @@
+﻿case_number,tenant_name,property_address,phone,court_date,state,county,dnc_status,bland_status,enrichment_source,lead_bucket
+26GT5525,ALEXIS DONALD,"519 HOMESTEAD RIVER WAY, #213, NASHVILLE, TN 37207",9017340387,2026-05-27,TN,Davidson,unknown,pending_dnc_review,batchdata,residential_approved
+26GT5520,BRIASHA RIVERS,"200 HILLSIDE COTTAGE LANE, #616, NASHVILLE, TN 37207",9013377546,2026-05-27,TN,Davidson,unknown,pending_dnc_review,batchdata,residential_approved
+26GT5512,DARIEN PANKRATZ,"519 HOMESTEAD RIVER WAY, #101, NASHVILLE, TN 37207",7609967625,2026-05-27,TN,Davidson,unknown,pending_dnc_review,batchdata,residential_approved
+16GT2772,"GOVAN,DRESHUN OR OCCUPANT","555 MARRIOTT DRIVE #280, POE: ALLIEDBARTON SECURITY, NASHVILLE, TN 37214",9013616233,2026-05-27,TN,Davidson,unknown,pending_dnc_review,batchdata,residential_approved
+26GT5523,JAMES SKARKA,"200 HILLSIDE COTTAGE LANE, #508, NASHVILLE, TN 37207",6024690569,2026-05-27,TN,Davidson,unknown,pending_dnc_review,batchdata,residential_approved
+26GT5502,LATONYA CHAMBERS,"603 GLASTONBURY ROAD, #603, NASHVILLE, TN 37217",6155794531,2026-05-27,TN,Davidson,unknown,missing_contact_data,searchbug,residential_approved
+26GT5336,RONALD ROMA,"120 S. 5TH STREET, #330, NASHVILLE, TN 37203",7323305378,2026-05-27,TN,Davidson,unknown,pending_dnc_review,batchdata,residential_approved
+26GT5496,TEISHA HIGGINS,"597 GLASTONBURY ROAD, #597, NASHVILLE, TN 37217",9019497833,2026-05-27,TN,Davidson,unknown,pending_dnc_review,batchdata,residential_approved
+267100205586,Cecilia Robinson,"2111 Austin St #406, Houston, TX 77002",6018823059,2026-05-27,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+267100205594,Chesa Breann Mitchell,"2111 Austin St #417, Houston, TX 77002",6823309862,2026-05-27,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+267100205385,Tamia McLaren,"5005 Tierwester St. Unit #2, Houston, TX 77004",8135919029,2026-05-27,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+26GT4696,DANESHA SHIVERS,"5101 LINBAR DR, UNIT H114, NASHVILLE, TN 37211",7312735707,2026-05-28,TN,Davidson,unknown,pending_dnc_review,batchdata,residential_approved
+24GT2124,JORDAN BOWIE,"808 GARFIELD STREET, UNIT 271, NASHVILLE, TN 37208",2253081024,2026-05-28,TN,Davidson,unknown,pending_dnc_review,batchdata,residential_approved
+26GT4773,LOFIANN RICHARD,"5101 LINBAR DR, UNIT J314, NASHVILLE, TN 37211",7027720309,2026-05-28,TN,Davidson,unknown,pending_dnc_review,batchdata,residential_approved
+26GT4724,MACIO CALMA,"5101 LINBAR DR, UNIT J215, NASHVILLE, TN 37211",6293071906,2026-05-28,TN,Davidson,unknown,pending_dnc_review,batchdata,residential_approved
+265200212945,Chimira Turner,"6102 Winsome Lane, APT # 2-013, Houston, TX 77057",3468876039,2026-05-28,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+261100205657,Eboni Pierre,"2717 Minimax Dr, Apt 2149,, Houston, TX 77008",4092738824,2026-05-28,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+261100203103,Glennisha Stoute,"801 Cleveland Street Apt 3122, Houston, TX 77019",5177122130,2026-05-28,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+261100202937,Jermain C Ezikeuzor,"2651 Kipling Apt 1410, Houston, TX 77098",7132832632,2026-05-28,TX,Harris,blocked,missing_contact_data,searchbug,residential_approved
+265200212947,Kenneth Fenner,"6102 Winsome Lane, APT # 2-147, Houston, TX 77057",7204199723,2026-05-28,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+261100203195,Marasia Dyson,"1202 La Rue St #3, Houston, TX 77019",3467809525,2026-05-28,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+265200210510,Oluwaseye  Sobowale,"2660 Marilee Ln, A-25, Houston, TX 77057",9799428688,2026-05-28,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+261100202803,Shavanda Louisville,"2520 Washington Avenue Apt 714, Houston, TX 77007",3466370915,2026-05-28,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+26GT5629,DUJUAN VEGA,"1501 ROSA L. PARKS BLVD, UNIT 209, NASHVILLE, TN 37208",6154569174,2026-05-29,TN,Davidson,blocked,blocked_dnc,batchdata,residential_approved
+26GT5647,GWENDOLYN FULLER,"1501 ROSA L. PARKS BLVD, UNIT 103, NASHVILLE, TN 37208",6292646104,2026-05-29,TN,Davidson,unknown,pending_dnc_review,batchdata,residential_approved
+26GT5623,TEMPRA KNOX,"5515 SCRUGGS LANE, UNIT 4-423, NASHVILLE, TN 37207",6158943842,2026-05-29,TN,Davidson,blocked,blocked_dnc,batchdata,residential_approved
+261100207727,Amy Lucchesi,"3833 Dunlavy St Apt 731, Houston, TX 77006",7134197501,2026-06-01,TX,Harris,blocked,missing_contact_data,searchbug,residential_approved
+261100210308,Christian Ikolo,"3003 Memorial Ct Apt 2204, Houston, TX 77007",2392661190,2026-06-01,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+266200210008,Isaiah Aker,"2404 Navigation Blvd Apt 835, Houston, TX 77003",3462160076,2026-06-01,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+266200210251,Mambu Francis,"2404 Navigation Blvd, Apt 457, Houston, TX 77003",6094561829,2026-06-01,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+261100210469,Aaron Volf,"3131 Timmons Lane Apt 1122, Houston, TX 77027",2035303584,2026-06-02,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+265200212538,Ahmed  Raza,"5151 Hidalgo St #205, Houston, TX 77056",8327152667,2026-06-02,TX,Harris,blocked,missing_contact_data,searchbug,residential_approved
+267200210174,Chevell Sellers,"2502 Webster Street #306, Houston, TX 77003",3467440020,2026-06-02,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+267200212342,Dara Adams,"5927 Almeda Rd, Apt 22209, Houston, TX 77004",3474247620,2026-06-02,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+267200209771,Dontrell Hudson,"3000 Murworth Dr.Apt 413, Houston, TX 77025",3466930185,2026-06-02,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+261100210181,Enyah Haynes,"2770 Summer St Apt 2102, Houston, TX 77007",2013411552,2026-06-02,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+265200213029,Galen Montgomery,"6121 Winsome Lane, APT # 3-003, Houston, TX 77057",4706838401,2026-06-02,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+267200212510,Gene Benson,"3921 Omeara Drive #94, Houston, TX 77025",3468855306,2026-06-02,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+267200209825,Leon Grayson,"3000 Murworth Dr. Apt 1412, Houston, TX 77025",3464536066,2026-06-02,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+265100207824,Marcellus Kincheon,"5920 Beverly Hills St #35, Houston, TX 77057",3465774656,2026-06-02,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+261100212794,Misael Saucedo,"2350 Bagby Street Apt 12301, Houston, TX 77006",2817937414,2026-06-02,TX,Harris,blocked,missing_contact_data,searchbug,residential_approved
+267200212388,Mohammed Massaquoi,"5927 Almeda Road Apt 21306, Houston, TX 77004",5042876926,2026-06-02,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+261100210171,Monsef Oukil,"2770 Summer St Apt 497, Houston, TX 77007",9796769828,2026-06-02,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+261100213054,Anjanette Rogers,"1515 Austin Street Apt 2102, Houston, TX 77002",2134148033,2026-06-03,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+265100210110,Crystal Rios,"3030 Greenridge Dr #4-20, Houston, TX 77057",3612491166,2026-06-03,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+265100212791,Emily Doyle,"1908 Augusta Dr #4, Houston, TX 77057",9178176096,2026-06-03,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+265100212428,Getaneh Bishaw,"2200 Fountainview 64, Houston, TX 77057",3465613489,2026-06-03,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+261100212975,Trace Ashby,"2350 Bagby Street, Apt 8207,, Houston, TX 77006",8164239191,2026-06-03,TX,Harris,unknown,missing_contact_data,searchbug,residential_approved
+261100226793,Boubacar Mballo,"1625 Main Apt 1301, Houston, TX 77002",6467083377,2026-06-08,TX,Harris,unknown,pending_dnc_review,batchdata,residential_approved
+267200224625,Davares Reeder,"2519 Scott St. Apt 323, Houston, TX 77004",3097212677,2026-06-09,TX,Harris,unknown,pending_dnc_review,batchdata,residential_approved
+261200222954,Dewon Pullen,"207 Pierce, # 301, Houston, TX 77002",2818504061,2026-06-09,TX,Harris,blocked,blocked_dnc,batchdata,residential_approved
+261100224801,Diana Souksouna,"3310 Louisiana St. Apt 2220, Houston, TX 77006",9188599392,2026-06-09,TX,Harris,unknown,pending_dnc_review,batchdata,residential_approved
+267200224691,Jermaine Boyce,"2850 Fannin St. Unit 2607, Houston, TX 77002",4059249798,2026-06-09,TX,Harris,unknown,pending_dnc_review,batchdata,residential_approved
+267200226508,Joseph Ansley,"4055 S. Braeswood Blvd., Apt #115, Houston, TX 77025",3466914404,2026-06-09,TX,Harris,unknown,pending_dnc_review,batchdata,residential_approved
+265100224517,Samara C. Maxwell,"2030 Winrock Blvd 767, Houston, TX 77057",4702762191,2026-06-09,TX,Harris,unknown,pending_dnc_review,batchdata,residential_approved
+267200224765,SyLai Gabriel,"9330 S Main St #361, Houston, TX 77025",5044472228,2026-06-09,TX,Harris,unknown,pending_dnc_review,batchdata,residential_approved
+261100224658,Corey Horn,"2800 Kirby Dr. Apt B701, Houston, TX 77098",3462766846,2026-06-10,TX,Harris,unknown,pending_dnc_review,batchdata,residential_approved
+265100227172,Damon Crombie,"2420 Yorktown St 520, Houston, TX 77056",7734073029,2026-06-10,TX,Harris,unknown,pending_dnc_review,batchdata,residential_approved
+261100226771,Dayleyon Clement,"1515 Austin Street Apt 1710, Houston, TX 77002",3467392174,2026-06-10,TX,Harris,unknown,pending_dnc_review,batchdata,residential_approved
+261100224665,Joseph Antoon,"900 N Durham Dr. Apt 56, Houston, TX 77008",9362539884,2026-06-10,TX,Harris,unknown,pending_dnc_review,batchdata,residential_approved
+261100226281,Stephen M. Roensch,"4640 Main Street Unit 593, Houston, TX 77002",5053850168,2026-06-10,TX,Harris,unknown,pending_dnc_review,batchdata,residential_approved
