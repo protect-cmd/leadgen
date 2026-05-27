@@ -150,3 +150,53 @@ def test_classify_cincinnati_ohio_zip_as_residential_fallback_when_rent_missing(
     assert outcome.property_zip == "45219"
     assert outcome.lead_bucket == "residential_approved"
     assert outcome.discard_reason is None
+
+
+def test_classify_off_allowlist_zip_with_capture_expanded_true_returns_captured():
+    outcome = classify_lead(
+        state="TX",
+        property_address="123 Greenspoint Dr, Houston, TX 77090",
+        filing_date=date(2026, 5, 25),
+        today=date(2026, 5, 25),
+        capture_expanded=True,
+    )
+    assert outcome.property_zip == "77090"
+    assert outcome.lead_bucket == "captured"
+    assert outcome.discard_reason is None
+    assert "captured" in outcome.qualification_notes.lower()
+
+
+def test_classify_off_allowlist_zip_with_capture_expanded_false_falls_back_to_legacy_discard():
+    outcome = classify_lead(
+        state="TX",
+        property_address="123 Greenspoint Dr, Houston, TX 77090",
+        filing_date=date(2026, 5, 25),
+        today=date(2026, 5, 25),
+        capture_expanded=False,
+    )
+    assert outcome.lead_bucket == "discarded"
+    assert outcome.discard_reason == "zip_not_approved"
+
+
+def test_classify_on_allowlist_zip_unaffected_by_capture_expanded():
+    for cap in (True, False):
+        outcome = classify_lead(
+            state="TX",
+            property_address="123 Main St, Houston, TX 77002",
+            filing_date=date(2026, 5, 25),
+            today=date(2026, 5, 25),
+            capture_expanded=cap,
+        )
+        assert outcome.lead_bucket == "residential_approved"
+
+
+def test_classify_missing_zip_still_discarded_under_capture_mode():
+    outcome = classify_lead(
+        state="TX",
+        property_address="Unknown",
+        filing_date=date(2026, 5, 25),
+        today=date(2026, 5, 25),
+        capture_expanded=True,
+    )
+    assert outcome.lead_bucket == "discarded"
+    assert outcome.discard_reason == "missing_zip"

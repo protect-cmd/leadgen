@@ -19,6 +19,12 @@ STATE_RENT_THRESHOLDS: dict[str, Decimal] = {
 }
 FRESH_FILING_DAYS = 7
 
+# Legacy EC-era allowlist. Hand-curated for landlord (Grant Ellis) prospecting:
+# affluent urban cores and high-property-value suburbs. NOT calibrated for
+# tenant (NG / Vantage Defense) demographics. With CAPTURE_EXPANDED_ZIPS=true,
+# off-allowlist filings land in lead_bucket='captured' for Phase 3 analysis
+# rather than being discarded outright. See:
+# docs/superpowers/specs/2026-05-28-tenant-lead-volume-overhaul-design.md
 APPROVED_ZIPS: dict[str, set[str]] = {
     "TX": {
         "77002", "77003", "77004", "77006", "77007", "77008", "77019",
@@ -121,6 +127,7 @@ def classify_lead(
     property_type: str | None = None,
     estimated_rent: float | Decimal | None = None,
     today: date | None = None,
+    capture_expanded: bool = False,
 ) -> QualificationOutcome:
     property_zip = extract_property_zip(property_address)
     if property_zip is None:
@@ -132,6 +139,13 @@ def classify_lead(
         )
 
     if not is_approved_zip(state, property_zip):
+        if capture_expanded:
+            return QualificationOutcome(
+                property_zip=property_zip,
+                lead_bucket="captured",
+                discard_reason=None,
+                qualification_notes="Captured: ZIP off legacy allowlist, awaiting Phase 3 promotion policy.",
+            )
         return QualificationOutcome(
             property_zip=property_zip,
             lead_bucket="discarded",
