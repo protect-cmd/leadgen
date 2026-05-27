@@ -522,6 +522,8 @@ def _filter_dashboard_query(query, view: str):
         return query.eq("lead_bucket", "held")
     if view in ("ec_discarded", "ng_discarded"):
         return query.eq("lead_bucket", "discarded")
+    if view in ("ec_captured", "ng_captured", "captured"):
+        return query.eq("lead_bucket", "captured")
     if view == "ng_already_called":
         return query.eq("lead_bucket", "residential_approved").or_(
             "language_hint.is.null,language_hint.neq.spanish_likely"

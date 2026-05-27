@@ -109,6 +109,7 @@ async def send_run_summary(
         f"Filings: {metrics.get('filings_received', 0)}",
         f"Duplicates: {metrics.get('duplicates_skipped', 0)}",
         f"Discarded/skipped: {metrics.get('address_skipped', 0)}",
+        f"Captured (off-allowlist ZIPs): {metrics.get('captured', 0)}",
         f"BatchData calls: {metrics.get('batchdata_calls', 0)}",
         f"Phones found: {metrics.get('phones_found', 0)}",
         f"GHL created: {metrics.get('ghl_created', 0)}",
