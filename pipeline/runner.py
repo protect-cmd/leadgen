@@ -31,6 +31,7 @@ GHL_EC_REVIEW_STAGE_ID = os.getenv("GHL_EC_REVIEW_STAGE_ID", "")
 GHL_NG_RESIDENTIAL_STAGE_ID = os.getenv("GHL_NG_NEW_FILING_STAGE_ID", "")
 GHL_NG_COMMERCIAL_STAGE_ID = os.getenv("GHL_NG_COMMERCIAL_STAGE_ID", "")
 _AUTO_BLAND_CALLS_ENABLED = os.getenv("AUTO_BLAND_CALLS_ENABLED", "false").lower() == "true"
+_CAPTURE_EXPANDED_ZIPS = os.getenv("CAPTURE_EXPANDED_ZIPS", "true").lower() == "true"
 
 _BUSINESS_RE = re.compile(
     r"\b(LLC|INC|CORP|LTD|LP|LLP|PLLC|PROPERTIES|PROPERTY|MANAGEMENT|MGMT|"
@@ -230,6 +231,7 @@ async def _classify_and_store(filing: Filing, contact: EnrichedContact | None = 
         filing_date=filing.filing_date,
         property_type=contact.property_type if contact else filing.property_type_hint,
         estimated_rent=contact.estimated_rent if contact else filing.claim_amount,
+        capture_expanded=_CAPTURE_EXPANDED_ZIPS,
     )
     await dedup_service.update_classification(filing.case_number, outcome)
     return outcome.lead_bucket
@@ -310,6 +312,7 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         filings_received=len(filings),
         duplicates_skipped=0,
         address_skipped=0,
+        captured=0,
         batchdata_calls=0,
         ftc_scrubs_upgraded=0,
         ng_phones_pushed=0,
@@ -347,6 +350,10 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         if lead_bucket == "discarded":
             log.info(f"{filing.case_number} discarded before enrichment")
             m["address_skipped"] += 1
+            continue
+        if lead_bucket == "captured":
+            log.info(f"{filing.case_number} captured (off-allowlist ZIP); no enrichment")
+            m["captured"] += 1
             continue
 
         if await _apply_rent_precheck(filing):
