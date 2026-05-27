@@ -263,7 +263,25 @@ async def search_tenant_detailed(
 
     if not _name_matches(full_expected, primary_name):
         log.info("SearchBug name mismatch: expected=%r, got=%r", full_expected, primary_name)
-        return SearchBugResult("name_mismatch", rows=rows)
+        # Still extract the phone + address — the runner routes these to a
+        # review stage so a human can decide whether the mismatch is benign
+        # (nickname, hyphenated last name, AKA) before outreach.
+        mismatch_phone = _best_phone((person.get("phones") or {}).get("phone"))
+        mismatch_addr = _most_recent_address((person.get("addresses") or {}).get("address"))
+        resolved_address = None
+        if mismatch_addr:
+            parts = [
+                mismatch_addr.get("fullStreet", ""),
+                mismatch_addr.get("city", ""),
+                f"{mismatch_addr.get('state', '')} {mismatch_addr.get('zip', '')}".strip(),
+            ]
+            resolved_address = ", ".join(p for p in parts if p) or None
+        return SearchBugResult(
+            "name_mismatch",
+            phone=mismatch_phone,
+            resolved_address=resolved_address,
+            rows=rows,
+        )
 
     phone = _best_phone((person.get("phones") or {}).get("phone"))
     addr = _most_recent_address((person.get("addresses") or {}).get("address"))
