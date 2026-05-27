@@ -1,6 +1,43 @@
 from __future__ import annotations
 
+import re
+
 _GENERATIONAL_SUFFIXES: frozenset[str] = frozenset({"jr", "sr", "ii", "iii", "iv"})
+
+_OCCUPANT_TRAILER_RE = re.compile(
+    r"[,\s]+("
+    r"and(?:/or)?\s+all\s+(?:other\s+)?occupants?"
+    r"|all\s+(?:other\s+)?occupants?"
+    r"|et\s*\.?\s*al\s*\.?"
+    r")"
+    r"(?:\s+of\s+.*)?"          # also drop "of <address>" tail
+    r".*$",                       # and any tokens after the trailer
+    flags=re.IGNORECASE,
+)
+
+_PLACEHOLDER_NAMES = frozenset({
+    "john doe", "jane doe", "j doe", "jdoe",
+    "unknown", "unknown tenant", "tenant", "tenant in possession",
+    "all occupants", "occupants", "occupants unknown",
+    "squaters", "squatter", "squatters",
+})
+
+
+def clean_tenant_name(raw: str) -> str:
+    """Strip occupant trailers and reject placeholder defendant names.
+
+    Returns the cleaned name, or '' if the row is a placeholder
+    (causes downstream bad_name gate to drop the filing).
+    """
+    if not raw:
+        return ""
+    cleaned = _OCCUPANT_TRAILER_RE.sub("", raw).strip(" ,.")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    if not cleaned:
+        return ""
+    if cleaned.lower() in _PLACEHOLDER_NAMES:
+        return ""
+    return cleaned
 
 
 def _is_middle_initial(token: str) -> bool:
