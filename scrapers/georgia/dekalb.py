@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 
 from models.filing import Filing
 from scrapers.dates import court_today
+from services.name_utils import clean_tenant_name
 
 log = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ class DeKalbDispossessoryScraper:
                 filings.append(
                     Filing(
                         case_number=case_number,
-                        tenant_name=case.get("tenant_name") or "Unknown",
+                        tenant_name=clean_tenant_name(case.get("tenant_name") or "") or (case.get("tenant_name") or "Unknown"),
                         property_address="Decatur, GA",
                         landlord_name=case.get("landlord_name") or "Unknown",
                         filing_date=court_date,

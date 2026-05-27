@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 
 from models.filing import Filing
 from scrapers.dates import court_today
+from services.name_utils import clean_tenant_name
 
 log = logging.getLogger(__name__)
 
@@ -262,7 +263,7 @@ class TarrantCountyJPScraper:
                         filings.append(
                             Filing(
                                 case_number=row["case_number"],
-                                tenant_name=row["tenant"],
+                                tenant_name=clean_tenant_name(row["tenant"]) or row["tenant"],
                                 property_address=detail["property_address"],
                                 landlord_name=row["landlord"],
                                 filing_date=row["filing_date"],

@@ -10,6 +10,7 @@ import requests
 
 from models.filing import Filing
 from scrapers.dates import court_today
+from services.name_utils import clean_tenant_name
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ class DavidsonTNScraper:
 
                 filings.append(Filing(
                     case_number=case["case_number"],
-                    tenant_name=case["defendant"] or "Unknown",
+                    tenant_name=clean_tenant_name(case["defendant"] or "") or (case["defendant"] or "Unknown"),
                     property_address=case["address"] or "Unknown",
                     landlord_name=case["plaintiff"] or "Unknown",
                     filing_date=court_dt,

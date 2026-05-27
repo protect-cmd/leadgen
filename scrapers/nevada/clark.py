@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 
 from models.filing import Filing
 from scrapers.dates import court_today
+from services.name_utils import clean_tenant_name
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ def _parse_listable_events(
         filings.append(
             Filing(
                 case_number=case_number,
-                tenant_name=tenant,
+                tenant_name=clean_tenant_name(tenant) or tenant,
                 property_address="Unknown",
                 landlord_name=landlord,
                 filing_date=hearing_date,

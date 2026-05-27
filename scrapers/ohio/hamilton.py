@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 
 from models.filing import Filing
 from scrapers.dates import court_today
+from services.name_utils import clean_tenant_name
 
 log = logging.getLogger(__name__)
 
@@ -182,7 +183,7 @@ def _parse_eviction_schedule(
         filings.append(
             Filing(
                 case_number=case_number,
-                tenant_name=tenant or "Unknown",
+                tenant_name=clean_tenant_name(tenant or "") or (tenant or "Unknown"),
                 property_address="Cincinnati, OH",  # upgraded to real address in scrape() via party page
                 landlord_name=landlord or "Unknown",
                 filing_date=hearing_date,

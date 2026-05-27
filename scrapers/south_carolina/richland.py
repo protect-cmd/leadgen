@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 
 from models.filing import Filing
 from scrapers.base_scraper import BaseScraper
+from services.name_utils import clean_tenant_name
 
 log = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ class RichlandSCScraper(BaseScraper):
                     filings.append(
                         Filing(
                             case_number=case["case_number"],
-                            tenant_name=case["defendant"],
+                            tenant_name=clean_tenant_name(case["defendant"]) or case["defendant"],
                             property_address=address or "Unknown",
                             landlord_name=case["plaintiff"] or "Unknown",
                             filing_date=case["filed_date"],

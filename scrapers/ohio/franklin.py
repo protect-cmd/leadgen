@@ -13,6 +13,7 @@ import requests
 
 from models.filing import Filing
 from scrapers.dates import court_today
+from services.name_utils import clean_tenant_name
 
 log = logging.getLogger(__name__)
 
@@ -171,7 +172,7 @@ def _parse_eviction_csv(csv_text: str, *, source_url: str) -> list[Filing]:
             filings.append(
                 Filing(
                     case_number=case_number,
-                    tenant_name=tenant or "Unknown",
+                    tenant_name=clean_tenant_name(tenant or "") or (tenant or "Unknown"),
                     property_address=address or "Unknown",
                     landlord_name=landlord or "Unknown",
                     filing_date=filing_date,

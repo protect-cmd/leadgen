@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from models.filing import Filing
 from scrapers.base_scraper import BaseScraper
 from scrapers.dates import court_today
+from services.name_utils import clean_tenant_name
 
 log = logging.getLogger(__name__)
 
@@ -185,7 +186,7 @@ class MarionCountyScraper(BaseScraper):
 
         return Filing(
             case_number=case_number,
-            tenant_name=defendant,
+            tenant_name=clean_tenant_name(defendant) or defendant,
             property_address=def_address or "Unknown",
             landlord_name=plaintiff or "Unknown",
             filing_date=filing_date,

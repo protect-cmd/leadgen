@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 
 from models.filing import Filing
 from scrapers.dates import court_today
+from services.name_utils import clean_tenant_name
 from scrapers.georgia.cobb_assessor import AddressMatchResult, CobbAssessorClient
 from services.nominatim_service import geocode_street_cobb
 
@@ -146,7 +147,7 @@ class CobbMagistrateCourtScraper:
 
                 filings.append(Filing(
                     case_number=case_num,
-                    tenant_name=tenant,
+                    tenant_name=clean_tenant_name(tenant) or tenant,
                     property_address=property_address,
                     landlord_name=landlord,
                     filing_date=court_dt or today,

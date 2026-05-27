@@ -3,6 +3,7 @@ import logging
 from datetime import date, datetime
 from scrapers.base_scraper import BaseScraper
 from models.filing import Filing
+from services.name_utils import clean_tenant_name
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class LosAngelesScraper(BaseScraper):
 
                         filings.append(Filing(
                             case_number=case_number.strip(),
-                            tenant_name=tenant_name.strip(),
+                            tenant_name=clean_tenant_name(tenant_name.strip()) or tenant_name.strip(),
                             property_address=address.strip(),
                             landlord_name=landlord_name.strip(),
                             filing_date=filing_date,

@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 from models.filing import Filing
 from scrapers.base_scraper import BaseScraper
 from scrapers.dates import court_today
+from services.name_utils import clean_tenant_name
 
 log = logging.getLogger(__name__)
 
@@ -375,7 +376,7 @@ class ReSearchGAScraper(BaseScraper):
 
         return Filing(
             case_number=case_number,
-            tenant_name=cls._clean_party_name(tenant_name),
+            tenant_name=clean_tenant_name(cls._clean_party_name(tenant_name)) or cls._clean_party_name(tenant_name),
             property_address="Unknown",
             landlord_name=cls._clean_party_name(landlord_name) or "Unknown",
             filing_date=filing_date,

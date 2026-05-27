@@ -11,6 +11,7 @@ import requests
 
 from models.filing import Filing
 from scrapers.dates import court_today
+from services.name_utils import clean_tenant_name
 from scrapers.arizona.maricopa_assessor import (
     AddressMatchResult,
     MaricopaAssessorClient,
@@ -146,7 +147,7 @@ class MaricopaJusticeCourtScraper:
     ) -> Filing:
         return Filing(
             case_number=case.case_number,
-            tenant_name=case.tenant_name or "Unknown",
+            tenant_name=clean_tenant_name(case.tenant_name or "") or (case.tenant_name or "Unknown"),
             property_address=self._property_address(detail),
             landlord_name=case.landlord_name or "Unknown",
             filing_date=detail.filing_date,
@@ -205,7 +206,7 @@ def _parse_calendar_html(
                 court_time=_extract_class_text(block, "jc-cc-case-time"),
                 notice_type=title,
                 landlord_name=_extract_class_text(block, "jc-cc-case-party"),
-                tenant_name=tenant or "Unknown",
+                tenant_name=clean_tenant_name(tenant or "") or (tenant or "Unknown"),
                 detail_path=detail_path,
                 calendar_url=calendar_url,
             )
