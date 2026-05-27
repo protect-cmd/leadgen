@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import io
 import logging
-import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -12,6 +11,7 @@ from playwright.async_api import Download
 from models.filing import Filing
 from scrapers.base_scraper import BaseScraper
 from scrapers.dates import court_today
+from services.name_utils import clean_tenant_name
 
 log = logging.getLogger(__name__)
 
@@ -56,12 +56,6 @@ F_DEF_CITY = "Defendant Addr City "
 F_DEF_STATE = "Defendant Addr State"
 F_DEF_ZIP = "Defendant Addr Zip"
 F_HEARING_DATE = "Next Hearing Date"
-
-_OCCUPANTS_RE = re.compile(
-    r",?\s*(And\s+All\s+Other\s+Occupants?|et\s+al\.?)\s*$",
-    re.IGNORECASE,
-)
-
 
 class HarrisCountyScraper(BaseScraper):
     """
@@ -217,7 +211,7 @@ class HarrisCountyScraper(BaseScraper):
 
     @staticmethod
     def _clean_defendant(name: str) -> str:
-        return _OCCUPANTS_RE.sub("", name).strip().strip(",").strip()
+        return clean_tenant_name(name)
 
     @staticmethod
     def _build_address(line1: str, line2: str, city: str, state: str, zip_: str) -> str:
