@@ -360,9 +360,16 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         try:
             property_info = None
             property_lookup_calls = 0
-            if filing.property_type_hint is None:
+            # Only the landlord track needs BatchData's property lookup (it informs
+            # commercial-vs-residential routing for the owner skip-trace). In
+            # tenant-only mode we infer property_type from notice_type + tenant_name
+            # heuristics — saves a third-party call per filing.
+            if landlord_track_enabled and filing.property_type_hint is None:
                 property_info = await batchdata_service.lookup_property_info(filing)
                 property_lookup_calls = 1
+            elif filing.property_type_hint is None:
+                from services.name_utils import infer_property_type
+                filing.property_type_hint = infer_property_type(filing)
 
             if landlord_track_enabled and enrich_tenant_flag:
                 ec_contact, ng_contact = await asyncio.gather(
