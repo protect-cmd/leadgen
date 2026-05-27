@@ -46,6 +46,15 @@ def _is_middle_initial(token: str) -> bool:
     return len(t) == 1
 
 
+_PARTICLE_TOKENS: frozenset[str] = frozenset({
+    "de", "del", "la", "los", "las", "van", "von", "der", "da", "di", "dos",
+})
+
+
+def _is_particle(token: str) -> bool:
+    return token.rstrip(".").lower() in _PARTICLE_TOKENS
+
+
 def parse_name(raw: str) -> tuple[str, str]:
     """Parse a raw court name into (first_name, last_name).
 
@@ -55,6 +64,8 @@ def parse_name(raw: str) -> tuple[str, str]:
     - "FIRST LAST"
     - "FIRST MIDDLE LAST"   -> middle stripped
     - "FIRST [MIDDLE] LAST JR/SR/II/III/IV"  -> suffix stripped
+    - "FIRST PARTICLE [PARTICLE] LAST" -> particle(s) kept with last name
+      (e.g. "Stephanie De Los Santos" -> ("Stephanie", "De Los Santos"))
     """
     raw = raw.strip()
     if not raw:
@@ -80,7 +91,18 @@ def parse_name(raw: str) -> tuple[str, str]:
     while remaining and remaining[-1].rstrip(".").lower() in _GENERATIONAL_SUFFIXES:
         remaining.pop()
 
-    last = remaining[-1] if remaining else tokens[-1]
+    if not remaining:
+        return "", ""
+
+    # Walk backward from the final token to find where the surname begins.
+    # If the token before the current start is a particle (De / La / Van / ...),
+    # include it in the last name. This keeps compound surnames intact:
+    # "Stephanie De Los Santos" -> last="De Los Santos".
+    last_start = len(remaining) - 1
+    while last_start > 0 and _is_particle(remaining[last_start - 1]):
+        last_start -= 1
+
+    last = " ".join(remaining[last_start:])
     return first, last
 
 
