@@ -32,6 +32,7 @@ GHL_NG_RESIDENTIAL_STAGE_ID = os.getenv("GHL_NG_NEW_FILING_STAGE_ID", "")
 GHL_NG_COMMERCIAL_STAGE_ID = os.getenv("GHL_NG_COMMERCIAL_STAGE_ID", "")
 _AUTO_BLAND_CALLS_ENABLED = os.getenv("AUTO_BLAND_CALLS_ENABLED", "false").lower() == "true"
 _CAPTURE_EXPANDED_ZIPS = os.getenv("CAPTURE_EXPANDED_ZIPS", "true").lower() == "true"
+_ENRICHMENT_WINDOW_DAYS = int(os.getenv("ENRICHMENT_WINDOW_DAYS", "10"))
 
 _BUSINESS_RE = re.compile(
     r"\b(LLC|INC|CORP|LTD|LP|LLP|PLLC|PROPERTIES|PROPERTY|MANAGEMENT|MGMT|"
@@ -313,6 +314,11 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         duplicates_skipped=0,
         address_skipped=0,
         captured=0,
+        gate_out_of_window=0,
+        gate_overdue=0,
+        gate_invalid_address=0,
+        gate_bad_name=0,
+        gate_duplicate_in_run=0,
         batchdata_calls=0,
         ftc_scrubs_upgraded=0,
         ng_phones_pushed=0,
@@ -321,6 +327,15 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         bland_triggered=0,
         instantly_enrolled=0,
     )
+
+    from datetime import date as _date
+    from pipeline import gates as _gates
+    from services.name_utils import parse_name as _parse_name
+    from services.searchbug_service import query_street_address as _qsa
+    from pipeline.qualification import extract_property_zip as _ezip
+
+    _today = _date.today()
+    _seen_queries: set[str] = set()
 
     for filing in filings:
         log.info(f"Processing {filing.case_number}")
@@ -358,6 +373,33 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
 
         if await _apply_rent_precheck(filing):
             m["address_skipped"] += 1
+            continue
+
+        # 9-gate filter before any paid enrichment call. Each gate increments a
+        # run metric on miss so telemetry shows where leads are dropping.
+        if not _gates.gate_filing_window(filing.filing_date, _today, _ENRICHMENT_WINDOW_DAYS):
+            log.info(f"{filing.case_number} skipped: out of filing window")
+            m["gate_out_of_window"] += 1
+            continue
+        if not _gates.gate_court_date(filing.court_date, _today):
+            log.info(f"{filing.case_number} skipped: court_date overdue")
+            m["gate_overdue"] += 1
+            continue
+        if not _gates.gate_address(filing.property_address):
+            log.info(f"{filing.case_number} skipped: invalid address")
+            m["gate_invalid_address"] += 1
+            continue
+        if not _gates.gate_name(filing.tenant_name):
+            log.info(f"{filing.case_number} skipped: bad tenant name")
+            m["gate_bad_name"] += 1
+            continue
+
+        _first, _last = _parse_name(filing.tenant_name)
+        _street = _qsa(filing.property_address)
+        _zip = _ezip(filing.property_address) or ""
+        if not _gates.gate_query_dedup(_first, _last, _street, _zip, _seen_queries):
+            log.info(f"{filing.case_number} skipped: duplicate query in run")
+            m["gate_duplicate_in_run"] += 1
             continue
 
         enrich_tenant_flag = tenant_track_enabled and not _is_business_name(filing.tenant_name)
