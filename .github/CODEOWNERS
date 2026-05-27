@@ -1,0 +1,37 @@
+# CODEOWNERS — who must review PRs touching each path.
+# GitHub enforces this automatically: a PR touching a path requires
+# at least one approval from every listed owner before merge.
+#
+# Replace the @<placeholder> handles with the builders' real GitHub
+# usernames once you've added them as collaborators.
+
+# Default: lead reviews everything not explicitly owned below.
+*                                       @ZeannCo
+
+# Nourul — Texas
+/scrapers/texas/                        @nourul-handle @ZeannCo
+/jobs/run_tx_*.py                       @nourul-handle @ZeannCo
+/tests/test_tx_*.py                     @nourul-handle @ZeannCo
+
+# Franz — Ohio
+/scrapers/ohio/                         @franz-handle @ZeannCo
+/jobs/run_oh_*.py                       @franz-handle @ZeannCo
+/tests/test_oh_*.py                     @franz-handle @ZeannCo
+
+# Donnald — Tennessee
+/scrapers/tennessee/                    @donnald-handle @ZeannCo
+/jobs/run_tn_*.py                       @donnald-handle @ZeannCo
+/tests/test_tn_*.py                     @donnald-handle @ZeannCo
+
+# Off-limits — built greens. Lead-only edits.
+/scrapers/texas/harris.py               @ZeannCo
+/scrapers/texas/tarrant.py              @ZeannCo
+/scrapers/ohio/hamilton.py              @ZeannCo
+/scrapers/ohio/franklin.py              @ZeannCo
+/scrapers/tennessee/davidson.py         @ZeannCo
+
+# Shared infrastructure — lead-only.
+/services/                              @ZeannCo
+/scripts/                               @ZeannCo
+/docs/source_discovery_matrix.md        @ZeannCo
+/.github/                               @ZeannCo
