@@ -106,9 +106,37 @@ def _enrichment_payload(contact: EnrichedContact) -> dict:
     }
 
 
+_LEAD_CONTACT_COLUMNS_CACHE: set[str] | None = None
+
+
+def _lead_contact_known_columns() -> set[str]:
+    """Discover existing columns on lead_contacts (cached per process).
+
+    Mirrors run_metrics column discovery: when a new field is added to the
+    payload but the migration hasn't landed yet, drop the unknown key
+    instead of failing the entire write. Migration 013 adds searchbug_*.
+    """
+    global _LEAD_CONTACT_COLUMNS_CACHE
+    if _LEAD_CONTACT_COLUMNS_CACHE is not None:
+        return _LEAD_CONTACT_COLUMNS_CACHE
+    try:
+        sample = _execute_with_retry(
+            _client.table("lead_contacts").select("*").limit(1),
+            "discover lead_contacts columns",
+        )
+        if sample.data:
+            _LEAD_CONTACT_COLUMNS_CACHE = set(sample.data[0].keys())
+        else:
+            _LEAD_CONTACT_COLUMNS_CACHE = set()
+    except Exception as exc:
+        log.warning("Could not discover lead_contacts columns: %s", exc)
+        _LEAD_CONTACT_COLUMNS_CACHE = set()
+    return _LEAD_CONTACT_COLUMNS_CACHE
+
+
 def _lead_contact_payload(contact: EnrichedContact) -> dict:
     now = datetime.now(timezone.utc).isoformat()
-    return {
+    payload = {
         "case_number": contact.filing.case_number,
         "track": contact.track,
         "contact_name": contact.contact_name,
@@ -118,9 +146,18 @@ def _lead_contact_payload(contact: EnrichedContact) -> dict:
         "estimated_rent": contact.estimated_rent,
         "property_type": contact.property_type,
         "language_hint": contact.language_hint,
+        "searchbug_status": contact.searchbug_status,
+        "searchbug_returned_name": contact.searchbug_returned_name,
         "enrichment_source": "batchdata",
         "updated_at": now,
     }
+    # Drop fields the schema doesn't have yet (e.g. before migration 013
+    # is applied). Empty set means we couldn't introspect — send as-is and
+    # let the API surface a clear error.
+    known = _lead_contact_known_columns()
+    if known:
+        payload = {k: v for k, v in payload.items() if k in known}
+    return payload
 
 
 async def upsert_contact_enrichment(contact: EnrichedContact) -> None:

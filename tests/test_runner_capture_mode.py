@@ -11,6 +11,7 @@ from pipeline import runner
 @pytest.mark.asyncio
 async def test_capture_mode_short_circuits_enrichment(monkeypatch):
     monkeypatch.setattr(runner, "_CAPTURE_EXPANDED_ZIPS", True)
+    monkeypatch.setattr(runner, "_BYPASS_ZIP_FILTER", False)
     monkeypatch.setenv("TENANT_TRACK_ENABLED", "true")
     monkeypatch.setenv("LANDLORD_TRACK_ENABLED", "false")
 
@@ -48,6 +49,7 @@ async def test_capture_mode_short_circuits_enrichment(monkeypatch):
 async def test_capture_mode_off_allowlist_zip_discarded_when_flag_off(monkeypatch):
     """Regression: when CAPTURE_EXPANDED_ZIPS=False, off-allowlist still discards."""
     monkeypatch.setattr(runner, "_CAPTURE_EXPANDED_ZIPS", False)
+    monkeypatch.setattr(runner, "_BYPASS_ZIP_FILTER", False)
     monkeypatch.setenv("TENANT_TRACK_ENABLED", "true")
     monkeypatch.setenv("LANDLORD_TRACK_ENABLED", "false")
 
