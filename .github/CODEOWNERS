@@ -1,37 +1,42 @@
 # CODEOWNERS — who must review PRs touching each path.
-# GitHub enforces this automatically: a PR touching a path requires
-# at least one approval from every listed owner before merge.
+# GitHub auto-requests review from listed owners and (when branch
+# protection is on with "Require review from Code Owners") blocks
+# merge until every owner of every touched path has approved.
 #
-# Replace the @<placeholder> handles with the builders' real GitHub
-# usernames once you've added them as collaborators.
+# More-specific rules override less-specific ones. E.g. an owner
+# of /scrapers/texas/ still cannot merge changes to harris.py
+# because the per-file rule below routes that to lead-only.
 
 # Default: lead reviews everything not explicitly owned below.
 *                                       @ZeannCo
 
 # Nourul — Texas
-/scrapers/texas/                        @nourul-handle @ZeannCo
-/jobs/run_tx_*.py                       @nourul-handle @ZeannCo
-/tests/test_tx_*.py                     @nourul-handle @ZeannCo
+/scrapers/texas/                        @Nourulslar @ZeannCo
+/jobs/run_texas.py                      @Nourulslar @ZeannCo
 
 # Franz — Ohio
-/scrapers/ohio/                         @franz-handle @ZeannCo
-/jobs/run_oh_*.py                       @franz-handle @ZeannCo
-/tests/test_oh_*.py                     @franz-handle @ZeannCo
+/scrapers/ohio/                         @nikburs @ZeannCo
+/jobs/run_ohio.py                       @nikburs @ZeannCo
 
 # Donnald — Tennessee
-/scrapers/tennessee/                    @donnald-handle @ZeannCo
-/jobs/run_tn_*.py                       @donnald-handle @ZeannCo
-/tests/test_tn_*.py                     @donnald-handle @ZeannCo
+/scrapers/tennessee/                    @juggerNAD @ZeannCo
+/jobs/run_tennessee.py                  @juggerNAD @ZeannCo
 
-# Off-limits — built greens. Lead-only edits.
+# Off-limits — built greens. Lead-only edits on these specific files.
 /scrapers/texas/harris.py               @ZeannCo
 /scrapers/texas/tarrant.py              @ZeannCo
 /scrapers/ohio/hamilton.py              @ZeannCo
 /scrapers/ohio/franklin.py              @ZeannCo
 /scrapers/tennessee/davidson.py         @ZeannCo
 
-# Shared infrastructure — lead-only.
+# Standalone built-green runners — lead only.
+/jobs/run_tarrant.py                    @ZeannCo
+/jobs/run_georgia_cobb.py               @ZeannCo
+/jobs/run_georgia_dekalb.py             @ZeannCo
+
+# Shared infrastructure — lead only.
 /services/                              @ZeannCo
 /scripts/                               @ZeannCo
+/pipeline/                              @ZeannCo
 /docs/source_discovery_matrix.md        @ZeannCo
 /.github/                               @ZeannCo
