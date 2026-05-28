@@ -129,7 +129,9 @@ class HarrisCountyScraper(BaseScraper):
             await page.fill(SELECTOR_TDATE, end_str)
 
             # Step 7 — submit (type="button", must use click not form submit)
-            async with page.expect_download(timeout=60_000) as dl_info:
+            # 5min timeout: the portal can be very slow generating large CSV exports,
+            # especially mid-day. Previous 60s timeout was too aggressive.
+            async with page.expect_download(timeout=300_000) as dl_info:
                 await page.click(SELECTOR_SUBMIT)
 
             download: Download = await dl_info.value
