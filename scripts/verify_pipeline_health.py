@@ -350,6 +350,55 @@ def check_searchbug_headroom() -> list[CheckResult]:
     return [CheckResult("searchbug", "daily_cap", status, detail, fix_hint=hint)]
 
 
+def _looks_like_uuid(s: str) -> bool:
+    """Lightweight check: 32 hex chars + 4 dashes = 36 total chars."""
+    s = s.strip()
+    return len(s) >= 32 and s.count("-") >= 4
+
+
+_GHL_STAGE_KEYS = [
+    # (env_key, required_for_tenant, label)
+    ("GHL_NEW_FILING_STAGE_ID", False, "EC primary"),
+    ("GHL_NG_NEW_FILING_STAGE_ID", True, "NG primary (residential)"),
+    ("GHL_NG_COMMERCIAL_STAGE_ID", False, "NG commercial"),
+    ("GHL_NG_REVIEW_STAGE_ID", True, "NG review (name_mismatch/ambiguous)"),
+]
+
+
+def check_ghl_stage_ids() -> list[CheckResult]:
+    """Verify GHL stage ID env vars are set and look UUID-shaped.
+
+    Live API resolution (call GHL to confirm the stage exists in the
+    pipeline) is intentionally NOT done here — too slow for the <30s
+    budget and noisy on rate limits. Belongs to a future --strict mode.
+    """
+    out: list[CheckResult] = []
+    tenant_enabled = os.environ.get("TENANT_TRACK_ENABLED", "true").lower() == "true"
+
+    for key, required, label in _GHL_STAGE_KEYS:
+        val = (os.environ.get(key) or "").strip()
+        if not val:
+            if required and tenant_enabled:
+                out.append(CheckResult(
+                    "ghl", key, "FAIL",
+                    f"missing; required ({label})",
+                    fix_hint=f"set {key} in Railway env",
+                ))
+            else:
+                out.append(CheckResult("ghl", key, "OK", f"not set; {label} optional"))
+            continue
+        if not _looks_like_uuid(val):
+            out.append(CheckResult(
+                "ghl", key, "FLAG",
+                f"set but doesn't look UUID-shaped: {val[:20]!r}",
+                fix_hint="confirm the stage ID copied correctly from GHL",
+            ))
+        else:
+            out.append(CheckResult("ghl", key, "OK", f"set ({label})"))
+
+    return out
+
+
 def print_report(results: list[CheckResult]) -> None:
     """Group results by layer and print one section per layer."""
     by_layer: dict[str, list[CheckResult]] = defaultdict(list)
@@ -392,6 +441,7 @@ def main(argv: list[str] | None = None) -> int:
     results.extend(check_schema())
     results.extend(check_scheduled_scrapers())
     results.extend(check_searchbug_headroom())
+    results.extend(check_ghl_stage_ids())
     print_report(results)
 
     has_fail = any(r.status == "FAIL" for r in results)

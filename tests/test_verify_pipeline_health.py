@@ -17,6 +17,7 @@ from scripts.verify_pipeline_health import (
     check_schema,
     check_scheduled_scrapers,
     check_searchbug_headroom,
+    check_ghl_stage_ids,
     _compute_pass_rate,
     SCHEDULED_JOB_COUNTIES,
 )
@@ -324,3 +325,34 @@ def test_check_searchbug_headroom_missing_db_ok(tmp_path, monkeypatch):
     results = check_searchbug_headroom()
     # No DB yet -> counter assumed 0 (full headroom, OK)
     assert any(r.status == "OK" for r in results)
+
+
+def test_check_ghl_stage_ids_all_set(monkeypatch):
+    monkeypatch.setenv("GHL_NEW_FILING_STAGE_ID", "11111111-1111-1111-1111-111111111111")
+    monkeypatch.setenv("GHL_NG_NEW_FILING_STAGE_ID", "22222222-2222-2222-2222-222222222222")
+    monkeypatch.setenv("GHL_NG_REVIEW_STAGE_ID", "33333333-3333-3333-3333-333333333333")
+    monkeypatch.setenv("GHL_NG_COMMERCIAL_STAGE_ID", "44444444-4444-4444-4444-444444444444")
+    monkeypatch.setenv("TENANT_TRACK_ENABLED", "true")
+    results = check_ghl_stage_ids()
+    fails = [r for r in results if r.status == "FAIL"]
+    assert not fails, [(r.name, r.detail) for r in fails]
+
+
+def test_check_ghl_stage_ids_short_id_flagged(monkeypatch):
+    monkeypatch.setenv("GHL_NEW_FILING_STAGE_ID", "x")
+    monkeypatch.setenv("GHL_NG_NEW_FILING_STAGE_ID", "22222222-2222-2222-2222-222222222222")
+    monkeypatch.setenv("GHL_NG_REVIEW_STAGE_ID", "33333333-3333-3333-3333-333333333333")
+    monkeypatch.setenv("TENANT_TRACK_ENABLED", "true")
+    results = check_ghl_stage_ids()
+    flags = [r for r in results if r.status == "FLAG"]
+    assert any("GHL_NEW_FILING_STAGE_ID" in r.name for r in flags)
+
+
+def test_check_ghl_stage_ids_missing_review_when_tenant_enabled(monkeypatch):
+    monkeypatch.setenv("GHL_NEW_FILING_STAGE_ID", "11111111-1111-1111-1111-111111111111")
+    monkeypatch.setenv("GHL_NG_NEW_FILING_STAGE_ID", "22222222-2222-2222-2222-222222222222")
+    monkeypatch.delenv("GHL_NG_REVIEW_STAGE_ID", raising=False)
+    monkeypatch.setenv("TENANT_TRACK_ENABLED", "true")
+    results = check_ghl_stage_ids()
+    fails = [r for r in results if r.status == "FAIL"]
+    assert any("GHL_NG_REVIEW_STAGE_ID" in r.name for r in fails)
