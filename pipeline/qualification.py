@@ -128,6 +128,7 @@ def classify_lead(
     estimated_rent: float | Decimal | None = None,
     today: date | None = None,
     capture_expanded: bool = False,
+    bypass_zip_filter: bool = False,
 ) -> QualificationOutcome:
     property_zip = extract_property_zip(property_address)
     if property_zip is None:
@@ -138,7 +139,9 @@ def classify_lead(
             qualification_notes="Discarded before enrichment: no property ZIP found.",
         )
 
-    if not is_approved_zip(state, property_zip):
+    # BYPASS_ZIP_FILTER overrides CAPTURE_EXPANDED_ZIPS — off-allowlist ZIPs
+    # are treated as approved and flow through the full enrichment pipeline.
+    if not is_approved_zip(state, property_zip) and not bypass_zip_filter:
         if capture_expanded:
             return QualificationOutcome(
                 property_zip=property_zip,

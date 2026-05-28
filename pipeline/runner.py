@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -29,16 +28,12 @@ GHL_EC_STAGE_ID = os.getenv("GHL_NEW_FILING_STAGE_ID", "")
 GHL_EC_REVIEW_STAGE_ID = os.getenv("GHL_EC_REVIEW_STAGE_ID", "")
 GHL_NG_RESIDENTIAL_STAGE_ID = os.getenv("GHL_NG_NEW_FILING_STAGE_ID", "")
 GHL_NG_COMMERCIAL_STAGE_ID = os.getenv("GHL_NG_COMMERCIAL_STAGE_ID", "")
+GHL_NG_REVIEW_STAGE_ID = os.getenv("GHL_NG_REVIEW_STAGE_ID", "")
 _AUTO_BLAND_CALLS_ENABLED = os.getenv("AUTO_BLAND_CALLS_ENABLED", "false").lower() == "true"
+_NG_REVIEW_STATUSES = frozenset({"name_mismatch", "ambiguous"})
 _CAPTURE_EXPANDED_ZIPS = os.getenv("CAPTURE_EXPANDED_ZIPS", "true").lower() == "true"
+_BYPASS_ZIP_FILTER = os.getenv("BYPASS_ZIP_FILTER", "false").lower() == "true"
 _ENRICHMENT_WINDOW_DAYS = int(os.getenv("ENRICHMENT_WINDOW_DAYS", "10"))
-
-_BUSINESS_RE = re.compile(
-    r"\b(LLC|INC|CORP|LTD|LP|LLP|PLLC|PROPERTIES|PROPERTY|MANAGEMENT|MGMT|"
-    r"REALTY|INVESTMENTS|HOLDINGS|TRUST|PARTNERS|GROUP|ENTERPRISES|VENTURES|"
-    r"ESTATE\s+OF|DBA|C/O|S\.A\.|BANK)\b",
-    re.IGNORECASE,
-)
 
 SPANISH_LIKELY_TAG = "Spanish-Likely"
 
@@ -49,10 +44,7 @@ class TrackResult:
     instantly_enrolled: bool = False
     instantly_error: str | None = None
     track: str = ""
-
-
-def _is_business_name(name: str) -> bool:
-    return bool(_BUSINESS_RE.search(name))
+    is_review: bool = False
 
 
 def _is_usable_address(address: str) -> bool:
@@ -67,6 +59,54 @@ def _language_tags(contact: EnrichedContact) -> list[str]:
 
 def _has_contact_method(contact: EnrichedContact) -> bool:
     return bool(contact.phone or contact.email)
+
+
+async def _maybe_llm_recover(filing: Filing, *, reason: str) -> bool:
+    """Try to salvage a gate-rejected filing via the LLM recovery service.
+
+    Mutates filing.tenant_name / filing.property_address in place when the LLM
+    returns a high-confidence cleanup that re-passes the rejecting gate.
+    Returns True if the lead was recovered, False otherwise.
+
+    Hard fail-closed: any LLM error / low confidence / cleaned output that
+    still fails the gate → return False so the caller skips as usual.
+    """
+    from services import llm_recovery_service
+    from pipeline import gates as _gates
+
+    if not llm_recovery_service.is_enabled():
+        return False
+
+    result = await llm_recovery_service.recover(
+        raw_name=filing.tenant_name or "",
+        raw_address=filing.property_address or "",
+        state=filing.state or "",
+    )
+    if result.confidence < llm_recovery_service.RECOVERY_CONFIDENCE_THRESHOLD:
+        return False
+    if result.skip_reason:
+        log.info(
+            f"{filing.case_number} LLM declined to recover ({reason}): {result.skip_reason}"
+        )
+        return False
+
+    if reason == "address":
+        if not (result.street and result.zip):
+            return False
+        candidate = result.formatted_address
+        if not _gates.gate_address(candidate):
+            return False
+        filing.property_address = candidate
+        return True
+    if reason == "name":
+        if not (result.first and result.last):
+            return False
+        candidate = result.formatted_name
+        if not _gates.gate_name(candidate):
+            return False
+        filing.tenant_name = candidate
+        return True
+    return False
 
 
 async def _process_track(contact: EnrichedContact) -> TrackResult:
@@ -97,6 +137,36 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
             "no phone or email from enrichment"
         )
         return TrackResult(False, track=contact.track)
+
+    # NG review-stage leads (SearchBug returned name_mismatch or ambiguous).
+    # A human verifies the match before outreach — skip Instantly and Bland.
+    if not is_ec and contact.searchbug_status in _NG_REVIEW_STATUSES:
+        if GHL_NG_REVIEW_STAGE_ID and contact.phone:
+            review_tag = (
+                "Review-NameMismatch"
+                if contact.searchbug_status == "name_mismatch"
+                else "Review-Ambiguous"
+            )
+            try:
+                ghl_id = await ghl_service.create_contact(
+                    contact,
+                    [review_tag] + _language_tags(contact),
+                    GHL_NG_REVIEW_STAGE_ID,
+                )
+                await dedup_service.update_ghl_id(filing.case_number, ghl_id, contact.track)
+                log.info(
+                    f"GHL review contact created [NG]: {ghl_id} "
+                    f"(searchbug_status={contact.searchbug_status})"
+                )
+                return TrackResult(True, track=contact.track, is_review=True)
+            except Exception as e:
+                log.warning(f"GHL review failed [NG] {filing.case_number}: {e}")
+                await notification_service.send_job_error(
+                    job=f"{filing.state}/{filing.county}",
+                    stage="ghl_review_ng",
+                    error=e,
+                )
+        return TrackResult(False, track=contact.track, is_review=True)
 
     if outcome.action == "flag" and is_ec:
         if GHL_EC_REVIEW_STAGE_ID and contact.phone:
@@ -190,6 +260,7 @@ async def _classify_and_store(filing: Filing, contact: EnrichedContact | None = 
         property_type=contact.property_type if contact else filing.property_type_hint,
         estimated_rent=contact.estimated_rent if contact else filing.claim_amount,
         capture_expanded=_CAPTURE_EXPANDED_ZIPS,
+        bypass_zip_filter=_BYPASS_ZIP_FILTER,
     )
     await dedup_service.update_classification(filing.case_number, outcome)
     return outcome.lead_bucket
@@ -218,6 +289,8 @@ async def _apply_rent_precheck(filing: Filing) -> bool:
         filing_date=filing.filing_date,
         property_type=filing.property_type_hint,
         estimated_rent=estimated_rent,
+        capture_expanded=_CAPTURE_EXPANDED_ZIPS,
+        bypass_zip_filter=_BYPASS_ZIP_FILTER,
     )
     await dedup_service.update_classification(filing.case_number, outcome)
 
@@ -277,12 +350,14 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         gate_bad_name=0,
         gate_existing_phone=0,
         gate_duplicate_in_run=0,
+        gate_llm_recovered=0,
         batchdata_calls=0,
         ng_phones_pushed=0,
         phones_found=0,
         ghl_created=0,
         bland_triggered=0,
         instantly_enrolled=0,
+        ng_review_pushed=0,
     )
 
     from datetime import date as _date
@@ -343,13 +418,23 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
             m["gate_overdue"] += 1
             continue
         if not _gates.gate_address(filing.property_address):
-            log.info(f"{filing.case_number} skipped: invalid address")
-            m["gate_invalid_address"] += 1
-            continue
+            recovered = await _maybe_llm_recover(filing, reason="address")
+            if recovered:
+                m["gate_llm_recovered"] = m.get("gate_llm_recovered", 0) + 1
+                log.info(f"{filing.case_number} LLM-recovered address: {filing.property_address!r}")
+            else:
+                log.info(f"{filing.case_number} skipped: invalid address")
+                m["gate_invalid_address"] += 1
+                continue
         if not _gates.gate_name(filing.tenant_name):
-            log.info(f"{filing.case_number} skipped: bad tenant name")
-            m["gate_bad_name"] += 1
-            continue
+            recovered = await _maybe_llm_recover(filing, reason="name")
+            if recovered:
+                m["gate_llm_recovered"] = m.get("gate_llm_recovered", 0) + 1
+                log.info(f"{filing.case_number} LLM-recovered name: {filing.tenant_name!r}")
+            else:
+                log.info(f"{filing.case_number} skipped: bad tenant name")
+                m["gate_bad_name"] += 1
+                continue
 
         if await dedup_service.has_ng_phone(filing.case_number):
             log.info(f"{filing.case_number} skipped: tenant phone already in lead_contacts")
@@ -364,10 +449,8 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
             m["gate_duplicate_in_run"] += 1
             continue
 
-        enrich_tenant_flag = tenant_track_enabled and not _is_business_name(filing.tenant_name)
-        if tenant_track_enabled and not enrich_tenant_flag:
-            log.info(f"{filing.case_number} tenant track skipped: tenant looks like business")
-
+        # gate_name (upstream) already rejects business-named tenants, so any
+        # filing that reaches here is safe for the tenant track when enabled.
         try:
             property_info = None
             property_lookup_calls = 0
@@ -382,7 +465,7 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
                 from services.name_utils import infer_property_type
                 filing.property_type_hint = infer_property_type(filing)
 
-            if landlord_track_enabled and enrich_tenant_flag:
+            if landlord_track_enabled and tenant_track_enabled:
                 ec_contact, ng_contact = await asyncio.gather(
                     batchdata_service.enrich(
                         filing,
@@ -398,7 +481,7 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
                 # enrich (EC) makes 1 BatchData skip-trace; enrich_tenant (NG)
                 # no longer calls BatchData — it goes straight to SearchBug.
                 m["batchdata_calls"] += property_lookup_calls + 1
-            elif enrich_tenant_flag:
+            elif tenant_track_enabled:
                 ng_contact = await batchdata_service.enrich_tenant(
                     filing,
                     property_info=property_info,
@@ -407,7 +490,7 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
                 ec_contact = None
                 # No BatchData skip-trace for tenant track — SearchBug only.
                 m["batchdata_calls"] += property_lookup_calls
-            elif landlord_track_enabled:
+            else:
                 ec_contact = await batchdata_service.enrich(
                     filing,
                     property_info=property_info,
@@ -415,12 +498,6 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
                 )
                 ng_contact = None
                 m["batchdata_calls"] += property_lookup_calls + 1
-            else:
-                m["batchdata_calls"] += property_lookup_calls
-                log.info(
-                    f"{filing.case_number} skipped: business name tenant and landlord track disabled"
-                )
-                continue
         except Exception as e:
             log.warning(f"Enrichment failed for {filing.case_number}: {e}")
             await notification_service.send_job_error(
@@ -458,7 +535,10 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
             if result.ghl_created:
                 m["ghl_created"] += 1
                 if result.track == "ng":
-                    m["ng_phones_pushed"] += 1
+                    if result.is_review:
+                        m["ng_review_pushed"] += 1
+                    else:
+                        m["ng_phones_pushed"] += 1
             if result.instantly_error:
                 m.setdefault("instantly_failures", []).append(result.instantly_error)
             if result.instantly_enrolled:

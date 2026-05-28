@@ -16,6 +16,7 @@ import pytest
 from models.filing import Filing
 from services import batchdata_service
 from services.enrichment_cache import EnrichmentCache
+from services.searchbug_service import SearchBugResult
 
 
 def _filing(**kwargs) -> Filing:
@@ -53,21 +54,51 @@ def _empty_skip_trace_response():
 
 
 @pytest.mark.asyncio
-async def test_green_common_surname_skips_searchbug(mock_cache, monkeypatch):
-    filing = _filing(tenant_name="John Smith")
+async def test_green_common_surname_skips_searchbug_when_no_narrowing(mock_cache, monkeypatch):
+    """Common surname WITHOUT a narrowing street+ZIP → skip SearchBug to avoid
+    a guaranteed-ambiguous query that would burn the daily cap."""
+    # Address has no ZIP — bypass condition (street AND postal) is False.
+    filing = _filing(
+        tenant_name="John Smith",
+        property_address="Cincinnati, OH",
+    )
 
     async def fake_post(*args, **kwargs):
         return _empty_skip_trace_response()
 
     with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
          patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=fake_post)), \
-         patch("services.searchbug_service.search_tenant", new_callable=AsyncMock) as mock_sb:
+         patch("services.searchbug_service.search_tenant_detailed", new_callable=AsyncMock) as mock_sb:
         result = await batchdata_service.enrich_tenant(
             filing, lookup_property_if_missing=False
         )
 
     mock_sb.assert_not_called()
     assert result.phone is None
+
+
+@pytest.mark.asyncio
+async def test_green_common_surname_proceeds_when_street_and_zip_present(mock_cache, monkeypatch):
+    """Common surname WITH a narrowing street+ZIP → call SearchBug anyway. With
+    street+ZIP narrowing, even 'Smith' can resolve to a single match."""
+    filing = _filing(
+        tenant_name="John Smith",
+        property_address="123 Main St, Cincinnati, OH 45202",
+    )
+
+    async def fake_post(*args, **kwargs):
+        return _empty_skip_trace_response()
+
+    with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
+         patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=fake_post)), \
+         patch("services.searchbug_service.search_tenant_detailed", new_callable=AsyncMock,
+               return_value=SearchBugResult("phone_found", phone="5559998888")) as mock_sb:
+        result = await batchdata_service.enrich_tenant(
+            filing, lookup_property_if_missing=False
+        )
+
+    mock_sb.assert_called_once()
+    assert result.phone == "5559998888"
 
 
 @pytest.mark.asyncio
@@ -83,7 +114,7 @@ async def test_green_cache_hit_skips_searchbug(mock_cache, monkeypatch):
 
     with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
          patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=fake_post)), \
-         patch("services.searchbug_service.search_tenant", new_callable=AsyncMock) as mock_sb:
+         patch("services.searchbug_service.search_tenant_detailed", new_callable=AsyncMock) as mock_sb:
         result = await batchdata_service.enrich_tenant(
             filing, lookup_property_if_missing=False
         )
@@ -105,7 +136,7 @@ async def test_green_cached_miss_skips_searchbug(mock_cache, monkeypatch):
 
     with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
          patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=fake_post)), \
-         patch("services.searchbug_service.search_tenant", new_callable=AsyncMock) as mock_sb:
+         patch("services.searchbug_service.search_tenant_detailed", new_callable=AsyncMock) as mock_sb:
         result = await batchdata_service.enrich_tenant(
             filing, lookup_property_if_missing=False
         )
@@ -125,7 +156,7 @@ async def test_green_daily_cap_skips_searchbug(mock_cache, monkeypatch):
 
     with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
          patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=fake_post)), \
-         patch("services.searchbug_service.search_tenant", new_callable=AsyncMock) as mock_sb:
+         patch("services.searchbug_service.search_tenant_detailed", new_callable=AsyncMock) as mock_sb:
         result = await batchdata_service.enrich_tenant(
             filing, lookup_property_if_missing=False
         )
@@ -143,8 +174,8 @@ async def test_green_cache_miss_calls_searchbug_and_stores(mock_cache, monkeypat
 
     with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
          patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=fake_post)), \
-         patch("services.searchbug_service.search_tenant", new_callable=AsyncMock,
-               return_value=("5559998888", "456 Elm St, Cincinnati, OH 45202")) as mock_sb:
+         patch("services.searchbug_service.search_tenant_detailed", new_callable=AsyncMock,
+               return_value=SearchBugResult("phone_found", phone="5559998888", resolved_address="456 Elm St, Cincinnati, OH 45202")) as mock_sb:
         result = await batchdata_service.enrich_tenant(
             filing, lookup_property_if_missing=False
         )
@@ -176,8 +207,8 @@ async def test_green_unitized_address_uses_city_state_zip_tail(mock_cache, monke
     )
 
     with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
-         patch("services.searchbug_service.search_tenant", new_callable=AsyncMock,
-               return_value=("5559998888", None)) as mock_sb:
+         patch("services.searchbug_service.search_tenant_detailed", new_callable=AsyncMock,
+               return_value=SearchBugResult("phone_found", phone="5559998888")) as mock_sb:
         result = await batchdata_service.enrich_tenant(
             filing, lookup_property_if_missing=False
         )
@@ -205,8 +236,8 @@ async def test_green_tenant_does_not_call_batchdata_skip_trace(mock_cache, monke
 
     with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
          patch("httpx.AsyncClient.post", new=fake_post), \
-         patch("services.searchbug_service.search_tenant", new_callable=AsyncMock,
-               return_value=("5559998888", None)) as mock_sb:
+         patch("services.searchbug_service.search_tenant_detailed", new_callable=AsyncMock,
+               return_value=SearchBugResult("phone_found", phone="5559998888")) as mock_sb:
         result = await batchdata_service.enrich_tenant(
             filing, lookup_property_if_missing=False
         )

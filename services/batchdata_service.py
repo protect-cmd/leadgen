@@ -260,157 +260,6 @@ async def enrich(
     )
 
 
-async def enrich_tenant_by_name(
-    filing: Filing,
-    lookup_property_if_missing: bool = True,
-) -> EnrichedContact:
-    """NG track for yellow calendar sources — no property address available.
-
-    Chain: split_tenants → parse_name → cache → surname filter →
-           ZIP resolve → daily cap → SearchBug → BatchData → cache store.
-    """
-    from dataclasses import replace as _dc_replace
-    from services.name_utils import parse_name, split_tenants, is_common_surname, resolve_zip
-    from services.searchbug_service import search_tenant as _searchbug_search
-    from services.enrichment_cache import get_cache
-
-    cache = get_cache()
-    cap = int(os.environ.get("SEARCHBUG_DAILY_CAP", "100"))
-
-    # Parse city/state from yellow-source address "City, STATE" or "City, STATE ZIP"
-    raw_addr = (filing.property_address or "").strip()
-    addr_parts = [p.strip() for p in raw_addr.split(",")]
-    city = addr_parts[0] if addr_parts else ""
-    state = filing.state
-    postal_from_address = ""
-    if len(addr_parts) >= 2:
-        tokens = addr_parts[1].split()
-        if tokens:
-            state = tokens[0] or filing.state
-        if len(tokens) >= 2 and tokens[1].isdigit():
-            postal_from_address = tokens[1]
-    postal = postal_from_address or resolve_zip(city, state)
-
-    for raw_name in split_tenants(filing.tenant_name.strip()):
-        first_name, last_name = parse_name(raw_name)
-        if not first_name or not last_name:
-            log.info(f"enrich_tenant_by_name: unparseable name segment {raw_name!r} for {filing.case_number}")
-            continue
-
-        # Cache lookup — None = uncached; (None, None) = cached miss
-        cached = cache.get(first_name, last_name, city, state, postal=postal)
-        if cached is not None:
-            phone, resolved_address = cached
-            if phone and resolved_address:
-                # phone + address cached: store both; do NOT auto-run a second paid call
-                return EnrichedContact(
-                    filing=filing, track="ng", phone=phone,
-                    secondary_address=resolved_address,
-                )
-            if resolved_address:
-                # address only cached: rescue path — second paid call only if explicitly enabled
-                _second_call_enabled = (
-                    os.environ.get("YELLOW_SECOND_CALL_ENABLED", "false").lower() == "true"
-                )
-                if _second_call_enabled:
-                    patched = filing.model_copy(update={"property_address": resolved_address})
-                    return await enrich_tenant(
-                        patched,
-                        lookup_property_if_missing=lookup_property_if_missing,
-                    )
-                return EnrichedContact(
-                    filing=filing, track="ng", phone=None, email=None,
-                    secondary_address=resolved_address,
-                )
-            if phone:
-                return EnrichedContact(
-                    filing=filing, track="ng", phone=phone,
-                )
-            continue  # cached miss — try next name
-
-        # Pre-call common-surname filter
-        if is_common_surname(last_name):
-            log.info(
-                f"enrich_tenant_by_name: common surname skip {last_name!r} "
-                f"for {filing.case_number}"
-            )
-            cache.set(first_name, last_name, city, state, None, None, postal=postal)
-            continue
-
-        # Circuit breaker — if SearchBug account is in error state, skip
-        # without burning the daily cap counter.
-        from services.searchbug_service import is_account_error_tripped
-        if is_account_error_tripped():
-            log.info(
-                f"enrich_tenant_by_name: SearchBug circuit breaker tripped, "
-                f"skipping {filing.case_number}"
-            )
-            break
-
-        # Daily cap check
-        if not cache.check_daily_cap(cap):
-            log.warning(f"enrich_tenant_by_name: daily cap {cap} reached for {filing.case_number}")
-            await _maybe_alert_cap_hit(cap, source=f"yellow/{filing.state}/{filing.county}")
-            break
-
-        # ZIP narrowing — use address-derived ZIP first, then city map
-        phone, resolved_address = await _searchbug_search(
-            first_name, last_name, city=city, state=state, postal=postal
-        )
-        # Only count against the daily cap if we actually hit the wire.
-        # If the call short-circuited via the circuit breaker (tripped during
-        # this same call), skip the increment to keep the counter honest.
-        if not is_account_error_tripped():
-            cache.increment_daily_count()
-        cache.set(
-            first_name, last_name, city, state, phone, resolved_address,
-            postal=postal,
-        )
-
-        if phone and resolved_address:
-            # phone + address: store both; do NOT auto-run a second paid call
-            log.info(
-                f"enrich_tenant_by_name: SearchBug phone+address hit for {filing.case_number}"
-            )
-            return EnrichedContact(
-                filing=filing, track="ng", phone=phone,
-                secondary_address=resolved_address,
-            )
-
-        if resolved_address:
-            # address only: rescue path — second paid call only if explicitly enabled
-            _second_call_enabled = (
-                os.environ.get("YELLOW_SECOND_CALL_ENABLED", "false").lower() == "true"
-            )
-            if _second_call_enabled:
-                log.info(
-                    f"enrich_tenant_by_name: address-only hit, running second call "
-                    f"for {filing.case_number}"
-                )
-                patched = filing.model_copy(update={"property_address": resolved_address})
-                return await enrich_tenant(
-                    patched,
-                    lookup_property_if_missing=lookup_property_if_missing,
-                )
-            log.info(
-                f"enrich_tenant_by_name: address-only hit, second call disabled "
-                f"for {filing.case_number}"
-            )
-            return EnrichedContact(
-                filing=filing, track="ng", phone=None, email=None,
-                secondary_address=resolved_address,
-            )
-
-        if phone:
-            log.info(f"enrich_tenant_by_name: SearchBug phone-only hit for {filing.case_number}")
-            return EnrichedContact(
-                filing=filing, track="ng", phone=phone,
-            )
-
-    log.info(f"enrich_tenant_by_name: no match for {filing.case_number}")
-    return EnrichedContact(filing=filing, track="ng", phone=None, email=None)
-
-
 async def _maybe_alert_cap_hit(cap: int, source: str) -> None:
     """Fire a Pushover alert the first time the SearchBug daily cap is hit
     each day. Subsequent cap-hits stay silent so we don't spam during the
@@ -437,22 +286,20 @@ async def _maybe_alert_cap_hit(cap: int, source: str) -> None:
 async def _searchbug_fallback_gated(
     filing: Filing,
     tenant_name_normalized: str,
-) -> str | None:
+):
     """Green-source SearchBug fallback for a single tenant name with cost gates.
 
-    Returns the phone if a match is found, else None. Routes the call through
-    the same gates as the yellow-source path:
-    1. Name parseable
-    2. Cache hit short-circuits (hit OR cached miss)
-    3. Common-surname filter (skip 'John Smith' style high-noise names)
-    4. Daily cap not exceeded
-    5. Result cached after the call (success or miss)
+    Returns a SearchBugResult (with .status, .phone, .resolved_address) when a
+    call was made or a cached entry was found. Returns None when no call could
+    be made (unparseable name, common surname, breaker tripped, cap hit) —
+    indistinguishable from "no signal" downstream.
     """
     from services.enrichment_cache import get_cache
     from services.name_utils import is_common_surname, parse_name
     from services.searchbug_service import (
         query_street_address,
-        search_tenant as _searchbug_search,
+        search_tenant_detailed,
+        SearchBugResult,
     )
 
     first_name, last_name = parse_name(tenant_name_normalized)
@@ -481,16 +328,26 @@ async def _searchbug_fallback_gated(
         query_address=query_address,
     )
     if cached is not None:
-        phone, _addr = cached
+        phone, addr = cached
         if phone:
             log.info(
                 f"SearchBug cache hit for {filing.case_number}: {first_name} {last_name}"
             )
-        return phone
+            return SearchBugResult(
+                "phone_found", phone=phone, resolved_address=addr, rows=1,
+            )
+        # Cached miss — treat as no_records so the caller can distinguish from
+        # "never called" via the None return below.
+        return SearchBugResult("no_records")
 
-    if is_common_surname(last_name):
+    # Common-surname filter only applies when we lack BOTH a narrowing street and
+    # a postal code. With a clean street+ZIP, SearchBug can disambiguate even
+    # "Smith" to a single match. Without either, "Smith" in a whole city returns
+    # an ambiguous batch we'd pay for and reject — skip the call.
+    if is_common_surname(last_name) and not (query_address and sb_postal):
         log.info(
-            f"SearchBug skipped (common surname {last_name!r}) for {filing.case_number}"
+            f"SearchBug skipped (common surname {last_name!r}, no narrowing address) "
+            f"for {filing.case_number}"
         )
         cache.set(
             first_name, last_name, sb_city, sb_state, None, None,
@@ -515,7 +372,7 @@ async def _searchbug_fallback_gated(
         await _maybe_alert_cap_hit(cap, source=f"green/{filing.state}/{filing.county}")
         return None
 
-    sb_phone, sb_address = await _searchbug_search(
+    result = await search_tenant_detailed(
         first_name, last_name, sb_city, sb_state, sb_postal,
         address=query_address,
     )
@@ -524,16 +381,18 @@ async def _searchbug_fallback_gated(
     if not is_account_error_tripped():
         cache.increment_daily_count()
     cache.set(
-        first_name, last_name, sb_city, sb_state, sb_phone, sb_address,
+        first_name, last_name, sb_city, sb_state, result.phone, result.resolved_address,
         postal=sb_postal,
         query_address=query_address,
     )
 
-    if sb_phone:
-        log.info(f"SearchBug fallback hit for {filing.case_number}: phone={sb_phone}")
+    if result.phone:
+        log.info(
+            f"SearchBug {result.status} for {filing.case_number}: phone={result.phone}"
+        )
     else:
-        log.info(f"SearchBug fallback miss for {filing.case_number}")
-    return sb_phone
+        log.info(f"SearchBug {result.status} for {filing.case_number}: no phone")
+    return result
 
 
 async def enrich_tenant(
@@ -554,6 +413,8 @@ async def enrich_tenant(
     email: str | None = None
     property_type: str | None = filing.property_type_hint
     estimated_rent: float | None = filing.claim_amount
+    searchbug_status: str | None = None
+    searchbug_returned_name: str | None = None
 
     # Normalize "LAST,FIRST" → "FIRST LAST" so name parsing works downstream
     raw_name = filing.tenant_name.strip()
@@ -563,10 +424,12 @@ async def enrich_tenant(
     else:
         tenant_name_normalized = raw_name
 
-    sb_phone = await _searchbug_fallback_gated(filing, tenant_name_normalized)
-    if sb_phone:
-        phone = sb_phone
-    
+    result = await _searchbug_fallback_gated(filing, tenant_name_normalized)
+    if result is not None:
+        searchbug_status = result.status
+        if result.phone:
+            phone = result.phone
+
     if property_info is None and lookup_property_if_missing and property_type is None:
         property_info = await lookup_property_info(filing)
     property_type, _ = _apply_property_info(
@@ -578,6 +441,7 @@ async def enrich_tenant(
     log.info(
         f"SearchBug (tenant) enriched {filing.case_number}: "
         f"phone={'yes' if phone else 'no'}, "
+        f"status={searchbug_status}, "
         f"property_type={property_type}"
     )
 
@@ -588,4 +452,6 @@ async def enrich_tenant(
         email=email,
         estimated_rent=estimated_rent,
         property_type=property_type,
+        searchbug_status=searchbug_status,
+        searchbug_returned_name=searchbug_returned_name,
     )

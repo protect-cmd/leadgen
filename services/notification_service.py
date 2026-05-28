@@ -116,6 +116,10 @@ async def send_run_summary(
     ]
     if "ng_phones_pushed" in metrics:
         lines.append(f"NG (tenant) pushed: {metrics['ng_phones_pushed']}")
+    if metrics.get("ng_review_pushed"):
+        lines.append(f"NG review-stage pushed: {metrics['ng_review_pushed']}")
+    if metrics.get("gate_llm_recovered"):
+        lines.append(f"LLM-recovered leads: {metrics['gate_llm_recovered']}")
     if "searchbug_calls" in metrics:
         searchbug_line = f"SearchBug calls: {metrics['searchbug_calls']}"
         if "searchbug_daily_total" in metrics:

@@ -200,3 +200,74 @@ def test_classify_missing_zip_still_discarded_under_capture_mode():
     )
     assert outcome.lead_bucket == "discarded"
     assert outcome.discard_reason == "missing_zip"
+
+
+# ── BYPASS_ZIP_FILTER ─────────────────────────────────────────────────────
+# When bypass_zip_filter=True, off-allowlist ZIPs flow through the full
+# pipeline as residential_approved instead of being captured or discarded.
+
+def test_classify_off_allowlist_zip_with_bypass_treats_as_approved():
+    outcome = classify_lead(
+        state="TX",
+        property_address="123 Greenspoint Dr, Houston, TX 77090",
+        filing_date=date(2026, 5, 25),
+        today=date(2026, 5, 25),
+        bypass_zip_filter=True,
+    )
+    assert outcome.property_zip == "77090"
+    assert outcome.lead_bucket == "residential_approved"
+    assert outcome.discard_reason is None
+
+
+def test_classify_bypass_overrides_capture_expanded():
+    """If both flags are set, BYPASS wins — captured bucket should not fire."""
+    outcome = classify_lead(
+        state="TX",
+        property_address="123 Greenspoint Dr, Houston, TX 77090",
+        filing_date=date(2026, 5, 25),
+        today=date(2026, 5, 25),
+        capture_expanded=True,
+        bypass_zip_filter=True,
+    )
+    assert outcome.lead_bucket == "residential_approved"
+
+
+def test_classify_bypass_still_discards_missing_zip():
+    """Missing-ZIP discard is a data-quality gate, not a policy gate — bypass
+    must not let leads through when we can't extract any ZIP at all."""
+    outcome = classify_lead(
+        state="TX",
+        property_address="No ZIP here, Houston, TX",
+        filing_date=date(2026, 5, 25),
+        today=date(2026, 5, 25),
+        bypass_zip_filter=True,
+    )
+    assert outcome.lead_bucket == "discarded"
+    assert outcome.discard_reason == "missing_zip"
+
+
+def test_classify_bypass_still_applies_rent_threshold():
+    """Bypass affects ZIP gating only; rent threshold still drops cheap leads."""
+    outcome = classify_lead(
+        state="TX",
+        property_address="123 Cheap Dr, Houston, TX 77090",
+        filing_date=date(2026, 5, 25),
+        today=date(2026, 5, 25),
+        property_type="residential",
+        estimated_rent=900,  # below TX threshold of $1500
+        bypass_zip_filter=True,
+    )
+    assert outcome.lead_bucket == "discarded"
+    assert outcome.discard_reason == "rent_below_threshold"
+
+
+def test_classify_bypass_commercial_still_routes_to_commercial():
+    outcome = classify_lead(
+        state="TX",
+        property_address="100 Industrial Way, Houston, TX 77090",
+        filing_date=date(2026, 5, 25),
+        today=date(2026, 5, 25),
+        property_type="commercial",
+        bypass_zip_filter=True,
+    )
+    assert outcome.lead_bucket == "commercial"
