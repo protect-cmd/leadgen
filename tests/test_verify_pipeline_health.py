@@ -8,7 +8,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from scripts.verify_pipeline_health import CheckResult, print_report, check_env_vars
+from unittest.mock import MagicMock, patch
+
+from scripts.verify_pipeline_health import (
+    CheckResult,
+    print_report,
+    check_env_vars,
+    check_schema,
+)
 
 
 def test_check_result_dataclass_fields():
@@ -132,3 +139,65 @@ def test_check_env_vars_llm_enabled_requires_api_key(monkeypatch):
     results = check_env_vars()
     fails = [r for r in results if r.status == "FAIL"]
     assert any(r.name == "OPENROUTER_API_KEY" for r in fails)
+
+
+def _mock_supabase(lead_cols: set[str], run_cols: set[str], filing_cols: set[str]):
+    """Build a mock _client that returns the given column sets via
+    .table(name).select('*').limit(1).execute()."""
+    def _table(name: str):
+        cols = {"lead_contacts": lead_cols, "run_metrics": run_cols, "filings": filing_cols}[name]
+        t = MagicMock()
+        t.select.return_value.limit.return_value.execute.return_value = MagicMock(
+            data=[{c: None for c in cols}]
+        )
+        return t
+
+    client = MagicMock()
+    client.table.side_effect = _table
+    return client
+
+
+def test_check_schema_all_applied():
+    lead = {"case_number", "track", "phone", "searchbug_status", "searchbug_returned_name"}
+    run = {
+        "filings_received", "captured", "gate_out_of_window", "gate_overdue",
+        "gate_invalid_address", "gate_bad_name", "gate_existing_phone",
+        "gate_duplicate_in_run", "gate_llm_recovered", "ng_phones_pushed",
+        "ng_review_pushed", "searchbug_calls", "searchbug_daily_total",
+    }
+    filings = {"case_number", "tenant_name", "property_address"}
+    with patch("scripts.verify_pipeline_health._supabase_client", return_value=_mock_supabase(lead, run, filings)):
+        results = check_schema()
+    fails = [r for r in results if r.status == "FAIL"]
+    assert not fails, [(r.name, r.detail) for r in fails]
+
+
+def test_check_schema_missing_searchbug_status_fails():
+    lead = {"case_number"}  # missing searchbug_status
+    run = {
+        "captured", "gate_out_of_window", "gate_overdue", "gate_invalid_address",
+        "gate_bad_name", "gate_existing_phone", "gate_duplicate_in_run",
+        "gate_llm_recovered", "ng_phones_pushed", "ng_review_pushed",
+        "searchbug_calls", "searchbug_daily_total",
+    }
+    filings = {"case_number"}
+    with patch("scripts.verify_pipeline_health._supabase_client", return_value=_mock_supabase(lead, run, filings)):
+        results = check_schema()
+    fails = [r for r in results if r.status == "FAIL"]
+    assert any("searchbug_status" in r.name for r in fails)
+
+
+def test_check_schema_stale_dnc_columns_flag():
+    lead = {"searchbug_status", "searchbug_returned_name", "dnc_status"}
+    run = {
+        "captured", "gate_out_of_window", "gate_overdue", "gate_invalid_address",
+        "gate_bad_name", "gate_existing_phone", "gate_duplicate_in_run",
+        "gate_llm_recovered", "ng_phones_pushed", "ng_review_pushed",
+        "searchbug_calls", "searchbug_daily_total",
+    }
+    filings = {"case_number", "dnc_status"}
+    with patch("scripts.verify_pipeline_health._supabase_client", return_value=_mock_supabase(lead, run, filings)):
+        results = check_schema()
+    flags = [r for r in results if r.status == "FLAG"]
+    assert any("dnc_status" in r.name and "lead_contacts" in r.name for r in flags)
+    assert any("dnc_status" in r.name and "filings" in r.name for r in flags)

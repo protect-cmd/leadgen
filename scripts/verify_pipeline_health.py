@@ -112,6 +112,106 @@ def check_env_vars() -> list[CheckResult]:
     return out
 
 
+def _supabase_client():
+    """Lazy import so tests can patch without touching real Supabase."""
+    from services.dedup_service import _client
+    return _client
+
+
+_REQUIRED_LEAD_CONTACT_COLS = {
+    "searchbug_status",
+    "searchbug_returned_name",
+}
+
+_STALE_LEAD_CONTACT_COLS = {
+    "dnc_status",
+    "dnc_source",
+    "dnc_checked_at",
+}
+
+_REQUIRED_RUN_METRICS_COLS = {
+    "captured",
+    "gate_out_of_window",
+    "gate_overdue",
+    "gate_invalid_address",
+    "gate_bad_name",
+    "gate_existing_phone",
+    "gate_duplicate_in_run",
+    "gate_llm_recovered",
+    "ng_phones_pushed",
+    "ng_review_pushed",
+    "searchbug_calls",
+    "searchbug_daily_total",
+}
+
+_STALE_FILING_COLS = {
+    "dnc_status", "dnc_source", "dnc_checked_at",
+    "ng_dnc_status", "ng_dnc_source", "ng_dnc_checked_at",
+    "dnc_override_source", "dnc_override_notes", "dnc_override_at",
+}
+
+
+def _table_columns(client, table: str) -> set[str]:
+    """Discover columns by SELECT * LIMIT 1. Returns empty set on empty table."""
+    try:
+        r = client.table(table).select("*").limit(1).execute()
+        if r.data:
+            return set(r.data[0].keys())
+    except Exception:
+        pass
+    return set()
+
+
+def check_schema() -> list[CheckResult]:
+    """Verify migration 012 (DNC drop) and migration 013 (searchbug + metrics) applied."""
+    out: list[CheckResult] = []
+    client = _supabase_client()
+
+    lead_cols = _table_columns(client, "lead_contacts")
+    run_cols = _table_columns(client, "run_metrics")
+    filing_cols = _table_columns(client, "filings")
+
+    for col in sorted(_REQUIRED_LEAD_CONTACT_COLS):
+        name = f"lead_contacts.{col}"
+        if col in lead_cols:
+            out.append(CheckResult("schema", name, "OK", "present"))
+        else:
+            out.append(CheckResult(
+                "schema", name, "FAIL",
+                "missing; migration 013 not applied",
+                fix_hint="apply migrations/013_searchbug_status_and_run_metrics.sql via Supabase SQL Editor",
+            ))
+
+    for col in sorted(_REQUIRED_RUN_METRICS_COLS):
+        name = f"run_metrics.{col}"
+        if col in run_cols:
+            out.append(CheckResult("schema", name, "OK", "present"))
+        else:
+            out.append(CheckResult(
+                "schema", name, "FAIL",
+                "missing; migration 013 not applied",
+                fix_hint="apply migrations/013_searchbug_status_and_run_metrics.sql via Supabase SQL Editor",
+            ))
+
+    for col in sorted(_STALE_LEAD_CONTACT_COLS):
+        if col in lead_cols:
+            out.append(CheckResult(
+                "schema", f"lead_contacts.{col}", "FLAG",
+                "stale DNC column still present; migration 012 partially or not applied",
+                fix_hint="apply migrations/012_drop_dnc.sql via Supabase SQL Editor",
+            ))
+
+    for col in sorted(_STALE_FILING_COLS):
+        if col in filing_cols:
+            out.append(CheckResult(
+                "schema", f"filings.{col}", "FLAG",
+                "stale DNC column still present; migration 012 partially or not applied",
+                fix_hint="apply migrations/012_drop_dnc.sql via Supabase SQL Editor",
+            ))
+
+    return out
+
+
 def print_report(results: list[CheckResult]) -> None:
     """Group results by layer and print one section per layer."""
     by_layer: dict[str, list[CheckResult]] = defaultdict(list)
@@ -151,6 +251,7 @@ def main(argv: list[str] | None = None) -> int:
 
     results: list[CheckResult] = []
     results.extend(check_env_vars())
+    results.extend(check_schema())
     print_report(results)
 
     has_fail = any(r.status == "FAIL" for r in results)
