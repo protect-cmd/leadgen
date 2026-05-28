@@ -16,6 +16,7 @@ from scripts.verify_pipeline_health import (
     check_env_vars,
     check_schema,
     check_scheduled_scrapers,
+    check_searchbug_headroom,
     _compute_pass_rate,
     SCHEDULED_JOB_COUNTIES,
 )
@@ -273,3 +274,53 @@ def test_check_scheduled_scrapers_fail_below_60_pct():
         results = check_scheduled_scrapers()
     fails = [r for r in results if r.status == "FAIL"]
     assert fails, "expected at least one FAIL"
+
+
+import sqlite3
+from datetime import date as _date
+
+
+def _seed_cap_db(path, used_today: int):
+    with sqlite3.connect(str(path)) as con:
+        con.execute("CREATE TABLE IF NOT EXISTS daily_cap (date TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0)")
+        con.execute(
+            "INSERT OR REPLACE INTO daily_cap (date, count) VALUES (?, ?)",
+            (_date.today().isoformat(), used_today),
+        )
+
+
+def test_check_searchbug_headroom_ok(tmp_path, monkeypatch):
+    db = tmp_path / "cache.db"
+    _seed_cap_db(db, 30)  # 30/200 used
+    monkeypatch.setenv("SEARCHBUG_CACHE_DB_PATH", str(db))
+    monkeypatch.setenv("SEARCHBUG_DAILY_CAP", "200")
+    results = check_searchbug_headroom()
+    assert any(r.status == "OK" for r in results)
+    assert not any(r.status == "FAIL" for r in results)
+
+
+def test_check_searchbug_headroom_flag_above_80_pct(tmp_path, monkeypatch):
+    db = tmp_path / "cache.db"
+    _seed_cap_db(db, 170)  # 85% used
+    monkeypatch.setenv("SEARCHBUG_CACHE_DB_PATH", str(db))
+    monkeypatch.setenv("SEARCHBUG_DAILY_CAP", "200")
+    results = check_searchbug_headroom()
+    assert any(r.status == "FLAG" for r in results)
+
+
+def test_check_searchbug_headroom_fail_at_cap(tmp_path, monkeypatch):
+    db = tmp_path / "cache.db"
+    _seed_cap_db(db, 200)  # at cap
+    monkeypatch.setenv("SEARCHBUG_CACHE_DB_PATH", str(db))
+    monkeypatch.setenv("SEARCHBUG_DAILY_CAP", "200")
+    results = check_searchbug_headroom()
+    assert any(r.status == "FAIL" for r in results)
+
+
+def test_check_searchbug_headroom_missing_db_ok(tmp_path, monkeypatch):
+    db = tmp_path / "missing.db"
+    monkeypatch.setenv("SEARCHBUG_CACHE_DB_PATH", str(db))
+    monkeypatch.setenv("SEARCHBUG_DAILY_CAP", "200")
+    results = check_searchbug_headroom()
+    # No DB yet -> counter assumed 0 (full headroom, OK)
+    assert any(r.status == "OK" for r in results)

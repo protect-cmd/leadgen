@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import sqlite3
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -304,6 +306,50 @@ def check_scheduled_scrapers() -> list[CheckResult]:
     return out
 
 
+def check_searchbug_headroom() -> list[CheckResult]:
+    """Read the LOCAL enrichment_cache.db daily-cap counter and report
+    headroom against SEARCHBUG_DAILY_CAP. The Railway counter is on a
+    separate persistent volume and not reachable from here — known
+    limitation; this check is for the environment running the script."""
+    db_path = os.environ.get("SEARCHBUG_CACHE_DB_PATH", "data/enrichment_cache.db")
+    cap = int(os.environ.get("SEARCHBUG_DAILY_CAP", "200"))
+    today = date.today().isoformat()
+
+    used = 0
+    note_suffix = ""
+    if Path(db_path).exists():
+        try:
+            with sqlite3.connect(db_path) as con:
+                row = con.execute(
+                    "SELECT count FROM daily_cap WHERE date=?", (today,)
+                ).fetchone()
+            used = row[0] if row else 0
+        except sqlite3.Error as exc:
+            return [CheckResult(
+                "searchbug", "daily_cap counter", "FLAG",
+                f"cache DB present but unreadable: {exc!r}",
+                fix_hint=f"inspect {db_path}",
+            )]
+    else:
+        note_suffix = " (local cache DB not yet created)"
+
+    remaining = max(0, cap - used)
+    util = used / cap if cap else 0.0
+    detail = f"{used}/{cap} used today ({100*util:.0f}%), {remaining} remaining{note_suffix}"
+
+    if used >= cap:
+        status = "FAIL"
+        hint = "raise SEARCHBUG_DAILY_CAP on Railway or wait for UTC midnight reset"
+    elif util > 0.8:
+        status = "FLAG"
+        hint = "consider raising SEARCHBUG_DAILY_CAP; under 20% headroom"
+    else:
+        status = "OK"
+        hint = None
+
+    return [CheckResult("searchbug", "daily_cap", status, detail, fix_hint=hint)]
+
+
 def print_report(results: list[CheckResult]) -> None:
     """Group results by layer and print one section per layer."""
     by_layer: dict[str, list[CheckResult]] = defaultdict(list)
@@ -345,6 +391,7 @@ def main(argv: list[str] | None = None) -> int:
     results.extend(check_env_vars())
     results.extend(check_schema())
     results.extend(check_scheduled_scrapers())
+    results.extend(check_searchbug_headroom())
     print_report(results)
 
     has_fail = any(r.status == "FAIL" for r in results)
