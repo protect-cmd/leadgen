@@ -45,6 +45,73 @@ class CheckResult:
     fix_hint: str | None = None
 
 
+_BASE_ENV: list[tuple[str, str]] = [
+    ("SUPABASE_URL", "env"),
+    ("SUPABASE_SERVICE_ROLE_KEY", "env"),
+    ("SEARCHBUG_CO_CODE", "env"),
+    ("SEARCHBUG_API_KEY", "env"),
+    ("BATCHDATA_API_KEY", "env"),
+    ("GHL_API_KEY", "env"),
+    ("GHL_NEW_FILING_STAGE_ID", "env"),
+]
+
+
+def check_env_vars() -> list[CheckResult]:
+    """Verify required env vars are set, plus cross-layer rules:
+    - If TENANT_TRACK_ENABLED, GHL_NG_LOCATION_ID + GHL_NG_NEW_FILING_STAGE_ID
+      + GHL_NG_REVIEW_STAGE_ID must be set.
+    - If LLM_RECOVERY_ENABLED, OPENROUTER_API_KEY must be set.
+    """
+    out: list[CheckResult] = []
+
+    for key, layer in _BASE_ENV:
+        val = os.environ.get(key)
+        if val:
+            out.append(CheckResult(layer, key, "OK", "set"))
+        else:
+            out.append(CheckResult(
+                layer, key, "FAIL", "not set",
+                fix_hint=f"set {key} in Railway env (or .env locally)",
+            ))
+
+    # Tenant track conditional vars
+    tenant_enabled = os.environ.get("TENANT_TRACK_ENABLED", "true").lower() == "true"
+    if tenant_enabled:
+        for key in ("GHL_NG_LOCATION_ID", "GHL_NG_NEW_FILING_STAGE_ID"):
+            val = os.environ.get(key)
+            if val:
+                out.append(CheckResult("env", key, "OK", "set (tenant track)"))
+            else:
+                out.append(CheckResult(
+                    "env", key, "FAIL",
+                    "tenant track enabled but key not set",
+                    fix_hint=f"set {key} in Railway env",
+                ))
+        review = os.environ.get("GHL_NG_REVIEW_STAGE_ID")
+        if review:
+            out.append(CheckResult("env", "GHL_NG_REVIEW_STAGE_ID", "OK", "set"))
+        else:
+            out.append(CheckResult(
+                "env", "GHL_NG_REVIEW_STAGE_ID", "FAIL",
+                "not set; name_mismatch/ambiguous review-lane leads will be dropped silently",
+                fix_hint="create a Review stage in the NG GHL subaccount and set GHL_NG_REVIEW_STAGE_ID",
+            ))
+
+    # LLM recovery conditional
+    llm_enabled = os.environ.get("LLM_RECOVERY_ENABLED", "false").lower() == "true"
+    if llm_enabled:
+        if os.environ.get("OPENROUTER_API_KEY"):
+            out.append(CheckResult("env", "OPENROUTER_API_KEY", "OK", "set (LLM enabled)"))
+        else:
+            out.append(CheckResult(
+                "env", "OPENROUTER_API_KEY", "FAIL",
+                "LLM_RECOVERY_ENABLED=true but OPENROUTER_API_KEY missing",
+                fix_hint="set OPENROUTER_API_KEY or set LLM_RECOVERY_ENABLED=false",
+            ))
+
+    return out
+
+
 def print_report(results: list[CheckResult]) -> None:
     """Group results by layer and print one section per layer."""
     by_layer: dict[str, list[CheckResult]] = defaultdict(list)
@@ -83,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv()
 
     results: list[CheckResult] = []
-    # Subsequent tasks will populate these
+    results.extend(check_env_vars())
     print_report(results)
 
     has_fail = any(r.status == "FAIL" for r in results)
