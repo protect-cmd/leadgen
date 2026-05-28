@@ -182,6 +182,37 @@ SAMPLE_DETAIL_NO_ADDRESS = """
 </body></html>
 """
 
+SAMPLE_DETAIL_CURRENT_PARTY_TABLE = """
+<html><body>
+<table>
+  <caption><div class="ssCaseDetailSectionTitle">Party Information</div></caption>
+  <tbody>
+    <tr>
+      <td colspan="4"></td><th class="ssTableHeader" id="PIc5">Lead Attorneys</th>
+    </tr>
+    <tr>
+      <th class="ssTableHeader" valign="top" rowspan="2" id="PIr01">Defendant</th>
+      <th class="ssTableHeader" valign="top" id="PIr11">Bowles, Stephanie</th>
+      <td rowspan="2"></td><td rowspan="2" valign="top"></td><td rowspan="2"></td>
+    </tr>
+    <tr>
+      <td valign="top">&nbsp;&nbsp;6728 park vista blvd, 2804<br>&nbsp;&nbsp;Watauga, TX 76137<br></td>
+    </tr>
+    <tr>
+      <th class="ssTableHeader" valign="top" rowspan="2" id="PIr02">Plaintiff</th>
+      <th class="ssTableHeader" valign="top" id="PIr12">PARK VISTA OTM HH LP</th>
+    </tr>
+    <tr>
+      <td valign="top">&nbsp;&nbsp;2901 Dallas Parkway, Ste 250<br>&nbsp;&nbsp;Plano, TX 75093<br></td>
+    </tr>
+  </tbody>
+</table>
+<table>
+  <tr><td>06/11/2026</td><td>Eviction Non-Jury Trial</td></tr>
+</table>
+</body></html>
+"""
+
 
 # ---------------------------------------------------------------------------
 # _clean_tenant
@@ -356,6 +387,11 @@ class TestParseCaseDetail:
         result = _parse_case_detail("<html><body>nothing</body></html>")
         assert result["property_address"] == "Unknown"
         assert result["court_date"] is None
+
+    def test_current_party_table_extracts_defendant_address(self):
+        result = _parse_case_detail(SAMPLE_DETAIL_CURRENT_PARTY_TABLE)
+        assert result["property_address"] == "6728 park vista blvd, 2804, Watauga, TX 76137"
+        assert "2901 Dallas Parkway" not in result["property_address"]
 
     def test_plaintiff_address_not_used(self):
         # Plaintiff address should not be returned — only defendant's

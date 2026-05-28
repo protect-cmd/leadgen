@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -37,14 +38,25 @@ _DATE_RE = re.compile(r"(\d{2}/\d{2}/\d{4})")
 _TOO_MANY_RE = re.compile(r"too many matches", re.IGNORECASE)
 
 
+@dataclass
+class SearchResultsPage:
+    page: Any
+    rows: list[dict]
+
+
 def _bright_data_ws_url() -> str:
-    """Return Bright Data Scraping Browser WebSocket URL from env or built-in default."""
+    """Return Bright Data Scraping Browser WebSocket URL from env configuration."""
     explicit = os.getenv("BRIGHTDATA_SB_WS")
     if explicit:
         return explicit
-    customer = os.getenv("BRIGHTDATA_CUSTOMER_ID", "hl_74fc5212")
-    zone = os.getenv("BRIGHTDATA_ZONE", "scraping_browser1")
-    password = os.getenv("BRIGHTDATA_ZONE_PASSWORD", "db1ticxa4ik3")
+    customer = os.getenv("BRIGHTDATA_CUSTOMER_ID")
+    zone = os.getenv("BRIGHTDATA_ZONE")
+    password = os.getenv("BRIGHTDATA_ZONE_PASSWORD")
+    if not customer or not zone or not password:
+        raise RuntimeError(
+            "Bright Data Scraping Browser is not configured. Set BRIGHTDATA_SB_WS "
+            "or BRIGHTDATA_CUSTOMER_ID, BRIGHTDATA_ZONE, and BRIGHTDATA_ZONE_PASSWORD."
+        )
     return f"wss://brd-customer-{customer}-zone-{zone}:{password}@brd.superproxy.io:9222"
 
 
@@ -138,7 +150,49 @@ def _parse_case_detail(html: str) -> dict:
     property_address = "Unknown"
     court_date: date | None = None
 
+    def address_from_cells(cells) -> str:
+        raw_lines: list[str] = []
+        for cell in cells:
+            raw_lines.extend(
+                line.strip().lstrip("\xa0\u3000 ")
+                for line in cell.get_text("\n").split("\n")
+                if line.strip().lstrip("\xa0\u3000 ")
+            )
+        addr_lines = [
+            line
+            for line in raw_lines
+            if re.search(r"\d", line) or re.search(r"\b[A-Z]{2}\s+\d{5}", line)
+        ]
+        return ", ".join(addr_lines)
+
+    # Current Odyssey markup uses a two-row party block: the first row has the
+    # role/name in <th> cells and the next row contains the address in <td>.
+    for table in soup.find_all("table"):
+        caption_text = table.find("caption").get_text(" ", strip=True) if table.find("caption") else ""
+        if "party information" not in caption_text.lower():
+            continue
+        rows = table.find_all("tr")
+        for idx, row in enumerate(rows):
+            cells = row.find_all(["td", "th"])
+            if not cells:
+                continue
+            role = cells[0].get_text(" ", strip=True).lower()
+            if role != "defendant":
+                continue
+            candidate_cells = list(cells)
+            if idx + 1 < len(rows):
+                candidate_cells.extend(rows[idx + 1].find_all(["td", "th"]))
+            address = address_from_cells(candidate_cells)
+            if address:
+                property_address = address
+                break
+        if property_address != "Unknown":
+            break
+
+    # Older/simple fixture markup puts role and address in the same table row.
     for tr in soup.find_all("tr"):
+        if property_address != "Unknown":
+            break
         tds = tr.find_all("td")
         if not tds:
             continue
@@ -217,7 +271,8 @@ class TarrantCountyJPScraper:
                 browser = await p.chromium.connect_over_cdp(ws_url)
 
                 try:
-                    eviction_rows = await self._search_evictions(
+                    search_pages: list[SearchResultsPage] = []
+                    search_result = await self._search_evictions(
                         browser,
                         court_value=JP_ALL_VALUE,
                         after_str=after_str,
@@ -226,55 +281,66 @@ class TarrantCountyJPScraper:
 
                     # If the portal capped at 200 and warned "too many matches",
                     # fall back to searching each JP court individually.
-                    if eviction_rows is None:
+                    if search_result is None:
                         log.info(
                             "Tarrant TX: all-courts search hit 200 cap, "
                             "falling back to per-court search"
                         )
-                        eviction_rows = []
                         for court_val in JP_COURT_VALUES:
-                            rows = await self._search_evictions(
+                            result = await self._search_evictions(
                                 browser,
                                 court_value=court_val,
                                 after_str=after_str,
                                 today_str=today_str,
                             )
-                            if rows:
-                                eviction_rows.extend(rows)
+                            if result:
+                                search_pages.append(result)
+                                if (
+                                    self.max_cases
+                                    and sum(len(page.rows) for page in search_pages) >= self.max_cases
+                                ):
+                                    break
+                    else:
+                        search_pages.append(search_result)
 
                     log.info(
                         "Tarrant TX: %d eviction rows found, fetching case details",
-                        len(eviction_rows),
+                        sum(len(result.rows) for result in search_pages),
                     )
 
-                    page = await browser.new_page()
-                    for row in eviction_rows:
-                        if self.max_cases and len(filings) >= self.max_cases:
-                            break
-                        if row["case_number"] in seen_cases:
-                            continue
+                    try:
+                        for result in search_pages:
+                            for row in result.rows:
+                                if self.max_cases and len(filings) >= self.max_cases:
+                                    break
+                                if row["case_number"] in seen_cases:
+                                    continue
 
-                        detail = await self._fetch_case_detail(page, row["case_id"])
-                        seen_cases.add(row["case_number"])
+                                detail = await self._fetch_case_detail(result.page, row["case_id"])
+                                seen_cases.add(row["case_number"])
 
-                        detail_url = (
-                            f"{SEARCH_BASE}/CaseDetail.aspx?CaseID={row['case_id']}"
-                        )
-                        filings.append(
-                            Filing(
-                                case_number=row["case_number"],
-                                tenant_name=clean_tenant_name(row["tenant"]) or row["tenant"],
-                                property_address=detail["property_address"],
-                                landlord_name=row["landlord"],
-                                filing_date=row["filing_date"],
-                                court_date=detail["court_date"],
-                                state=STATE,
-                                county=COUNTY,
-                                notice_type=NOTICE_TYPE,
-                                source_url=detail_url,
-                            )
-                        )
-                    await page.close()
+                                detail_url = (
+                                    f"{SEARCH_BASE}/CaseDetail.aspx?CaseID={row['case_id']}"
+                                )
+                                filings.append(
+                                    Filing(
+                                        case_number=row["case_number"],
+                                        tenant_name=clean_tenant_name(row["tenant"]) or row["tenant"],
+                                        property_address=detail["property_address"],
+                                        landlord_name=row["landlord"],
+                                        filing_date=row["filing_date"],
+                                        court_date=detail["court_date"],
+                                        state=STATE,
+                                        county=COUNTY,
+                                        notice_type=NOTICE_TYPE,
+                                        source_url=detail_url,
+                                    )
+                                )
+                            if self.max_cases and len(filings) >= self.max_cases:
+                                break
+                    finally:
+                        for result in search_pages:
+                            await result.page.close()
 
                 finally:
                     await browser.close()
@@ -293,49 +359,52 @@ class TarrantCountyJPScraper:
         court_value: str,
         after_str: str,
         today_str: str,
-    ) -> list[dict] | None:
+    ) -> SearchResultsPage | None:
         """
         Open a search page, filter by Date Filed, parse eviction rows.
         Returns None if the portal hit the 200-row cap ("too many matches").
         """
         page = await browser.new_page()
-        try:
-            await page.goto(MAIN_URL, timeout=45_000, wait_until="domcontentloaded")
-            await page.wait_for_timeout(1_500)
+        await page.goto(MAIN_URL, timeout=45_000, wait_until="domcontentloaded")
+        await page.wait_for_timeout(1_500)
 
-            await page.select_option("#sbxControlID2", court_value)
-            await page.evaluate(
-                "LaunchSearch('Search.aspx?ID=200', false, true, sbxControlID2)"
-            )
-            await page.wait_for_load_state("domcontentloaded")
-            await page.wait_for_timeout(2_000)
+        await page.select_option("#sbxControlID2", court_value)
+        await page.evaluate(
+            "LaunchSearch('Search.aspx?ID=200', false, true, sbxControlID2)"
+        )
+        await page.wait_for_load_state("domcontentloaded")
+        await page.wait_for_timeout(2_000)
 
-            await page.select_option("#SearchBy", "6")  # Date Filed
-            await page.wait_for_timeout(2_000)
+        await page.select_option("#SearchBy", "6")  # Date Filed
+        await page.wait_for_timeout(2_000)
 
-            await page.fill("#DateFiledOnAfter", after_str)
-            await page.fill("#DateFiledOnBefore", today_str)
-            await page.click('input[value="Search"]')
-            await page.wait_for_load_state("domcontentloaded")
-            await page.wait_for_timeout(3_000)
+        await page.fill("#DateFiledOnAfter", after_str)
+        await page.fill("#DateFiledOnBefore", today_str)
+        await page.click('input[value="Search"]')
+        await page.wait_for_load_state("domcontentloaded")
+        await page.wait_for_timeout(3_000)
 
-            html = await page.content()
-        finally:
-            await page.close()
+        html = await page.content()
 
         if _TOO_MANY_RE.search(html):
+            await page.close()
             return None
 
-        return _parse_results_page(html)
+        rows = _parse_results_page(html)
+        return SearchResultsPage(page=page, rows=rows)
 
     async def _fetch_case_detail(self, page: Any, case_id: str) -> dict:
         """Fetch CaseDetail page and return parsed address + court date."""
-        url = f"{SEARCH_BASE}/CaseDetail.aspx?CaseID={case_id}"
         try:
-            await page.goto(url, timeout=30_000, wait_until="domcontentloaded")
+            await page.locator(f'a[href="CaseDetail.aspx?CaseID={case_id}"]').first.click(
+                timeout=30_000
+            )
             await page.wait_for_timeout(1_000)
             html = await page.content()
-            return _parse_case_detail(html)
+            detail = _parse_case_detail(html)
+            await page.go_back(timeout=30_000, wait_until="domcontentloaded")
+            await page.wait_for_timeout(500)
+            return detail
         except Exception as e:
             log.warning("Tarrant TX: CaseDetail %s failed: %s", case_id, e)
             return {"property_address": "Unknown", "court_date": None}

@@ -41,6 +41,13 @@ def test_parse_states_accepts_aliases_and_all():
     assert "arizona" in all_states
 
 
+def test_parse_states_recognises_tarrant_texas_alias():
+    from scripts.smoke_scrapers import parse_states
+    assert parse_states("tarrant") == ["texas_tarrant"]
+    assert parse_states("tarrant_tx") == ["texas_tarrant"]
+    assert parse_states("texas_tarrant") == ["texas_tarrant"]
+
+
 @pytest.mark.asyncio
 async def test_run_smoke_handles_sync_and_async_scrapers(monkeypatch):
     factories = {
@@ -116,6 +123,16 @@ def test_georgia_cobb_factory_returns_scraper():
     label, scraper = scrapers[0]
     assert label == "Cobb Magistrate"
     assert scraper.enrich_addresses is False
+
+
+def test_texas_tarrant_factory_returns_limited_scraper():
+    from scripts.smoke_scrapers import SCRAPER_FACTORIES
+    scrapers = SCRAPER_FACTORIES["texas_tarrant"](7, True)
+    assert len(scrapers) == 1
+    label, scraper = scrapers[0]
+    assert label == "Tarrant JP Courts"
+    assert scraper.lookback_days == 7
+    assert scraper.max_cases == 5
 
 
 def test_georgia_dekalb_factory_returns_scraper():

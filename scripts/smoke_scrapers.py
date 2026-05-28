@@ -25,6 +25,7 @@ from scrapers.ohio.franklin import FranklinCountyMunicipalScraper
 from scrapers.ohio.hamilton import HamiltonCountyMunicipalScraper
 from scrapers.tennessee.davidson import DavidsonTNScraper
 from scrapers.texas.harris import HarrisCountyScraper
+from scrapers.texas.tarrant import TarrantCountyJPScraper
 from services import notification_service
 
 log = logging.getLogger(__name__)
@@ -48,6 +49,10 @@ class SmokeResult:
 
 def _texas_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, object]]:
     return [("Harris", HarrisCountyScraper(headless=headless, lookback_days=lookback_days))]
+
+
+def _texas_tarrant_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, object]]:
+    return [("Tarrant JP Courts", TarrantCountyJPScraper(lookback_days=lookback_days, max_cases=5))]
 
 
 def _tennessee_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, object]]:
@@ -92,6 +97,7 @@ def _nevada_clark_scrapers(lookback_days: int, headless: bool) -> list[tuple[str
 
 SCRAPER_FACTORIES: dict[str, StateFactory] = {
     "texas": _texas_scrapers,
+    "texas_tarrant": _texas_tarrant_scrapers,
     "tennessee": _tennessee_scrapers,
     "florida": _florida_scrapers,
     "georgia": _georgia_scrapers,
@@ -107,6 +113,9 @@ STATE_ALIASES = {
     "tx": "texas",
     "texas": "texas",
     "harris": "texas",
+    "tarrant": "texas_tarrant",
+    "tarrant_tx": "texas_tarrant",
+    "texas_tarrant": "texas_tarrant",
     "tn": "tennessee",
     "tennessee": "tennessee",
     "davidson": "tennessee",
@@ -234,7 +243,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--states",
         default="texas,tennessee",
-        help="Comma-separated states/aliases: texas, tx, harris, tennessee, tn, davidson, florida, fl, georgia, ga, arizona, az, maricopa, georgia_cobb, cobb, georgia_dekalb, dekalb, ohio_franklin, franklin, columbus, ohio_hamilton, hamilton, cincinnati, nevada_clark, clark, nevada, henderson, all.",
+        help="Comma-separated states/aliases: texas, tx, harris, tarrant, tarrant_tx, texas_tarrant, tennessee, tn, davidson, florida, fl, georgia, ga, arizona, az, maricopa, georgia_cobb, cobb, georgia_dekalb, dekalb, ohio_franklin, franklin, columbus, ohio_hamilton, hamilton, cincinnati, nevada_clark, clark, nevada, henderson, all.",
     )
     parser.add_argument("--lookback-days", type=int, default=2)
     parser.add_argument("--notify", action="store_true", help="Send Pushover summary if enabled.")
