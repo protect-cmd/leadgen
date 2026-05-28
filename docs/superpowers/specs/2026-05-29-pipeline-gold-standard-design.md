@@ -44,7 +44,12 @@ Out of scope (separate future specs):
 - Spec 3: Onboarding playbook for new scrapers as Nourul/Franz/Donnald deliver
 - Spec 4: Bland call quality (transcripts, scripting, post-call analysis)
 - Spec 5: Instantly campaign hygiene (deliverability, sequences)
-- Dashboard UX, manual review queue, captured-bucket promotion
+- Spec 6: Unified caller-lookup dashboard — replaces the current
+  multi-tab Lead Queue with a single search-driven view where callers
+  can resolve a client by name, phone, case number, or address. Today's
+  dashboard at `/dashboard/main.py` is segmented by brand/view/status
+  filters and is too noisy for live call workflows.
+- Dashboard UX (broader), manual review queue, captured-bucket promotion
 - EC (landlord) track — currently paused
 
 The Bland and Instantly **handoffs** are in scope (lead gets enrolled / queued
