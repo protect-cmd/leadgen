@@ -101,9 +101,11 @@ Supabase, computed by `scripts/verify_pipeline_health.py`.
   can route to `send_job_error`.
 - Idempotent: re-running the scraper for the same date range produces the
   same set of `case_number` values (downstream dedup relies on this).
-- Per-county runtime budget: **≤ 10 minutes** for a 2-day lookback. Longer
-  runs trigger a Pushover warning (a slow run probably means portal
-  degradation worth a human look).
+- Per-county runtime budget: **≤ 20 minutes** for a 2-day lookback.
+  Longer runs trigger a Pushover warning (a slow run probably means
+  portal degradation worth a human look). Harris CSV export legitimately
+  takes 15+ minutes when the portal is under load, so 20 is the chosen
+  ceiling rather than 10.
 
 ### Layer 2 — Gate stack
 
