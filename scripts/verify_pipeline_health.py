@@ -214,12 +214,16 @@ def check_schema() -> list[CheckResult]:
     return out
 
 
+# Maps daily_scheduler.SCHEDULED_JOBS[].name -> (state, county) as stored
+# in the filings table. Note: filings.county is the bare county name
+# ("Davidson", "Cobb"), NOT "Davidson County" — that latter form appears
+# in run_metrics but not in filings. Verified 2026-05-29.
 SCHEDULED_JOB_COUNTIES: dict[str, tuple[str, str] | None] = {
     "texas": ("TX", "Harris"),
     "tarrant": ("TX", "Tarrant"),
-    "tennessee": ("TN", "Davidson County"),
+    "tennessee": ("TN", "Davidson"),
     "arizona": ("AZ", "Maricopa"),
-    "georgia_cobb": ("GA", "Cobb County"),
+    "georgia_cobb": ("GA", "Cobb"),
     "ohio_franklin_raw": ("OH", "Franklin"),
     "ohio_hamilton": ("OH", "Hamilton"),
 }

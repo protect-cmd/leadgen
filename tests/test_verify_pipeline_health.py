@@ -20,6 +20,7 @@ from scripts.verify_pipeline_health import (
     check_ghl_stage_ids,
     _compute_pass_rate,
     SCHEDULED_JOB_COUNTIES,
+    main,
 )
 
 
@@ -356,3 +357,46 @@ def test_check_ghl_stage_ids_missing_review_when_tenant_enabled(monkeypatch):
     results = check_ghl_stage_ids()
     fails = [r for r in results if r.status == "FAIL"]
     assert any("GHL_NG_REVIEW_STAGE_ID" in r.name for r in fails)
+
+
+def test_main_returns_zero_when_all_ok(monkeypatch):
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_env_vars",
+                        lambda: [CheckResult("env", "x", "OK", "")])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_schema",
+                        lambda: [CheckResult("schema", "x", "OK", "")])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_scheduled_scrapers",
+                        lambda: [CheckResult("scrapers", "x", "OK", "")])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_searchbug_headroom",
+                        lambda: [CheckResult("searchbug", "x", "OK", "")])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_ghl_stage_ids",
+                        lambda: [CheckResult("ghl", "x", "OK", "")])
+    assert main([]) == 0
+
+
+def test_main_returns_one_on_any_fail(monkeypatch):
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_env_vars",
+                        lambda: [CheckResult("env", "x", "FAIL", "")])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_schema",
+                        lambda: [CheckResult("schema", "x", "OK", "")])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_scheduled_scrapers",
+                        lambda: [])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_searchbug_headroom",
+                        lambda: [])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_ghl_stage_ids",
+                        lambda: [])
+    assert main([]) == 1
+
+
+def test_main_strict_returns_one_on_flag(monkeypatch):
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_env_vars",
+                        lambda: [CheckResult("env", "x", "FLAG", "")])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_schema",
+                        lambda: [])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_scheduled_scrapers",
+                        lambda: [])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_searchbug_headroom",
+                        lambda: [])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_ghl_stage_ids",
+                        lambda: [])
+    assert main(["--strict"]) == 1
+    assert main([]) == 0
