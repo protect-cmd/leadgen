@@ -15,6 +15,9 @@ from scripts.verify_pipeline_health import (
     print_report,
     check_env_vars,
     check_schema,
+    check_scheduled_scrapers,
+    _compute_pass_rate,
+    SCHEDULED_JOB_COUNTIES,
 )
 
 
@@ -201,3 +204,72 @@ def test_check_schema_stale_dnc_columns_flag():
     flags = [r for r in results if r.status == "FLAG"]
     assert any("dnc_status" in r.name and "lead_contacts" in r.name for r in flags)
     assert any("dnc_status" in r.name and "filings" in r.name for r in flags)
+
+
+def test_compute_pass_rate_all_pass():
+    rows = [
+        {"property_address": "123 Main St, Houston, TX 77002", "tenant_name": "Maria Garcia"},
+        {"property_address": "456 Elm St, Houston, TX 77003", "tenant_name": "Jose Lopez"},
+    ]
+    assert _compute_pass_rate(rows) == 1.0
+
+
+def test_compute_pass_rate_empty_returns_zero():
+    assert _compute_pass_rate([]) == 0.0
+
+
+def test_compute_pass_rate_mixed():
+    rows = [
+        {"property_address": "123 Main St, Houston, TX 77002", "tenant_name": "Maria Garcia"},
+        {"property_address": "Unknown", "tenant_name": "X X"},
+        {"property_address": "123 Main St, Houston, TX 77002", "tenant_name": "Acme LLC"},
+        {"property_address": "456 Elm St, Houston, TX 77003", "tenant_name": "Carlos Diaz"},
+    ]
+    assert _compute_pass_rate(rows) == 0.5
+
+
+def test_scheduled_job_counties_includes_known_jobs():
+    from services.daily_scheduler import SCHEDULED_JOBS
+    for j in SCHEDULED_JOBS:
+        assert j.name in SCHEDULED_JOB_COUNTIES, (
+            f"SCHEDULED_JOB_COUNTIES missing entry for {j.name}"
+        )
+
+
+def test_check_scheduled_scrapers_ok_above_threshold():
+    rows = [
+        {"property_address": "123 Main St, Houston, TX 77002", "tenant_name": "M Garcia"},
+    ] * 100
+
+    def _table_chain(name):
+        t = MagicMock()
+        chain = t.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value
+        chain.execute.return_value = MagicMock(data=rows)
+        return t
+
+    client = MagicMock()
+    client.table.side_effect = lambda n: _table_chain(n)
+    with patch("scripts.verify_pipeline_health._supabase_client", return_value=client):
+        results = check_scheduled_scrapers()
+    fails = [r for r in results if r.status == "FAIL"]
+    assert not fails, [(r.name, r.detail) for r in fails]
+
+
+def test_check_scheduled_scrapers_fail_below_60_pct():
+    rows = (
+        [{"property_address": "123 Main St, Houston, TX 77002", "tenant_name": "Maria Garcia"}] * 50
+        + [{"property_address": "Unknown", "tenant_name": "Acme LLC"}] * 50
+    )
+
+    def _table_chain(name):
+        t = MagicMock()
+        chain = t.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value
+        chain.execute.return_value = MagicMock(data=rows)
+        return t
+
+    client = MagicMock()
+    client.table.side_effect = lambda n: _table_chain(n)
+    with patch("scripts.verify_pipeline_health._supabase_client", return_value=client):
+        results = check_scheduled_scrapers()
+    fails = [r for r in results if r.status == "FAIL"]
+    assert fails, "expected at least one FAIL"

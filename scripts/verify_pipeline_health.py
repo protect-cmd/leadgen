@@ -212,6 +212,98 @@ def check_schema() -> list[CheckResult]:
     return out
 
 
+SCHEDULED_JOB_COUNTIES: dict[str, tuple[str, str] | None] = {
+    "texas": ("TX", "Harris"),
+    "tarrant": ("TX", "Tarrant"),
+    "tennessee": ("TN", "Davidson County"),
+    "arizona": ("AZ", "Maricopa"),
+    "georgia_cobb": ("GA", "Cobb County"),
+    "ohio_franklin_raw": ("OH", "Franklin"),
+    "ohio_hamilton": ("OH", "Hamilton"),
+}
+
+_PASS_RATE_OK = 0.85
+_PASS_RATE_FAIL = 0.60
+
+
+def _compute_pass_rate(rows: list[dict]) -> float:
+    """Fraction of rows that pass BOTH gate_address and gate_name (no LLM)."""
+    from pipeline import gates as _gates
+    if not rows:
+        return 0.0
+    passed = 0
+    for r in rows:
+        addr = r.get("property_address") or ""
+        name = r.get("tenant_name") or ""
+        if _gates.gate_address(addr) and _gates.gate_name(name):
+            passed += 1
+    return passed / len(rows)
+
+
+def check_scheduled_scrapers() -> list[CheckResult]:
+    """For each scheduled cron job, sample the last 100 filings and compute
+    the gate pass rate (without LLM). Apply gold-standard thresholds."""
+    from services.daily_scheduler import SCHEDULED_JOBS
+    out: list[CheckResult] = []
+    client = _supabase_client()
+
+    for job in SCHEDULED_JOBS:
+        loc = SCHEDULED_JOB_COUNTIES.get(job.name)
+        if loc is None:
+            out.append(CheckResult(
+                "scrapers", job.name, "FLAG",
+                "no (state, county) mapping in SCHEDULED_JOB_COUNTIES; can't audit pass rate",
+                fix_hint="add entry to SCHEDULED_JOB_COUNTIES in scripts/verify_pipeline_health.py",
+            ))
+            continue
+        state, county = loc
+        try:
+            rows = (
+                client.table("filings")
+                .select("property_address,tenant_name")
+                .eq("state", state)
+                .eq("county", county)
+                .order("scraped_at", desc=True)
+                .limit(100)
+                .execute()
+                .data
+                or []
+            )
+        except Exception as exc:
+            out.append(CheckResult(
+                "scrapers", f"{state}/{county}", "FLAG",
+                f"Supabase query failed: {exc!r}",
+            ))
+            continue
+
+        if not rows:
+            out.append(CheckResult(
+                "scrapers", f"{state}/{county}", "FLAG",
+                "no filings persisted yet (new scraper, paused source, or first deploy)",
+            ))
+            continue
+
+        rate = _compute_pass_rate(rows)
+        pct = f"{100 * rate:.0f}%"
+        name = f"{state}/{county} (n={len(rows)})"
+        if rate >= _PASS_RATE_OK:
+            out.append(CheckResult("scrapers", name, "OK", f"pass rate {pct} (>={int(_PASS_RATE_OK*100)}%)"))
+        elif rate >= _PASS_RATE_FAIL:
+            out.append(CheckResult(
+                "scrapers", name, "FLAG",
+                f"pass rate {pct} below gold bar ({int(_PASS_RATE_OK*100)}%); LLM recovery may still rescue it but the source is fragile",
+                fix_hint="diagnose with python scripts/dry_run_pipeline.py --scraper <name> --max-filings 50",
+            ))
+        else:
+            out.append(CheckResult(
+                "scrapers", name, "FAIL",
+                f"pass rate {pct} below drop-from-schedule threshold ({int(_PASS_RATE_FAIL*100)}%)",
+                fix_hint="fix scraper or remove from services/daily_scheduler.SCHEDULED_JOBS until repaired",
+            ))
+
+    return out
+
+
 def print_report(results: list[CheckResult]) -> None:
     """Group results by layer and print one section per layer."""
     by_layer: dict[str, list[CheckResult]] = defaultdict(list)
@@ -252,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
     results: list[CheckResult] = []
     results.extend(check_env_vars())
     results.extend(check_schema())
+    results.extend(check_scheduled_scrapers())
     print_report(results)
 
     has_fail = any(r.status == "FAIL" for r in results)
