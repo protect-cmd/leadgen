@@ -112,34 +112,3 @@ async def test_green_path_skips_searchbug_after_breaker_trips(mock_cache, monkey
         row_count = row[0] if row else 0
     assert row_count == 0, f"Daily cap should not have been incremented; got {row_count}"
 
-
-@pytest.mark.asyncio
-async def test_yellow_path_breaks_loop_after_breaker_trips(mock_cache, monkeypatch):
-    monkeypatch.setenv("SEARCHBUG_DAILY_CAP", "100")
-    searchbug_service._account_error_tripped = True
-
-    filing = Filing(
-        case_number="CB-002",
-        tenant_name="Brett Lilly,Maria Tenant",
-        property_address="Cincinnati, OH",
-        landlord_name="LL",
-        filing_date=date(2026, 5, 22),
-        state="OH",
-        county="Hamilton",
-        notice_type="X",
-        source_url="x",
-    )
-
-    with patch("services.enrichment_cache.get_cache", return_value=mock_cache), \
-         patch("services.searchbug_service.search_tenant", new_callable=AsyncMock) as mock_sb:
-        result = await batchdata_service.enrich_tenant_by_name(filing)
-
-    mock_sb.assert_not_called()
-    assert result.phone is None
-    import sqlite3
-    with sqlite3.connect(mock_cache._db_path) as con:
-        row = con.execute(
-            "SELECT count FROM daily_cap WHERE date=?",
-            (date.today().isoformat(),),
-        ).fetchone()
-        assert (row[0] if row else 0) == 0, "Daily cap should not increment when breaker is tripped"

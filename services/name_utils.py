@@ -183,31 +183,3 @@ _COMMON_SURNAMES: frozenset[str] = frozenset({
 def is_common_surname(last_name: str) -> bool:
     """Return True if last_name is in the top-300 US Census surnames."""
     return last_name.strip().lower() in _COMMON_SURNAMES
-
-
-# Representative ZIP codes for yellow-source cities (city.lower(), state.upper()) -> ZIP
-_CITY_ZIP: dict[tuple[str, str], str] = {
-    ("cincinnati", "OH"): "45202",
-    ("cleveland", "OH"): "44113",
-    ("dayton", "OH"): "45402",
-    ("columbus", "OH"): "43215",
-    ("atlanta", "GA"): "30303",
-    ("griffin", "GA"): "30223",
-    ("marietta", "GA"): "30060",
-    ("decatur", "GA"): "30030",
-    ("chattanooga", "TN"): "37402",
-    ("gallatin", "TN"): "37066",
-    ("knoxville", "TN"): "37902",
-    ("nashville", "TN"): "37201",
-    ("phoenix", "AZ"): "85001",
-    ("scottsdale", "AZ"): "85251",
-    ("las vegas", "NV"): "89101",
-    ("reno", "NV"): "89501",
-    ("austin", "TX"): "78701",
-}
-
-
-def resolve_zip(city: str, state: str) -> str:
-    """Return a representative ZIP for a known yellow-source city, or '' if unknown."""
-    key = (city.strip().lower(), state.strip().upper())
-    return _CITY_ZIP.get(key, "")
