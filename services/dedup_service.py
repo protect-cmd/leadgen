@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -186,6 +187,127 @@ async def upsert_contact_enrichment(contact: EnrichedContact) -> None:
                 "update enrichment",
             )
     await asyncio.to_thread(_update)
+
+
+_UNSAFE_CHARS_RE = re.compile(r"[%,()\"\\]")
+_MAX_NOTE_CHARS = 2000
+
+
+def _sanitize_search_query(q: str | None) -> str:
+    """Strip PostgREST filter-breaking chars from user-supplied search input.
+
+    Keeps letters/digits/spaces/hyphens/apostrophes/periods/at-signs.
+    Removes %, comma, parens, quotes, and backslashes (used in PostgREST
+    filter syntax). Returns empty string on None or whitespace-only input.
+    """
+    if not q:
+        return ""
+    return _UNSAFE_CHARS_RE.sub("", q).strip()
+
+
+def _merge_search_rows(
+    contact_rows: list[dict], filing_rows: list[dict], limit: int
+) -> list[dict]:
+    """Flatten contact_rows + filing_rows into one sorted list, deduped by
+    case_number. Each output row has the union of contact + filing fields."""
+    by_case: dict[str, dict] = {}
+
+    # Lead-contact-side rows: contact fields top-level, filing fields nested
+    for r in contact_rows:
+        f = r.get("filings") or {}
+        if isinstance(f, list):
+            f = f[0] if f else {}
+        merged = {**f, **{k: v for k, v in r.items() if k != "filings"}}
+        case_no = merged.get("case_number")
+        if case_no:
+            by_case[case_no] = merged
+
+    # Filing-side rows: filing fields top-level, contact fields nested
+    for r in filing_rows:
+        lcs = r.get("lead_contacts") or []
+        if isinstance(lcs, dict):
+            lcs = [lcs]
+        chosen = next(
+            (c for c in lcs if c.get("track") == "ng"),
+            lcs[0] if lcs else {},
+        )
+        merged = {**r, **{k: v for k, v in chosen.items() if k != "case_number"}}
+        merged.pop("lead_contacts", None)
+        case_no = merged.get("case_number")
+        if case_no and case_no not in by_case:
+            by_case[case_no] = merged
+
+    out = list(by_case.values())
+    out.sort(key=lambda r: r.get("filing_date") or "", reverse=True)
+    return out[:limit]
+
+
+async def search_leads(q: str, limit: int = 20) -> list[dict]:
+    """Unified search across lead_contacts + filings.
+
+    Matches substring on name (contact_name + tenant_name), phone (digits
+    of q), case_number, and property_address. Merges results by
+    case_number, sorts by filing_date DESC, returns up to `limit` rows.
+
+    Returns [] for queries under 2 characters.
+    """
+    safe_q = _sanitize_search_query(q)
+    if len(safe_q) < 2:
+        return []
+
+    digits_q = "".join(c for c in safe_q if c.isdigit())
+
+    def _query() -> list[dict]:
+        contact_filters = [
+            f"contact_name.ilike.%{safe_q}%",
+            f"case_number.ilike.%{safe_q}%",
+        ]
+        if digits_q:
+            contact_filters.append(f"phone.ilike.%{digits_q}%")
+        contact_or = ",".join(contact_filters)
+
+        contact_rows = (
+            _client.table("lead_contacts")
+            .select(
+                "case_number,track,contact_name,phone,email,property_type,"
+                "estimated_rent,secondary_address,language_hint,"
+                "searchbug_status,last_called_at,ghl_contact_id,bland_status,"
+                "filings(filing_date,court_date,tenant_name,property_address,"
+                "landlord_name,state,county,notice_type,source_url,lead_bucket)"
+            )
+            .or_(contact_or)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+
+        filing_or = ",".join([
+            f"tenant_name.ilike.%{safe_q}%",
+            f"property_address.ilike.%{safe_q}%",
+            f"case_number.ilike.%{safe_q}%",
+        ])
+        filing_rows = (
+            _client.table("filings")
+            .select(
+                "case_number,tenant_name,property_address,landlord_name,"
+                "filing_date,court_date,state,county,notice_type,source_url,"
+                "lead_bucket,"
+                "lead_contacts(track,contact_name,phone,email,property_type,"
+                "estimated_rent,secondary_address,searchbug_status,"
+                "last_called_at,ghl_contact_id,bland_status)"
+            )
+            .or_(filing_or)
+            .order("filing_date", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+
+        return _merge_search_rows(contact_rows, filing_rows, limit)
+
+    return await asyncio.to_thread(_query)
 
 
 async def update_enrichment(contact: EnrichedContact) -> None:
