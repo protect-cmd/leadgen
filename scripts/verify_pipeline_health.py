@@ -220,10 +220,12 @@ def check_schema() -> list[CheckResult]:
 # in run_metrics but not in filings. Verified 2026-05-29.
 SCHEDULED_JOB_COUNTIES: dict[str, tuple[str, str] | None] = {
     "texas": ("TX", "Harris"),
-    "tarrant": ("TX", "Tarrant"),
+    # tarrant + georgia_cobb descheduled 2026-05-29 — see daily_scheduler.py
+    # and the follow-up specs (2026-05-29-tarrant-rebuild-design.md,
+    # 2026-05-29-cobb-address-enrichment-rebuild-design.md). Map entries
+    # removed so the verifier doesn't try to audit descheduled scrapers.
     "tennessee": ("TN", "Davidson"),
     "arizona": ("AZ", "Maricopa"),
-    "georgia_cobb": ("GA", "Cobb"),
     "ohio_franklin_raw": ("OH", "Franklin"),
     "ohio_hamilton": ("OH", "Hamilton"),
 }

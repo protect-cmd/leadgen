@@ -25,10 +25,17 @@ class ScheduledJob:
 
 SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
     ScheduledJob("texas", 13, 0, "run_texas.py"),
-    ScheduledJob("tarrant", 13, 10, "run_tarrant.py", args=("--pipe",)),
+    # tarrant DESCHEDULED 2026-05-29 - Bright Data tunnel failing on every
+    # CaseDetail click (ERR_TUNNEL_CONNECTION_FAILED). See follow-up:
+    # docs/superpowers/specs/2026-05-29-tarrant-rebuild-design.md
+    # ScheduledJob("tarrant", 13, 10, "run_tarrant.py", args=("--pipe",)),
     ScheduledJob("tennessee", 13, 20, "run_tennessee.py"),
     ScheduledJob("arizona", 13, 40, "run_arizona.py", args=("--pipe", "--notify")),
-    ScheduledJob("georgia_cobb", 14, 0, "run_georgia_cobb.py", args=("--pipe", "--notify")),
+    # georgia_cobb DESCHEDULED 2026-05-29 - 200 filings / 4% gate pass rate.
+    # Underlying cause: Nominatim geocoder (which Cobb's assessor chain
+    # depends on for address enrichment) is unreliable. See follow-up:
+    # docs/superpowers/specs/2026-05-29-cobb-address-enrichment-rebuild-design.md
+    # ScheduledJob("georgia_cobb", 14, 0, "run_georgia_cobb.py", args=("--pipe", "--notify")),
     ScheduledJob(
         "ohio_franklin_raw",
         14,
