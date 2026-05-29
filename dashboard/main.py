@@ -23,6 +23,10 @@ from services.dedup_service import (
     get_pending_leads,
     get_recent_metrics,
     set_bland_status,
+    search_leads,
+    add_lead_note,
+    list_lead_notes,
+    mark_lead_called,
 )
 from models.filing import Filing
 from models.contact import EnrichedContact
@@ -60,6 +64,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Grant Ellis Group Lead Queue", lifespan=lifespan)
 
 _HTML = Path(__file__).parent / "index.html"
+_SEARCH_HTML = Path(__file__).parent / "search.html"
 
 
 def _truthy(value: str | None) -> bool:
@@ -97,8 +102,45 @@ def _build_bland_test_contact(track: str) -> EnrichedContact:
 
 
 @app.get("/", response_class=FileResponse)
-async def dashboard():
+async def dashboard_search():
+    """Search-first landing page (Spec 4)."""
+    return FileResponse(_SEARCH_HTML)
+
+
+@app.get("/queue", response_class=FileResponse)
+async def dashboard_queue():
+    """Legacy multi-tab queue UI (moved from / in Spec 4)."""
     return FileResponse(_HTML)
+
+
+@app.get("/api/search")
+async def api_search(q: str = "", limit: int = 20):
+    if not q or len(q.strip()) < 2:
+        return JSONResponse([])
+    rows = await search_leads(q=q, limit=limit)
+    return JSONResponse(rows)
+
+
+@app.post("/api/leads/{case_number}/note")
+async def api_add_note(case_number: str, payload: dict, track: str = "ng"):
+    text = (payload or {}).get("text", "")
+    try:
+        row = await add_lead_note(case_number=case_number, track=track, text=text)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return JSONResponse(row)
+
+
+@app.get("/api/leads/{case_number}/notes")
+async def api_list_notes(case_number: str, track: str = "ng"):
+    rows = await list_lead_notes(case_number=case_number, track=track)
+    return JSONResponse(rows)
+
+
+@app.post("/api/leads/{case_number}/mark-called")
+async def api_mark_called(case_number: str, track: str = "ng"):
+    ts = await mark_lead_called(case_number=case_number, track=track)
+    return JSONResponse({"status": "ok", "last_called_at": ts})
 
 
 @app.get("/api/leads")
