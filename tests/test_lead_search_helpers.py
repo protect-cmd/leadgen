@@ -9,7 +9,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from services.dedup_service import search_leads, _sanitize_search_query
+from services.dedup_service import (
+    search_leads,
+    _sanitize_search_query,
+    add_lead_note,
+    list_lead_notes,
+)
 
 
 def test_sanitize_search_query_strips_filter_breakers():
@@ -129,3 +134,56 @@ async def test_search_leads_respects_limit():
     with patch("services.dedup_service._client", client):
         result = await search_leads("xx", limit=10)
     assert len(result) == 10
+
+
+@pytest.mark.asyncio
+async def test_add_lead_note_inserts_with_default_author():
+    """A note is INSERTed with the caller-default author and the right fields."""
+    client = MagicMock()
+    insert_chain = client.table.return_value.insert.return_value
+    insert_chain.execute.return_value = MagicMock(
+        data=[{"id": 7, "case_number": "C-1", "track": "ng",
+               "note_text": "Hello", "author": "caller",
+               "created_at": "2026-05-29T20:00:00+00:00"}]
+    )
+    with patch("services.dedup_service._client", client):
+        row = await add_lead_note(case_number="C-1", track="ng", text="Hello")
+    assert row["id"] == 7
+    assert row["author"] == "caller"
+    call_args = client.table.return_value.insert.call_args.args[0]
+    assert call_args["case_number"] == "C-1"
+    assert call_args["track"] == "ng"
+    assert call_args["note_text"] == "Hello"
+    assert call_args["author"] == "caller"
+
+
+@pytest.mark.asyncio
+async def test_add_lead_note_rejects_empty_text():
+    """Empty / whitespace-only text raises ValueError before any DB call."""
+    with patch("services.dedup_service._client") as mock_client:
+        with pytest.raises(ValueError, match="empty"):
+            await add_lead_note(case_number="C-1", track="ng", text="   ")
+    mock_client.table.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_add_lead_note_rejects_oversize_text():
+    """Text over 2000 chars raises ValueError."""
+    with patch("services.dedup_service._client") as mock_client:
+        with pytest.raises(ValueError, match="2000"):
+            await add_lead_note(case_number="C-1", track="ng", text="x" * 2001)
+
+
+@pytest.mark.asyncio
+async def test_list_lead_notes_returns_rows_in_desc_order():
+    """list_lead_notes selects from lead_notes filtered + ordered DESC."""
+    rows = [
+        {"id": 3, "note_text": "newest", "created_at": "2026-05-29T20:00:00+00:00"},
+        {"id": 2, "note_text": "older", "created_at": "2026-05-28T20:00:00+00:00"},
+    ]
+    client = MagicMock()
+    chain = client.table.return_value.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value
+    chain.execute.return_value = MagicMock(data=rows)
+    with patch("services.dedup_service._client", client):
+        out = await list_lead_notes(case_number="C-1", track="ng")
+    assert [r["id"] for r in out] == [3, 2]

@@ -310,6 +310,57 @@ async def search_leads(q: str, limit: int = 20) -> list[dict]:
     return await asyncio.to_thread(_query)
 
 
+async def add_lead_note(*, case_number: str, track: str, text: str,
+                        author: str = "caller") -> dict:
+    """Append a note for (case_number, track). Returns the inserted row.
+
+    Raises ValueError if text is empty/whitespace or exceeds 2000 chars.
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        raise ValueError("note text is empty")
+    if len(stripped) > _MAX_NOTE_CHARS:
+        raise ValueError(f"note text exceeds {_MAX_NOTE_CHARS} chars")
+
+    payload = {
+        "case_number": case_number,
+        "track": track,
+        "note_text": stripped,
+        "author": author,
+    }
+
+    def _insert() -> dict:
+        r = _execute_with_retry(
+            _client.table("lead_notes").insert(payload),
+            "insert lead_note",
+        )
+        rows = r.data or []
+        if not rows:
+            raise RuntimeError("INSERT lead_note returned no row")
+        return rows[0]
+
+    return await asyncio.to_thread(_insert)
+
+
+async def list_lead_notes(*, case_number: str, track: str,
+                          limit: int = 50) -> list[dict]:
+    """Return notes for (case_number, track) sorted by created_at DESC."""
+    def _query() -> list[dict]:
+        return (
+            _client.table("lead_notes")
+            .select("id,note_text,author,created_at")
+            .eq("case_number", case_number)
+            .eq("track", track)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+
+    return await asyncio.to_thread(_query)
+
+
 async def update_enrichment(contact: EnrichedContact) -> None:
     await upsert_contact_enrichment(contact)
 
