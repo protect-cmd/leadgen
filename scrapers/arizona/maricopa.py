@@ -160,10 +160,24 @@ class MaricopaJusticeCourtScraper:
 
     @staticmethod
     def _property_address(detail: MaricopaCaseDetail) -> str:
+        """Build a gate-passing 'street, city, AZ zip' string from the
+        assessor's structured fields. The assessor's `physical_address`
+        is space-joined ('310 S 3RD AVE AVONDALE 85323') which fails
+        `gate_address`; we use the separate `physical_city` + `physical_zip`
+        fields to rebuild a properly-comma-and-state-separated string.
+        """
         match = detail.address_match
-        if match and match.status == "single_match" and match.records:
-            return match.records[0].physical_address or "Unknown"
-        return "Unknown"
+        if not (match and match.status == "single_match" and match.records):
+            return "Unknown"
+        rec = match.records[0]
+        raw = (rec.physical_address or "").strip()
+        city = (rec.physical_city or "").strip()
+        zip_ = (rec.physical_zip or "").strip()
+        if not raw or not city or not zip_:
+            return "Unknown"
+        suffix = f" {city} {zip_}"
+        street = raw[: -len(suffix)].strip() if raw.endswith(suffix) else raw.strip()
+        return f"{street}, {city.title()}, AZ {zip_}"
 
 
 def _parse_court_links(index_html: str) -> list[tuple[str, str]]:

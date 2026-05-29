@@ -168,7 +168,7 @@ def test_scrape_tracks_address_match_status_by_case(monkeypatch):
 
     filings = scraper.scrape()
 
-    assert filings[0].property_address == "123 W MAIN ST PHOENIX 85001"
+    assert filings[0].property_address == "123 W MAIN ST, Phoenix, AZ 85001"
     assert scraper.address_match_counts == {
         "single_match": 1,
         "ambiguous": 0,
@@ -203,7 +203,7 @@ def test_build_filing_uses_single_assessor_match_address_only():
 
     filing = scraper._build_filing(case, detail, "https://example.com/detail")
 
-    assert filing.property_address == "123 W MAIN ST PHOENIX 85001"
+    assert filing.property_address == "123 W MAIN ST, Phoenix, AZ 85001"
 
 
 def test_build_filing_keeps_unknown_address_for_ambiguous_match():
