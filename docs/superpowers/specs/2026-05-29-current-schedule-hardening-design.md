@@ -77,36 +77,29 @@ def _property_address(detail: MaricopaCaseDetail) -> str:
 
 `physical_address` returns assessor-formatted strings like `"310 S 3RD AVE AVONDALE 85323"` — space-delimited, no commas, no state abbreviation. `gate_address` rejects them because its `_ADDR_STATE_ZIP_RE` requires `\b[A-Z]{2}\s+\d{5}\b` (state abbreviation immediately before ZIP).
 
-Fix: a normalizer that parses the trailing 5-digit ZIP and the preceding token as city, then composes `"{street}, {city}, AZ {zip}"`.
+Fix uses the assessor's **structured fields** (`physical_city`, `physical_zip` already exist on `ParcelRecord` per `scrapers/arizona/maricopa_assessor.py:17-25`) rather than parsing the joined string. The joined `physical_address` ends with `" {physical_city} {physical_zip}"`, so we strip that suffix to isolate the street and rebuild with proper format.
 
 ```python
-import re
-
-_AZ_TRAILING_RE = re.compile(r"^(.*?)\s+([A-Z][A-Z\s]*?)\s+(\d{5})$")
-
 @staticmethod
 def _property_address(detail: MaricopaCaseDetail) -> str:
     match = detail.address_match
     if not (match and match.status == "single_match" and match.records):
         return "Unknown"
-    raw = (match.records[0].physical_address or "").strip()
-    if not raw:
-        return "Unknown"
-    m = _AZ_TRAILING_RE.match(raw)
-    if not m:
-        # Couldn't parse — return as-is rather than dropping the lead;
-        # LLM recovery will likely rescue it.
-        return raw
-    street, city, zip_ = m.groups()
-    return f"{street.strip()}, {city.strip().title()}, AZ {zip_}"
+    rec = match.records[0]
+    if not (rec.physical_address and rec.physical_city and rec.physical_zip):
+        return rec.physical_address or "Unknown"
+    suffix = f" {rec.physical_city} {rec.physical_zip}"
+    raw = rec.physical_address
+    street = raw[: -len(suffix)] if raw.endswith(suffix) else raw
+    return f"{street.strip()}, {rec.physical_city.title()}, AZ {rec.physical_zip}"
 ```
 
-Tradeoff: regex assumes city is one or more uppercase words appearing between the street and the ZIP. Multi-word cities (e.g., "PARADISE VALLEY", "QUEEN CREEK") work because the regex is greedy on `[A-Z\s]*?` and matches all caps tokens. None of the 83 production samples had this concern but the regex handles it.
+Why this is better than regex parsing: no ambiguity on multi-word cities, no city-token guessing, and the structured fields are authoritative (assessor API source of truth). The conditional fallback handles the rare case where the joined string doesn't end with the structured suffix (data drift on the assessor side).
 
 Unit test in `tests/test_maricopa_scraper.py` (extend if exists, create if not) covering:
 - Single-word city (AVONDALE, PHOENIX) → properly formatted
-- Multi-word city (QUEEN CREEK, PARADISE VALLEY) → properly formatted
-- Unparseable raw → returned as-is (don't drop)
+- Multi-word city (QUEEN CREEK, PARADISE VALLEY) → properly formatted via structured fields
+- Empty assessor record → "Unknown"
 - Missing assessor match → "Unknown"
 - Result passes `pipeline.gates.gate_address`
 
