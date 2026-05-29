@@ -14,6 +14,7 @@ from services.dedup_service import (
     _sanitize_search_query,
     add_lead_note,
     list_lead_notes,
+    mark_lead_called,
 )
 
 
@@ -187,3 +188,19 @@ async def test_list_lead_notes_returns_rows_in_desc_order():
     with patch("services.dedup_service._client", client):
         out = await list_lead_notes(case_number="C-1", track="ng")
     assert [r["id"] for r in out] == [3, 2]
+
+
+@pytest.mark.asyncio
+async def test_mark_lead_called_updates_timestamp():
+    """Sends UPDATE on lead_contacts with last_called_at = now()."""
+    client = MagicMock()
+    chain = client.table.return_value.update.return_value.eq.return_value.eq.return_value
+    chain.execute.return_value = MagicMock(data=[{
+        "case_number": "C-1", "track": "ng",
+        "last_called_at": "2026-05-29T20:00:00+00:00",
+    }])
+    with patch("services.dedup_service._client", client):
+        ts = await mark_lead_called(case_number="C-1", track="ng")
+    assert isinstance(ts, str) and "T" in ts
+    update_arg = client.table.return_value.update.call_args.args[0]
+    assert "last_called_at" in update_arg

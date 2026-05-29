@@ -310,6 +310,24 @@ async def search_leads(q: str, limit: int = 20) -> list[dict]:
     return await asyncio.to_thread(_query)
 
 
+async def mark_lead_called(*, case_number: str, track: str) -> str:
+    """UPDATE lead_contacts SET last_called_at = now() and return the
+    resulting timestamp string. Used by the dashboard 'Mark Called' button."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    def _update() -> str:
+        _execute_with_retry(
+            _client.table("lead_contacts")
+            .update({"last_called_at": now_iso})
+            .eq("case_number", case_number)
+            .eq("track", track),
+            "mark lead called",
+        )
+        return now_iso
+
+    return await asyncio.to_thread(_update)
+
+
 async def add_lead_note(*, case_number: str, track: str, text: str,
                         author: str = "caller") -> dict:
     """Append a note for (case_number, track). Returns the inserted row.
