@@ -79,6 +79,29 @@ async def _get_pipeline_id(
     return _pipeline_cache.get(stage_id)
 
 
+async def list_pipelines(track: str = "ng") -> list[dict]:
+    """Return the location's pipelines as a list of dicts.
+
+    Each entry contains: id, name, stages (list of {id, name, position, ...}).
+    Returns [] on HTTP error rather than raising — callers decide whether
+    that's a hard failure.
+    """
+    headers = _headers(track)
+    location_id = _location_id(track)
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(
+            f"{BASE}/opportunities/pipelines",
+            params={"locationId": location_id},
+            headers=headers,
+        )
+    if r.status_code != 200:
+        log.warning(
+            "list_pipelines failed: %s %s", r.status_code, r.text[:200]
+        )
+        return []
+    return r.json().get("pipelines", []) or []
+
+
 async def create_contact(
     contact: EnrichedContact,
     tags: list[str],
