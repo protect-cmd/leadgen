@@ -102,6 +102,64 @@ async def list_pipelines(track: str = "ng") -> list[dict]:
     return r.json().get("pipelines", []) or []
 
 
+async def create_pipeline_stage(
+    *,
+    track: str,
+    pipeline_id: str,
+    name: str,
+    position: int,
+) -> str:
+    """Idempotently create (or find) a pipeline stage by name.
+
+    GHL v2 has no dedicated create-stage endpoint; the pattern is to fetch
+    the pipeline, append/insert the new stage in the stages array, and PUT
+    the pipeline back.
+
+    Returns the stage ID — either an existing stage that matched the name,
+    or the newly-created stage from the PUT response.
+
+    Raises RuntimeError if the pipeline_id is not found in the location.
+    """
+    headers = _headers(track)
+    pipelines = await list_pipelines(track=track)
+    target = next((p for p in pipelines if p.get("id") == pipeline_id), None)
+    if target is None:
+        raise RuntimeError(f"pipeline {pipeline_id!r} not found in track {track!r}")
+
+    for stage in target.get("stages", []):
+        if (stage.get("name") or "").strip() == name.strip():
+            return stage["id"]
+
+    new_stage = {"name": name, "position": position}
+    stages = list(target.get("stages", []))
+    insert_at = max(0, min(position, len(stages)))
+    stages.insert(insert_at, new_stage)
+    for idx, s in enumerate(stages):
+        s["position"] = idx
+
+    body = {"name": target.get("name") or "Pipeline", "stages": stages}
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.put(
+            f"{BASE}/opportunities/pipelines/{pipeline_id}",
+            json=body,
+            headers=headers,
+        )
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"create_pipeline_stage PUT failed: {r.status_code} {r.text[:300]}"
+        )
+    updated_stages = r.json().get("pipeline", {}).get("stages", [])
+    match = next(
+        (s for s in updated_stages if (s.get("name") or "").strip() == name.strip()),
+        None,
+    )
+    if match is None or not match.get("id"):
+        raise RuntimeError(
+            "create_pipeline_stage: PUT succeeded but new stage not present in response"
+        )
+    return match["id"]
+
+
 async def create_contact(
     contact: EnrichedContact,
     tags: list[str],
