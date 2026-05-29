@@ -42,13 +42,13 @@ Out of scope (separate future specs):
 
 - Spec 2: Bring current scrapers up to this gold standard (per-scraper diagnosis)
 - Spec 3: Onboarding playbook for new scrapers as Nourul/Franz/Donnald deliver
-- Spec 4: Bland call quality (transcripts, scripting, post-call analysis)
-- Spec 5: Instantly campaign hygiene (deliverability, sequences)
-- Spec 6: Unified caller-lookup dashboard — replaces the current
+- Spec 4: Unified caller-lookup dashboard — replaces the current
   multi-tab Lead Queue with a single search-driven view where callers
   can resolve a client by name, phone, case number, or address. Today's
   dashboard at `/dashboard/main.py` is segmented by brand/view/status
   filters and is too noisy for live call workflows.
+- Spec 5: Bland call quality (transcripts, scripting, post-call analysis)
+- Spec 6: Instantly campaign hygiene (deliverability, sequences)
 - Dashboard UX (broader), manual review queue, captured-bucket promotion
 - EC (landlord) track — currently paused
 
