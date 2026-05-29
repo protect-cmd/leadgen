@@ -182,6 +182,11 @@ async def create_contact(
     custom_fields: list[dict] = [
         {"key": "contact.filing_county", "field_value": filing.county},
         {"key": "contact.case_number", "field_value": filing.case_number},
+        # Filing date split into year/month/day to match the GHL custom fields
+        # set up 2026-05-29 (Single-line text type — month/day zero-padded).
+        {"key": "contact.filing_year", "field_value": str(filing.filing_date.year)},
+        {"key": "contact.filing_month", "field_value": f"{filing.filing_date.month:02d}"},
+        {"key": "contact.filing_day", "field_value": f"{filing.filing_date.day:02d}"},
     ]
     if contact.property_type == "commercial":
         custom_fields.append({"key": "contact.property_type", "field_value": "Commercial"})
