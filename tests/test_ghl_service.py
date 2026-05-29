@@ -169,9 +169,9 @@ async def test_create_contact_rejects_contact_without_phone_or_email():
 
 
 @pytest.mark.asyncio
-async def test_create_contact_pushes_filing_date_as_year_month_day_custom_fields(monkeypatch):
-    """contact.filing_year / filing_month / filing_day must appear in the
-    upsert payload's customFields, derived from filing.filing_date."""
+async def test_create_contact_pushes_custom_fields_by_id_for_ng_track(monkeypatch):
+    """NG contacts should send customFields as {id, field_value} using the
+    hardcoded UUID map. Without UUIDs the v2 API silently drops the values."""
     captured: dict = {}
 
     class Response:
@@ -194,10 +194,74 @@ async def test_create_contact_pushes_filing_date_as_year_month_day_custom_fields
             if url.endswith("/contacts/upsert"):
                 captured["upsert"] = json
                 return Response(201, {"contact": {"id": "c-1"}})
-            if url.endswith("/opportunities/"):
-                return Response(201, {})
-            if url.endswith("/notes"):
-                return Response(201, {})
+            return Response(201, {})
+
+    # Patch the field-ID map to a known set so the test is independent of
+    # production field IDs.
+    monkeypatch.setattr(ghl_service, "_NG_FIELD_IDS", {
+        "filing_county": "ID_COUNTY",
+        "case_number": "ID_CASE",
+        "filing_year": "ID_YEAR",
+        "filing_month": "ID_MONTH",
+        "filing_day": "ID_DAY",
+        "filing_date": "ID_FILING_DATE",
+        "court_date": "ID_COURT_DATE",
+        "tenant_name": "ID_TENANT_NAME",
+        "landlord_name": "ID_LANDLORD_NAME",
+    })
+    monkeypatch.setenv("GHL_API_KEY", "test-key")
+    monkeypatch.setenv("GHL_NG_LOCATION_ID", "loc-ng")
+    monkeypatch.setattr(ghl_service.httpx, "AsyncClient", lambda **kwargs: Client())
+    ghl_service._pipeline_cache.clear()
+
+    contact = _contact()
+    contact.track = "ng"  # force NG track for this test
+
+    await ghl_service.create_contact(contact, ["NG-New-Filing"], "stage-1")
+
+    custom_fields = captured["upsert"]["customFields"]
+    # Every entry must use {id, field_value} format (no 'key' field)
+    for cf in custom_fields:
+        assert "id" in cf and "field_value" in cf, f"bad shape: {cf}"
+        assert "key" not in cf
+
+    by_id = {f["id"]: f["field_value"] for f in custom_fields}
+    # _contact() filing_date is date(2026, 5, 7), court_date is date(2026, 5, 10)
+    assert by_id["ID_COUNTY"] == "Harris"
+    assert by_id["ID_CASE"] == "TEST-GHL-OPP-WARN"
+    assert by_id["ID_YEAR"] == "2026"
+    assert by_id["ID_MONTH"] == "05"
+    assert by_id["ID_DAY"] == "07"
+    assert by_id["ID_FILING_DATE"] == "2026-05-07"
+    assert by_id["ID_COURT_DATE"] == "2026-05-10"
+    assert by_id["ID_TENANT_NAME"] == "Jane Tenant"
+    assert by_id["ID_LANDLORD_NAME"] == "Grant Owner"
+
+
+@pytest.mark.asyncio
+async def test_create_contact_ec_track_skips_custom_fields(monkeypatch):
+    """EC track has no field-ID mapping yet (track is disabled). Should
+    not crash, just send an empty customFields list."""
+    captured: dict = {}
+
+    class Response:
+        def __init__(self, status_code, payload=None, text="ok"):
+            self.status_code = status_code
+            self._payload = payload or {}
+            self.text = text
+        def json(self): return self._payload
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, url, params, headers):
+            return Response(200, {"pipelines": [
+                {"id": "pip", "name": "X", "stages": [{"id": "stage-1", "name": "New"}]}
+            ]})
+        async def post(self, url, json, headers):
+            if url.endswith("/contacts/upsert"):
+                captured["upsert"] = json
+                return Response(201, {"contact": {"id": "c-1"}})
             return Response(201, {})
 
     monkeypatch.setenv("GHL_API_KEY", "test-key")
@@ -207,12 +271,5 @@ async def test_create_contact_pushes_filing_date_as_year_month_day_custom_fields
 
     await ghl_service.create_contact(_contact(), ["EC-New-Filing"], "stage-1")
 
-    custom_fields = captured["upsert"]["customFields"]
-    by_key = {f["key"]: f["field_value"] for f in custom_fields}
-    # filing_date in _contact() is date(2026, 5, 7)
-    assert by_key["contact.filing_year"] == "2026"
-    assert by_key["contact.filing_month"] == "05"
-    assert by_key["contact.filing_day"] == "07"
-    # Existing fields still present
-    assert by_key["contact.filing_county"] == "Harris"
-    assert by_key["contact.case_number"] == "TEST-GHL-OPP-WARN"
+    # EC track uses an empty field map -> no custom fields sent
+    assert captured["upsert"]["customFields"] == []

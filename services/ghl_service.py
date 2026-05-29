@@ -17,6 +17,29 @@ API_VERSION = "2021-07-28"
 _pipeline_cache: dict[str, str] = {}
 
 
+# NG subaccount custom-field UUIDs (verified via API 2026-05-30).
+# Mapping: short slug -> GHL field ID. v2 API requires IDs in customFields.
+_NG_FIELD_IDS: dict[str, str] = {
+    "filing_county": "zuPVULPbK4CdxGbdoLF5",
+    "case_number": "lwqY2WzuU8UpIWNBBSIW",
+    "filing_year": "UcEA9HM7zRdq5t1N3pNp",
+    "filing_month": "VqgZFQzH9fxtvN0jWMDa",
+    "filing_day": "tn9L806cLE36SuR1o0Tb",
+    "filing_date": "NPUPyzEz4AisXHu4j7d5",
+    "court_date": "Fdlj0zJMkQDWhBcuXKhl",
+    "tenant_name": "GOS5Bvt6lJA9Eh077bEY",
+    "landlord_name": "Cm4j8iTfZSQFO9J1mIIO",
+    "property_type": "I5fYKFVRDTxu6aEV6HGK",
+    "monthly_rent_amount": "hZrcXEi77N01DvVinZI8",
+}
+
+
+def _ng_custom_field_ids() -> dict[str, str]:
+    """Return the NG custom-field UUID map. Wrapped in a function so tests
+    can monkeypatch the mapping for a specific subaccount layout."""
+    return _NG_FIELD_IDS
+
+
 def _is_duplicate_opportunity_error(status_code: int, body: str) -> bool:
     return (
         status_code == 400
@@ -179,21 +202,31 @@ async def create_contact(
     # contact.property_type is SINGLE_OPTIONS — only set for "commercial" since
     # BatchData doesn't give us specific residential sub-type.
     # contact.monthly_rent_amount is the existing rent field (NUMERICAL).
-    custom_fields: list[dict] = [
-        {"key": "contact.filing_county", "field_value": filing.county},
-        {"key": "contact.case_number", "field_value": filing.case_number},
-        # Filing date split into year/month/day to match the GHL custom fields
-        # set up 2026-05-29 (Single-line text type — month/day zero-padded).
-        {"key": "contact.filing_year", "field_value": str(filing.filing_date.year)},
-        {"key": "contact.filing_month", "field_value": f"{filing.filing_date.month:02d}"},
-        {"key": "contact.filing_day", "field_value": f"{filing.filing_date.day:02d}"},
-    ]
+    # GHL v2 customFields require field UUIDs, not keys. Without IDs the API
+    # silently drops the values (returns 201 but field stays empty). UUIDs
+    # captured 2026-05-30 via GET /locations/{loc}/customFields.
+    field_ids = _ng_custom_field_ids() if contact.track == "ng" else {}
+
+    custom_fields: list[dict] = []
+    def _add(slug: str, value) -> None:
+        fid = field_ids.get(slug)
+        if fid and value not in (None, ""):
+            custom_fields.append({"id": fid, "field_value": value})
+
+    _add("filing_county", filing.county)
+    _add("case_number", filing.case_number)
+    _add("filing_year", str(filing.filing_date.year))
+    _add("filing_month", f"{filing.filing_date.month:02d}")
+    _add("filing_day", f"{filing.filing_date.day:02d}")
+    _add("filing_date", filing.filing_date.isoformat())
+    if filing.court_date:
+        _add("court_date", filing.court_date.isoformat())
+    _add("tenant_name", filing.tenant_name)
+    _add("landlord_name", filing.landlord_name)
     if contact.property_type == "commercial":
-        custom_fields.append({"key": "contact.property_type", "field_value": "Commercial"})
+        _add("property_type", "Commercial")
     if contact.estimated_rent:
-        custom_fields.append(
-            {"key": "contact.monthly_rent_amount", "field_value": contact.estimated_rent}
-        )
+        _add("monthly_rent_amount", contact.estimated_rent)
 
     upsert_payload: dict = {
         "locationId": location_id,
