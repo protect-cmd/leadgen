@@ -54,36 +54,33 @@ def test_scheduler_does_not_catch_up_old_state_window():
 
 
 def test_scheduler_defines_daily_jobs():
+    """Tarrant + georgia_cobb descheduled 2026-05-29 (Spec 2). See
+    docs/superpowers/specs/2026-05-29-tarrant-rebuild-design.md and
+    docs/superpowers/specs/2026-05-29-cobb-address-enrichment-rebuild-design.md."""
     from services import daily_scheduler
 
     assert [(job.name, job.hour, job.minute, job.script_name) for job in daily_scheduler.SCHEDULED_JOBS] == [
         ("texas", 13, 0, "run_texas.py"),
-        ("tarrant", 13, 10, "run_tarrant.py"),
         ("tennessee", 13, 20, "run_tennessee.py"),
         ("arizona", 13, 40, "run_arizona.py"),
-        ("georgia_cobb", 14, 0, "run_georgia_cobb.py"),
         ("ohio_franklin_raw", 14, 20, "../scripts/push_franklin_filings.py"),
         ("ohio_hamilton", 14, 40, "run_ohio.py"),
     ]
-    tarrant_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "tarrant")
-    assert "--pipe" in tarrant_job.args
     az_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "arizona")
     assert "--pipe" in az_job.args
     assert "--notify" in az_job.args
 
 
-def test_georgia_cobb_job_is_scheduled():
+def test_tarrant_descheduled():
+    """Spec 2b: Bright Data tunnel failures (ERR_TUNNEL_CONNECTION_FAILED)."""
     from services.daily_scheduler import SCHEDULED_JOBS
-    names = [j.name for j in SCHEDULED_JOBS]
-    assert "georgia_cobb" in names
+    assert "tarrant" not in [j.name for j in SCHEDULED_JOBS]
 
 
-def test_georgia_cobb_job_has_pipe_and_notify():
+def test_georgia_cobb_descheduled():
+    """Spec 2c: 4% gate pass rate due to Nominatim flakiness in address chain."""
     from services.daily_scheduler import SCHEDULED_JOBS
-    job = next(j for j in SCHEDULED_JOBS if j.name == "georgia_cobb")
-    assert "--pipe" in job.args
-    assert "--notify" in job.args
-    assert job.script_name == "run_georgia_cobb.py"
+    assert "georgia_cobb" not in [j.name for j in SCHEDULED_JOBS]
 
 
 def test_ohio_franklin_job_is_raw_supabase_only():
