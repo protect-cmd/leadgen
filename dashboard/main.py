@@ -12,10 +12,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+from dashboard.auth import require_search, require_queue, require_any
 from services import bland_service, daily_scheduler, notification_service
 from services.dedup_service import (
     get_dashboard_counts,
@@ -101,19 +102,19 @@ def _build_bland_test_contact(track: str) -> EnrichedContact:
     )
 
 
-@app.get("/", response_class=FileResponse)
+@app.get("/", response_class=FileResponse, dependencies=[Depends(require_search)])
 async def dashboard_search():
     """Search-first landing page (Spec 4)."""
     return FileResponse(_SEARCH_HTML)
 
 
-@app.get("/queue", response_class=FileResponse)
+@app.get("/queue", response_class=FileResponse, dependencies=[Depends(require_queue)])
 async def dashboard_queue():
     """Legacy multi-tab queue UI (moved from / in Spec 4)."""
     return FileResponse(_HTML)
 
 
-@app.get("/api/search")
+@app.get("/api/search", dependencies=[Depends(require_search)])
 async def api_search(q: str = "", limit: int = 20):
     if not q or len(q.strip()) < 2:
         return JSONResponse([])
@@ -121,7 +122,7 @@ async def api_search(q: str = "", limit: int = 20):
     return JSONResponse(rows)
 
 
-@app.post("/api/leads/{case_number}/note")
+@app.post("/api/leads/{case_number}/note", dependencies=[Depends(require_search)])
 async def api_add_note(case_number: str, payload: dict, track: str = "ng"):
     text = (payload or {}).get("text", "")
     try:
@@ -131,19 +132,19 @@ async def api_add_note(case_number: str, payload: dict, track: str = "ng"):
     return JSONResponse(row)
 
 
-@app.get("/api/leads/{case_number}/notes")
+@app.get("/api/leads/{case_number}/notes", dependencies=[Depends(require_any)])
 async def api_list_notes(case_number: str, track: str = "ng"):
     rows = await list_lead_notes(case_number=case_number, track=track)
     return JSONResponse(rows)
 
 
-@app.post("/api/leads/{case_number}/mark-called")
+@app.post("/api/leads/{case_number}/mark-called", dependencies=[Depends(require_search)])
 async def api_mark_called(case_number: str, track: str = "ng"):
     ts = await mark_lead_called(case_number=case_number, track=track)
     return JSONResponse({"status": "ok", "last_called_at": ts})
 
 
-@app.get("/api/leads")
+@app.get("/api/leads", dependencies=[Depends(require_queue)])
 async def leads(track: str = "ec", view: str = "residential_approved"):
     if view:
         rows = await get_dashboard_leads(view=view)
@@ -152,18 +153,18 @@ async def leads(track: str = "ec", view: str = "residential_approved"):
     return JSONResponse(rows)
 
 
-@app.get("/api/lead-counts")
+@app.get("/api/lead-counts", dependencies=[Depends(require_queue)])
 async def lead_counts():
     return JSONResponse(await get_dashboard_counts())
 
 
-@app.get("/api/metrics")
+@app.get("/api/metrics", dependencies=[Depends(require_queue)])
 async def metrics():
     rows = await get_recent_metrics(limit=10)
     return JSONResponse(rows)
 
 
-@app.post("/api/bland-test-calls/{track}")
+@app.post("/api/bland-test-calls/{track}", dependencies=[Depends(require_queue)])
 async def bland_test_call(track: str):
     if not _bland_test_calls_enabled():
         raise HTTPException(403, "Bland QA test calls are disabled")
@@ -175,7 +176,7 @@ async def bland_test_call(track: str):
     return {"status": "triggered", "track": track, "call_id": call_id}
 
 
-@app.post("/api/leads/{case_number}/approve")
+@app.post("/api/leads/{case_number}/approve", dependencies=[Depends(require_queue)])
 async def approve(case_number: str, track: str = "ec"):
     rows = await get_pending_leads(track=track, limit=500)
     row = next((r for r in rows if r["case_number"] == case_number), None)
@@ -217,7 +218,7 @@ async def approve(case_number: str, track: str = "ec"):
     return {"status": "triggered", "call_id": call_id}
 
 
-@app.post("/api/leads/{case_number}/skip")
+@app.post("/api/leads/{case_number}/skip", dependencies=[Depends(require_any)])
 async def skip(case_number: str, track: str = "ec"):
     await set_bland_status(case_number, track, "skipped")
     return {"status": "skipped"}
