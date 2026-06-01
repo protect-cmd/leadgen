@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import random
 import re
+import time
 from datetime import date, datetime, timedelta
 
 import requests
@@ -23,7 +25,7 @@ SEARCH_URL = f"{BASE_URL}/PA/CvSearchResults.cfm"
 CASE_URL_PREFIX = f"{BASE_URL}/PA"
 
 # "Locaton:" is a known typo in the Dayton Municipal Court portal.
-# The regex handles "Location:" too in case it is corrected later.
+# The regex handles "Location:" too in case it is ever corrected.
 _LOCATON_RE = re.compile(r"Locat(?:ion|on):\s*([^\n]+)", re.IGNORECASE)
 _EVICTION_LOC_RE = re.compile(r"Eviction Location:\s*([^\n]+)", re.IGNORECASE | re.MULTILINE)
 _COURT_DATE_RE = re.compile(r"Next Court Date:\s*\n?\s*(\d{2}/\d{2}/\d{4})", re.IGNORECASE)
@@ -32,6 +34,10 @@ _OCCUPANT_RE = re.compile(
     r"\s+(et\.?\s*al\.?|and\s+all\s+(?:other\s+)?(?:occupants?|tenants?|persons?|others?))$",
     flags=re.IGNORECASE,
 )
+
+# Courtesy delay range (seconds) between detail-page fetches.
+_DELAY_MIN = 0.5
+_DELAY_MAX = 1.5
 
 
 def _strip_occupant_suffix(name: str) -> str:
@@ -106,10 +112,10 @@ class MontgomeryCountyMunicipalScraper:
         })
 
     def scrape(self) -> list[Filing]:
-        self.last_error = None
         today = court_today(COURT_TIMEZONE)
         filings: list[Filing] = []
         seen_cases: set[str] = set()
+        fetch_errors: list[str] = []
 
         for offset in range(self.lookback_days + 1):
             target = today - timedelta(days=offset)
@@ -119,7 +125,8 @@ class MontgomeryCountyMunicipalScraper:
             try:
                 html = self._get_text(search_url)
             except Exception as e:
-                self.last_error = f"failed to fetch Montgomery results for {date_str}: {e}"
+                msg = f"failed to fetch Montgomery results for {date_str}: {e}"
+                fetch_errors.append(msg)
                 log.error("Montgomery OH: fetch failed for %s: %s", date_str, e)
                 continue
 
@@ -131,6 +138,8 @@ class MontgomeryCountyMunicipalScraper:
                 if case_number in seen_cases:
                     continue
                 seen_cases.add(case_number)
+
+                time.sleep(random.uniform(_DELAY_MIN, _DELAY_MAX))
 
                 try:
                     detail_html = self._get_text(row["case_url"])
@@ -145,7 +154,7 @@ class MontgomeryCountyMunicipalScraper:
                     if detail_html
                     else ""
                 )
-                address = _parse_address(detail_text) or "Dayton, OH"
+                address = _parse_address(detail_text) or "Unknown"
                 court_date = _parse_court_date(detail_text)
 
                 tenant_raw = row["defendant_raw"]
@@ -165,6 +174,10 @@ class MontgomeryCountyMunicipalScraper:
                         source_url=search_url,
                     )
                 )
+
+        # Only surface an error when every day failed and no filings were returned.
+        # Partial failures (e.g. a single day timing out) are expected and not alertable.
+        self.last_error = fetch_errors[-1] if fetch_errors and not filings else None
 
         log.info("Montgomery OH: %s eviction filings found", len(filings))
         return filings
