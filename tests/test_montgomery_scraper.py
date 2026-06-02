@@ -305,7 +305,7 @@ def test_scraper_sets_correct_state_county_notice_type(monkeypatch):
         assert f.notice_type == "Forcible Entry & Detainer"
 
 
-def test_scraper_uses_dayton_oh_fallback_when_no_address(monkeypatch):
+def test_scraper_uses_unknown_fallback_when_no_address(monkeypatch):
     scraper = MontgomeryCountyMunicipalScraper(lookback_days=0)
 
     sparse_results = """
@@ -327,7 +327,7 @@ def test_scraper_uses_dayton_oh_fallback_when_no_address(monkeypatch):
     filings = scraper.scrape()
 
     assert len(filings) == 1
-    assert filings[0].property_address == "Dayton, OH"
+    assert filings[0].property_address == "Unknown"
 
 
 def test_scraper_continues_when_detail_fetch_fails(monkeypatch):
@@ -342,9 +342,9 @@ def test_scraper_continues_when_detail_fetch_fails(monkeypatch):
 
     filings = scraper.scrape()
 
-    # Should still produce filings with "Dayton, OH" fallback address
+    # Should still produce filings with "Unknown" fallback address
     assert len(filings) > 0
-    assert all(f.property_address == "Dayton, OH" for f in filings)
+    assert all(f.property_address == "Unknown" for f in filings)
     # Main scraper last_error should still be None (detail errors are warnings, not fatal)
     assert scraper.last_error is None
 
