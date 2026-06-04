@@ -356,7 +356,7 @@ def test_scraper_strips_occupant_suffix_from_tenant_name(monkeypatch):
     <html><body><table><tbody>
     <tr>
       <td><a href="CvCaseSummary.cfm?cid=T01">2026-CVG-000001</a></td>
-      <td>Landlord LLC</td><td>Jane Doe and All Others</td><td>Pending</td>
+      <td>Landlord LLC</td><td>Marcus Webb and All Others</td><td>Pending</td>
     </tr>
     </tbody></table></body></html>
     """
@@ -372,4 +372,32 @@ def test_scraper_strips_occupant_suffix_from_tenant_name(monkeypatch):
 
     assert len(filings) == 1
     assert "and All Others" not in filings[0].tenant_name
-    assert "Jane Doe" in filings[0].tenant_name
+    assert filings[0].tenant_name == "Marcus Webb"
+
+
+def test_scraper_placeholder_defendant_becomes_unknown(monkeypatch):
+    """A placeholder defendant (e.g. 'Jane Doe and All Others') must NOT leak
+    through as a raw junk name — clean_tenant_name rejects it, so the scraper
+    falls back to 'Unknown' (which pipeline gate_name drops)."""
+    scraper = MontgomeryCountyMunicipalScraper(lookback_days=0)
+
+    single_case = """
+    <html><body><table><tbody>
+    <tr>
+      <td><a href="CvCaseSummary.cfm?cid=T02">2026-CVG-000002</a></td>
+      <td>Landlord LLC</td><td>Jane Doe and All Others</td><td>Pending</td>
+    </tr>
+    </tbody></table></body></html>
+    """
+
+    def fake_get(url: str) -> str:
+        if "CvCaseSummary" in url:
+            return f"<html><body>{DETAIL_TEXT_FULL}</body></html>"
+        return single_case
+
+    monkeypatch.setattr(scraper, "_get_text", fake_get)
+
+    filings = scraper.scrape()
+
+    assert len(filings) == 1
+    assert filings[0].tenant_name == "Unknown"
