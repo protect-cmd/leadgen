@@ -98,6 +98,11 @@ async def main(
         for filing in all_filings:
             if await dedup_service.is_duplicate(filing.case_number):
                 duplicates += 1
+                # Backfill the address for sources that publish it after filing
+                # (e.g. Montgomery) — no-op when the stored address is already set.
+                await dedup_service.backfill_address(
+                    filing.case_number, filing.property_address
+                )
             else:
                 await dedup_service.insert_filing(filing)
                 inserted += 1
