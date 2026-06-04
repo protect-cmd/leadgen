@@ -78,9 +78,52 @@ class GalvestonTXJPScraper:
             finally:
                 browser.close()
 
+    def navigate_to_search_hearings(self, page):
+        """Load Search Hearings page and wait for SPA to render the form."""
+        page.goto(SEARCH_HEARINGS_URL, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_load_state("networkidle", timeout=15000)
+        # Form readiness probe: Search button visible
+        page.wait_for_selector("button:has-text('Search')", timeout=10000)
+        return page
+
+    def check_captcha_present(self, page):
+        """Return True if reCAPTCHA v2 iframe is on the page."""
+        return page.query_selector("iframe[src*='recaptcha']") is not None
+
+    def session_probe(self):
+        """
+        End-to-end session probe: launch, navigate, check captcha.
+        Returns dict with status. Intended for Railway preview deploy testing.
+        """
+        with sync_playwright() as p:
+            browser, context, page = self._launch(p)
+            try:
+                self.navigate_to_search_hearings(page)
+                return {
+                    "ok": True,
+                    "url": page.url,
+                    "title": page.title(),
+                    "captcha_present": self.check_captcha_present(page),
+                }
+            except Exception as e:
+                return {
+                    "ok": False,
+                    "error": str(e),
+                    "url": page.url,
+                }
+            finally:
+                browser.close()
+
 
 if __name__ == "__main__":
+    import sys
     scraper = GalvestonTXJPScraper()
-    print("Smoke test against example.com (should succeed)...")
-    result = scraper.smoke_test("https://example.com")
+    if len(sys.argv) > 1 and sys.argv[1] == "probe":
+        # Full session probe - portal access required (will fail from non-US IPs)
+        print("Running session probe against portal.galvestoncountytx.gov...")
+        result = scraper.session_probe()
+    else:
+        # Default: harmless smoke test against example.com
+        print("Smoke test against example.com...")
+        result = scraper.smoke_test("https://example.com")
     print(result)
