@@ -160,10 +160,15 @@ class MontgomeryCountyMunicipalScraper:
                 tenant_raw = row["defendant_raw"]
                 tenant = _strip_occupant_suffix(tenant_raw)
 
+                # Fall back to "Unknown" (not tenant_raw) when clean_tenant_name
+                # rejects the name: a rejected name is a placeholder/anonymous
+                # defendant (e.g. "Jane Doe"), and reusing tenant_raw would
+                # re-inject the occupant suffix ("Jane Doe and All Others"),
+                # which slips pipeline gate_name. "Unknown" is dropped by the gate.
                 filings.append(
                     Filing(
                         case_number=case_number,
-                        tenant_name=clean_tenant_name(tenant or "") or (tenant_raw or "Unknown"),
+                        tenant_name=clean_tenant_name(tenant or "") or "Unknown",
                         property_address=address,
                         landlord_name=row["plaintiff"] or "Unknown",
                         filing_date=target,
