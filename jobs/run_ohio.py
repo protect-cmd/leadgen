@@ -10,9 +10,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from dotenv import load_dotenv
+
 from models.filing import Filing
 from scrapers.ohio.franklin import FranklinCountyMunicipalScraper
 from scrapers.ohio.hamilton import HamiltonCountyMunicipalScraper
+from scrapers.ohio.montgomery import MontgomeryCountyMunicipalScraper
 from services import notification_service
 
 logging.basicConfig(
@@ -26,11 +29,13 @@ log = logging.getLogger(__name__)
 class OhioRunSummary:
     franklin_filings: int
     hamilton_filings: int
+    montgomery_filings: int
     piped: bool
+    wrote_supabase: bool = False
 
     @property
     def total_filings(self) -> int:
-        return self.franklin_filings + self.hamilton_filings
+        return self.franklin_filings + self.hamilton_filings + self.montgomery_filings
 
     def to_lines(self) -> list[str]:
         runner_line = (
@@ -42,6 +47,7 @@ class OhioRunSummary:
             "Ohio" + (" pipeline run" if self.piped else " scraper-only proof"),
             f"Franklin Municipal (Columbus): {self.franklin_filings} filings",
             f"Hamilton Municipal (Cincinnati): {self.hamilton_filings} filings",
+            f"Montgomery Municipal (Dayton): {self.montgomery_filings} filings",
             f"Total: {self.total_filings}",
             runner_line,
         ]
@@ -52,10 +58,12 @@ async def main(
     lookback_days: int = 2,
     pipe: bool = False,
     notify: bool = False,
+    yes_write_supabase: bool = False,
     counties: list[str] | None = None,
 ) -> OhioRunSummary:
     run_franklin = not counties or "franklin" in counties
     run_hamilton = not counties or "hamilton" in counties
+    run_montgomery = not counties or "montgomery" in counties
 
     log.info("Starting Ohio %s", "pipeline run" if pipe else "scraper-only proof")
 
@@ -75,6 +83,26 @@ async def main(
         except Exception as e:
             log.error("Ohio / Hamilton: unexpected error: %s", e, exc_info=True)
 
+    montgomery_filings: list[Filing] = []
+    if run_montgomery:
+        scraper = MontgomeryCountyMunicipalScraper(lookback_days=lookback_days)
+        try:
+            montgomery_filings = scraper.scrape()
+        except Exception as e:
+            log.error("Ohio / Montgomery: unexpected error: %s", e, exc_info=True)
+
+    if yes_write_supabase:
+        from services import dedup_service
+        all_filings = franklin_filings + hamilton_filings + montgomery_filings
+        inserted = duplicates = 0
+        for filing in all_filings:
+            if await dedup_service.is_duplicate(filing.case_number):
+                duplicates += 1
+            else:
+                await dedup_service.insert_filing(filing)
+                inserted += 1
+        log.info("Ohio Supabase push: %d inserted, %d duplicates", inserted, duplicates)
+
     if pipe and franklin_filings:
         from pipeline import runner as pipeline_runner
         await pipeline_runner.run(franklin_filings, state="OH", county="Franklin")
@@ -83,10 +111,16 @@ async def main(
         from pipeline import runner as pipeline_runner
         await pipeline_runner.run(hamilton_filings, state="OH", county="Hamilton")
 
+    if pipe and montgomery_filings:
+        from pipeline import runner as pipeline_runner
+        await pipeline_runner.run(montgomery_filings, state="OH", county="Montgomery")
+
     summary = OhioRunSummary(
         franklin_filings=len(franklin_filings),
         hamilton_filings=len(hamilton_filings),
+        montgomery_filings=len(montgomery_filings),
         piped=pipe,
+        wrote_supabase=yes_write_supabase,
     )
 
     message = "\n".join(summary.to_lines())
@@ -106,8 +140,9 @@ async def main(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Run Ohio eviction scrapers (Franklin + Hamilton). "
+            "Run Ohio eviction scrapers (Franklin + Hamilton + Montgomery). "
             "Default: scraper-only proof. "
+            "Use --yes-write-supabase to insert filings into Supabase (no pipeline). "
             "Use --pipe to send filings through the BatchData enrichment pipeline."
         )
     )
@@ -115,7 +150,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--counties",
         default="",
-        help="Comma-separated counties to run: franklin, hamilton. Default: all.",
+        help="Comma-separated counties to run: franklin, hamilton, montgomery. Default: all.",
+    )
+    parser.add_argument(
+        "--yes-write-supabase",
+        action="store_true",
+        help="Insert filings into Supabase. Does not call enrichment or outreach.",
     )
     parser.add_argument("--pipe", action="store_true")
     parser.add_argument("--notify", action="store_true")
@@ -124,12 +164,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def cli() -> int:
     args = _build_parser().parse_args()
+    load_dotenv()
     counties = [c.strip().lower() for c in args.counties.split(",") if c.strip()] or None
     asyncio.run(
         main(
             lookback_days=args.lookback_days,
             pipe=args.pipe,
             notify=args.notify,
+            yes_write_supabase=args.yes_write_supabase,
             counties=counties,
         )
     )
