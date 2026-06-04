@@ -96,6 +96,33 @@ async def insert_filing(filing: Filing) -> None:
     await asyncio.to_thread(_insert)
 
 
+async def backfill_address(case_number: str, address: str) -> bool:
+    """Fill in a filing's property_address after the fact.
+
+    Some sources (e.g. Dayton/Montgomery OH) publish the case before the clerk
+    populates the property address, so the first scrape stores "Unknown" and
+    dedup then skips re-scrapes. This updates the row ONLY when the stored
+    address is still "Unknown" and a real address is now available — a no-op for
+    sources that already populate the address on first capture.
+
+    Returns True if a row was updated.
+    """
+    if not address or address == "Unknown":
+        return False
+
+    def _update() -> bool:
+        result = _execute_with_retry(
+            _client.table("filings")
+            .update({"property_address": address})
+            .eq("case_number", case_number)
+            .eq("property_address", "Unknown"),
+            "backfill address",
+        )
+        return bool(result.data)
+
+    return await asyncio.to_thread(_update)
+
+
 def _enrichment_payload(contact: EnrichedContact) -> dict:
     return {
         "phone": contact.phone,

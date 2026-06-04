@@ -375,6 +375,11 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
         if await dedup_service.is_duplicate(filing.case_number):
             log.info(f"Duplicate skipped: {filing.case_number}")
             m["duplicates_skipped"] += 1
+            # Backfill a late-published address onto the existing row (no-op
+            # unless the stored address is still "Unknown").
+            await dedup_service.backfill_address(
+                filing.case_number, filing.property_address
+            )
             continue
 
         await dedup_service.insert_filing(filing)

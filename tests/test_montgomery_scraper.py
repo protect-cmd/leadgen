@@ -401,3 +401,31 @@ def test_scraper_placeholder_defendant_becomes_unknown(monkeypatch):
 
     assert len(filings) == 1
     assert filings[0].tenant_name == "Unknown"
+
+
+def test_scraper_lookback_floored_to_address_lag(monkeypatch):
+    """Even with a small cron lookback, Montgomery re-scrapes at least
+    _ADDRESS_LAG_DAYS days so late-populated addresses get re-visited and
+    backfilled."""
+    import re as _re
+
+    from scrapers.ohio.montgomery import _ADDRESS_LAG_DAYS
+
+    scraper = MontgomeryCountyMunicipalScraper(lookback_days=0)
+    searched_dates: list[str] = []
+
+    def fake_get(url: str) -> str:
+        if "CvSearchResults" in url:
+            m = _re.search(r"runDate=(\d{4}-\d{2}-\d{2})", url)
+            if m:
+                searched_dates.append(m.group(1))
+            return "<html><body><table></table></body></html>"
+        return "<html></html>"
+
+    monkeypatch.setattr(scraper, "_get_text", fake_get)
+
+    scraper.scrape()
+
+    # offsets 0.._ADDRESS_LAG_DAYS inclusive, all distinct
+    assert len(searched_dates) == _ADDRESS_LAG_DAYS + 1
+    assert len(set(searched_dates)) == _ADDRESS_LAG_DAYS + 1

@@ -39,6 +39,13 @@ _OCCUPANT_RE = re.compile(
 _DELAY_MIN = 0.5
 _DELAY_MAX = 1.5
 
+# The Dayton clerk populates the property address 24-48h (often up to ~3 days)
+# after the case is filed, so a fresh filing is first captured with "Unknown".
+# Always re-scrape at least this many days back, regardless of the cron's
+# lookback, so those rows are re-visited once the address appears and
+# dedup_service.backfill_address() can fill them in.
+_ADDRESS_LAG_DAYS = 3
+
 
 def _strip_occupant_suffix(name: str) -> str:
     return _OCCUPANT_RE.sub("", name).strip()
@@ -117,7 +124,10 @@ class MontgomeryCountyMunicipalScraper:
         seen_cases: set[str] = set()
         fetch_errors: list[str] = []
 
-        for offset in range(self.lookback_days + 1):
+        # Always reach back far enough for the address-population lag so rows
+        # first captured as "Unknown" get re-visited and backfilled.
+        lookback = max(self.lookback_days, _ADDRESS_LAG_DAYS)
+        for offset in range(lookback + 1):
             target = today - timedelta(days=offset)
             date_str = target.strftime("%Y-%m-%d")
             search_url = f"{SEARCH_URL}?runDate={date_str}&DateType=F&type=DATE"
