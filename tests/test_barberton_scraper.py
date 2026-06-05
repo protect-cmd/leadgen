@@ -196,7 +196,7 @@ class TestParseAddressCell:
 
 def test_parse_search_results_returns_only_cvg_cases():
     filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE, base_source_url="http://example.com"
+        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
     )
     # CVI case should be filtered out
     assert len(filings) == 2
@@ -205,7 +205,7 @@ def test_parse_search_results_returns_only_cvg_cases():
 
 def test_parse_search_results_maps_case_number():
     filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE, base_source_url="http://example.com"
+        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
     )
     assert filings[0].case_number == "CVG2601199"
     assert filings[1].case_number == "CVG2601200"
@@ -213,7 +213,7 @@ def test_parse_search_results_maps_case_number():
 
 def test_parse_search_results_maps_landlord_and_tenant():
     filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE, base_source_url="http://example.com"
+        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
     )
     assert filings[0].landlord_name == "M&C MHP LLC"
     assert filings[0].tenant_name == "Brown, Rebecca"
@@ -221,21 +221,21 @@ def test_parse_search_results_maps_landlord_and_tenant():
 
 def test_parse_search_results_strips_occupant_suffix_from_tenant():
     filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE, base_source_url="http://example.com"
+        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
     )
     assert filings[1].tenant_name == "Walker, Robert"
 
 
 def test_parse_search_results_sets_filing_date_to_search_date():
     filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE, base_source_url="http://example.com"
+        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
     )
     assert filings[0].filing_date == SEARCH_DATE
 
 
 def test_parse_search_results_sets_county_state_notice_type():
     filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE, base_source_url="http://example.com"
+        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
     )
     assert filings[0].state == "OH"
     assert filings[0].county == "Summit"
@@ -244,7 +244,7 @@ def test_parse_search_results_sets_county_state_notice_type():
 
 def test_parse_search_results_placeholder_address():
     filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE, base_source_url="http://example.com"
+        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
     )
     # All stubs get "Unknown" placeholder — upgraded later by _fetch_defendant_address
     assert filings[0].property_address == "Unknown"
@@ -252,7 +252,7 @@ def test_parse_search_results_placeholder_address():
 
 def test_parse_search_results_source_url_points_to_record():
     filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE, base_source_url="http://example.com"
+        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
     )
     assert "/record/1001/tok111" in filings[0].source_url
 
@@ -261,9 +261,22 @@ def test_parse_search_results_returns_empty_for_blank_page():
     filings = _parse_search_results(
         "<html><body><p>No results.</p></body></html>",
         search_date=SEARCH_DATE,
-        base_source_url="http://example.com",
     )
     assert filings == []
+
+
+def test_parse_search_results_placeholder_tenant_falls_back_to_unknown(monkeypatch):
+    """When clean_tenant_name returns '' (placeholder/junk name), fall back to 'Unknown'
+    rather than tenant_raw — prevents re-injecting occupant suffixes into the pipeline.
+    Mirrors the fix applied to Montgomery (PR #10 follow-up)."""
+    import scrapers.ohio.barberton as mod
+    monkeypatch.setattr(mod, "clean_tenant_name", lambda _: "")
+
+    filings = _parse_search_results(
+        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
+    )
+    assert len(filings) > 0
+    assert all(f.tenant_name == "Unknown" for f in filings)
 
 
 # ---------------------------------------------------------------------------

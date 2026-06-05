@@ -4,7 +4,7 @@ import logging
 import random
 import re
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import requests
 from bs4 import BeautifulSoup
@@ -140,7 +140,6 @@ def _parse_search_results(
     html: str,
     *,
     search_date: date,
-    base_source_url: str,
 ) -> list[Filing]:
     """
     Parse a CaseLook search results page into Filing stubs.
@@ -179,7 +178,7 @@ def _parse_search_results(
         filings.append(
             Filing(
                 case_number=case_number,
-                tenant_name=clean_tenant_name(tenant or "") or (tenant_raw or "Unknown"),
+                tenant_name=clean_tenant_name(tenant or "") or "Unknown",
                 property_address="Unknown",  # upgraded in scrape() via case detail
                 landlord_name=landlord or "Unknown",
                 filing_date=search_date,
@@ -234,11 +233,6 @@ class BarbertonMunicipalScraper:
 
         for offset in range(self.lookback_days + 1):
             target = today - timedelta(days=offset)
-            source_url = (
-                f"{SEARCH_URL}?searchDate={target.strftime('%m/%d/%Y')}"
-                "&dateType=fileDate&caseTypes[]=CVG"
-            )
-
             try:
                 html = self._post_search(target)
             except Exception as exc:
@@ -248,7 +242,7 @@ class BarbertonMunicipalScraper:
                 continue
 
             for filing in _parse_search_results(
-                html, search_date=target, base_source_url=source_url
+                html, search_date=target
             ):
                 if filing.case_number in seen_cases:
                     continue
@@ -329,7 +323,3 @@ class BarbertonMunicipalScraper:
         r.raise_for_status()
         return r.text
 
-    def _get_text(self, url: str) -> str:
-        r = self.session.get(url, timeout=30)
-        r.raise_for_status()
-        return r.text
