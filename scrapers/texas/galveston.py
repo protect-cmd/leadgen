@@ -8,6 +8,8 @@ Geo: Requires US IP (Railway US deployment).
 Anti-bot: reCAPTCHA v2 on Search Hearings page.
 """
 
+import time
+
 from playwright.sync_api import sync_playwright
 from playwright_stealth import stealth_sync
 
@@ -90,20 +92,69 @@ class GalvestonTXJPScraper:
         """Return True if reCAPTCHA v2 iframe is on the page."""
         return page.query_selector("iframe[src*='recaptcha']") is not None
 
+    def attempt_captcha(self, page, max_wait_seconds: int = 15):
+        """
+        Attempt to pass reCAPTCHA v2 via stealth silent check.
+
+        Returns dict:
+          {'status': 'passed'}      - checkbox auto-approved (best case)
+          {'status': 'challenge'}   - image puzzle appeared; needs solver service
+          {'status': 'no_captcha'}  - no captcha on page
+          {'status': 'error', ...}  - unexpected failure
+
+        TODO: Integrate 2Captcha/Anti-Captcha or similar paid solver service
+        for the 'challenge' case. For now we surface status so the caller
+        can decide whether to retry, fail, or escalate to manual review.
+        """
+        if not self.check_captcha_present(page):
+            return {"status": "no_captcha"}
+
+        try:
+            anchor_frame = page.frame_locator("iframe[src*='recaptcha/api2/anchor']")
+            checkbox = anchor_frame.locator("#recaptcha-anchor")
+            checkbox.click()
+
+            deadline = time.time() + max_wait_seconds
+            while time.time() < deadline:
+                try:
+                    if checkbox.get_attribute("aria-checked") == "true":
+                        return {"status": "passed"}
+                except Exception:
+                    pass
+
+                challenge = page.query_selector("iframe[src*='recaptcha/api2/bframe']")
+                if challenge and challenge.is_visible():
+                    return {
+                        "status": "challenge",
+                        "note": (
+                            "Silent check failed; image puzzle present. "
+                            "Requires captcha solver service integration."
+                        ),
+                    }
+
+                time.sleep(0.5)
+
+            return {"status": "error", "error": "timeout waiting for captcha resolution"}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
     def session_probe(self):
         """
-        End-to-end session probe: launch, navigate, check captcha.
+        End-to-end session probe: launch, navigate, attempt captcha.
         Returns dict with status. Intended for Railway preview deploy testing.
         """
         with sync_playwright() as p:
             browser, context, page = self._launch(p)
             try:
                 self.navigate_to_search_hearings(page)
+                captcha_present = self.check_captcha_present(page)
+                captcha_result = self.attempt_captcha(page) if captcha_present else None
                 return {
                     "ok": True,
                     "url": page.url,
                     "title": page.title(),
-                    "captcha_present": self.check_captcha_present(page),
+                    "captcha_present": captcha_present,
+                    "captcha_result": captcha_result,
                 }
             except Exception as e:
                 return {
