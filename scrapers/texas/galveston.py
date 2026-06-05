@@ -28,6 +28,9 @@ JP_JUDGES = [
     {"name": "McCumber, Kathleen", "precinct": "JP4"},
 ]
 
+JP_COURTS = {"JP1", "JP2", "JP3", "JP4"}
+EVICTION_KEYWORDS = ("eviction", "forcible entry")
+
 
 class GalvestonTXJPScraper:
     """Tyler new Odyssey Portal scraper for Galveston JP1-4 evictions."""
@@ -100,9 +103,6 @@ class GalvestonTXJPScraper:
           {'status': 'challenge'}   - image puzzle appeared; needs solver service
           {'status': 'no_captcha'}  - no captcha on page
           {'status': 'error', ...}  - unexpected failure
-
-        TODO: Integrate 2Captcha/Anti-Captcha or similar paid solver service
-        for the 'challenge' case.
         """
         if not self.check_captcha_present(page):
             return {"status": "no_captcha"}
@@ -144,57 +144,27 @@ class GalvestonTXJPScraper:
         date_to: str,
         hearing_type: str = "Civil",
     ):
-        """
-        Fill Search Hearings form for one judge and submit.
-
-        Assumes:
-          - page is already on /Portal/Home/Dashboard/26 with form rendered
-          - date_from / date_to in MM/DD/YYYY format
-          - judge_name is the dropdown option text (e.g., 'Apffel, D. Blake')
-
-        Selector assumptions (text-based, resilient to ID changes - may need
-        tuning if Tyler updates portal):
-          - "Search By" label on the search-type dropdown
-          - "Judicial Officer" label on the judge dropdown (appears after
-            Search By is set to "Judicial Officer")
-          - "Hearing Type" label on hearing-type dropdown
-          - "Date From" / "Date To" labels on date inputs
-          - "Search" button submits
-
-        Returns the page after results have loaded.
-        """
-        # 1. Set Search By dropdown to "Judicial Officer"
+        """Fill Search Hearings form for one judge and submit."""
         page.get_by_label("Search By").select_option(
             label="Judicial Officer", timeout=5000
         )
-
-        # 2. Wait for the conditional Judicial Officer dropdown to appear
         page.wait_for_selector(
             "select[name*='judicial' i], select[id*='judicial' i], "
             "label:has-text('Judicial Officer') + * select",
             timeout=5000,
         )
-
-        # 3. Select the specific judge
         page.get_by_label("Judicial Officer").select_option(
             label=judge_name, timeout=5000
         )
-
-        # 4. Select Hearing Type (Civil for evictions)
         page.get_by_label("Hearing Type").select_option(
             label=hearing_type, timeout=5000
         )
-
-        # 5. Fill date range
         page.get_by_label("Date From").fill(date_from)
         page.get_by_label("Date To").fill(date_to)
-
-        # 6. Submit
         page.get_by_role("button", name="Search").click()
 
-        # 7. Post-submit captcha re-check (captcha may trigger on submit)
         try:
-            page.wait_for_timeout(2000)  # give captcha iframe a beat to appear
+            page.wait_for_timeout(2000)
             if self.check_captcha_present(page):
                 captcha_result = self.attempt_captcha(page)
                 if captcha_result["status"] != "passed":
@@ -203,17 +173,101 @@ class GalvestonTXJPScraper:
         except Exception as e:
             self.last_error = f"Captcha check error: {e}"
 
-        # 8. Wait for results table to render
         page.wait_for_load_state("networkidle", timeout=30000)
         page.wait_for_selector("table", timeout=15000)
-
         return page
 
+    def parse_results(self, page) -> list:
+        """
+        Parse the results table on the Search Hearings results page.
+
+        Returns list of dicts, one per row. Keys are column header text;
+        values are cell text. Also includes '_case_detail_url' if a
+        case-detail link is found in the row.
+
+        Resilient to column ordering changes - relies on header text not
+        column position. Tolerates missing tbody.
+        """
+        rows_out = []
+        table = page.query_selector("table")
+        if not table:
+            return rows_out
+
+        # Extract column headers (try thead first, fallback to first tr)
+        header_cells = table.query_selector_all("thead th")
+        if not header_cells:
+            header_cells = table.query_selector_all("tr:first-child th")
+        headers = [h.inner_text().strip() for h in header_cells]
+
+        # Parse body rows
+        body_rows = table.query_selector_all("tbody tr")
+        if not body_rows:
+            # Tables without explicit tbody - skip header row
+            all_rows = table.query_selector_all("tr")
+            body_rows = all_rows[1:] if len(all_rows) > 1 else []
+
+        for row in body_rows:
+            cells = row.query_selector_all("td")
+            if not cells:
+                continue
+            row_data = {}
+            for i, cell in enumerate(cells):
+                key = headers[i] if i < len(headers) else f"col_{i}"
+                row_data[key] = cell.inner_text().strip()
+
+            # Try to extract case detail link
+            link = row.query_selector("a[href*='Case']")
+            if link:
+                row_data["_case_detail_url"] = link.get_attribute("href")
+
+            rows_out.append(row_data)
+
+        return rows_out
+
+    def filter_jp_evictions(self, rows: list) -> list:
+        """
+        Filter scraped result rows to only JP eviction cases.
+
+        Keeps rows matching ALL of:
+          - Court column contains JP1/JP2/JP3/JP4
+          - Case type contains 'eviction' or 'forcible entry'
+            OR case number matches the 26-EV0N-XXXX pattern (EV0 substring)
+
+        Header keys are matched case-insensitively and flexibly to handle
+        variation in how Tyler labels columns (Court vs Location, Type vs
+        Case Type, etc.).
+        """
+        filtered = []
+        for row in rows:
+            court = self._extract_field(row, ("court", "location"))
+            case_type = self._extract_field(row, ("type", "case type", "cause of action"))
+            case_num = self._extract_field(row, ("case", "case number", "case #"))
+
+            is_jp = any(jp in court for jp in JP_COURTS)
+            is_eviction = (
+                any(kw in case_type.lower() for kw in EVICTION_KEYWORDS)
+                or "EV0" in case_num
+            )
+
+            if is_jp and is_eviction:
+                filtered.append(row)
+        return filtered
+
+    @staticmethod
+    def _extract_field(row: dict, candidate_keys: tuple) -> str:
+        """
+        Find the first row value whose key (case-insensitive) matches any
+        of the candidate keys. Returns empty string if none match.
+        """
+        for k, v in row.items():
+            kl = k.lower().strip()
+            for candidate in candidate_keys:
+                if candidate in kl:
+                    return v
+        return ""
+
     def session_probe(self):
-        """
-        End-to-end session probe: launch, navigate, attempt captcha.
-        Returns dict with status. Intended for Railway preview deploy testing.
-        """
+        """End-to-end session probe for Railway preview testing."""
         with sync_playwright() as p:
             browser, context, page = self._launch(p)
             try:
