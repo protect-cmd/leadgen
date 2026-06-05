@@ -84,7 +84,6 @@ class GalvestonTXJPScraper:
         """Load Search Hearings page and wait for SPA to render the form."""
         page.goto(SEARCH_HEARINGS_URL, wait_until="domcontentloaded", timeout=30000)
         page.wait_for_load_state("networkidle", timeout=15000)
-        # Form readiness probe: Search button visible
         page.wait_for_selector("button:has-text('Search')", timeout=10000)
         return page
 
@@ -103,8 +102,7 @@ class GalvestonTXJPScraper:
           {'status': 'error', ...}  - unexpected failure
 
         TODO: Integrate 2Captcha/Anti-Captcha or similar paid solver service
-        for the 'challenge' case. For now we surface status so the caller
-        can decide whether to retry, fail, or escalate to manual review.
+        for the 'challenge' case.
         """
         if not self.check_captcha_present(page):
             return {"status": "no_captcha"}
@@ -138,6 +136,79 @@ class GalvestonTXJPScraper:
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
+    def search_judge(
+        self,
+        page,
+        judge_name: str,
+        date_from: str,
+        date_to: str,
+        hearing_type: str = "Civil",
+    ):
+        """
+        Fill Search Hearings form for one judge and submit.
+
+        Assumes:
+          - page is already on /Portal/Home/Dashboard/26 with form rendered
+          - date_from / date_to in MM/DD/YYYY format
+          - judge_name is the dropdown option text (e.g., 'Apffel, D. Blake')
+
+        Selector assumptions (text-based, resilient to ID changes - may need
+        tuning if Tyler updates portal):
+          - "Search By" label on the search-type dropdown
+          - "Judicial Officer" label on the judge dropdown (appears after
+            Search By is set to "Judicial Officer")
+          - "Hearing Type" label on hearing-type dropdown
+          - "Date From" / "Date To" labels on date inputs
+          - "Search" button submits
+
+        Returns the page after results have loaded.
+        """
+        # 1. Set Search By dropdown to "Judicial Officer"
+        page.get_by_label("Search By").select_option(
+            label="Judicial Officer", timeout=5000
+        )
+
+        # 2. Wait for the conditional Judicial Officer dropdown to appear
+        page.wait_for_selector(
+            "select[name*='judicial' i], select[id*='judicial' i], "
+            "label:has-text('Judicial Officer') + * select",
+            timeout=5000,
+        )
+
+        # 3. Select the specific judge
+        page.get_by_label("Judicial Officer").select_option(
+            label=judge_name, timeout=5000
+        )
+
+        # 4. Select Hearing Type (Civil for evictions)
+        page.get_by_label("Hearing Type").select_option(
+            label=hearing_type, timeout=5000
+        )
+
+        # 5. Fill date range
+        page.get_by_label("Date From").fill(date_from)
+        page.get_by_label("Date To").fill(date_to)
+
+        # 6. Submit
+        page.get_by_role("button", name="Search").click()
+
+        # 7. Post-submit captcha re-check (captcha may trigger on submit)
+        try:
+            page.wait_for_timeout(2000)  # give captcha iframe a beat to appear
+            if self.check_captcha_present(page):
+                captcha_result = self.attempt_captcha(page)
+                if captcha_result["status"] != "passed":
+                    self.last_error = f"Captcha not passed: {captcha_result}"
+                    return page
+        except Exception as e:
+            self.last_error = f"Captcha check error: {e}"
+
+        # 8. Wait for results table to render
+        page.wait_for_load_state("networkidle", timeout=30000)
+        page.wait_for_selector("table", timeout=15000)
+
+        return page
+
     def session_probe(self):
         """
         End-to-end session probe: launch, navigate, attempt captcha.
@@ -170,11 +241,9 @@ if __name__ == "__main__":
     import sys
     scraper = GalvestonTXJPScraper()
     if len(sys.argv) > 1 and sys.argv[1] == "probe":
-        # Full session probe - portal access required (will fail from non-US IPs)
         print("Running session probe against portal.galvestoncountytx.gov...")
         result = scraper.session_probe()
     else:
-        # Default: harmless smoke test against example.com
         print("Smoke test against example.com...")
         result = scraper.smoke_test("https://example.com")
     print(result)
