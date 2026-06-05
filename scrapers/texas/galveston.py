@@ -8,6 +8,7 @@ Geo: Requires US IP (Railway US deployment).
 Anti-bot: reCAPTCHA v2 on Search Hearings page.
 """
 
+import re
 import time
 
 from playwright.sync_api import sync_playwright
@@ -18,8 +19,9 @@ COUNTY = "Galveston"
 NOTICE_TYPE = "Eviction"
 TIMEZONE = "America/Chicago"
 
-PORTAL_URL = "https://portal.galvestoncountytx.gov/Portal/"
-SEARCH_HEARINGS_URL = "https://portal.galvestoncountytx.gov/Portal/Home/Dashboard/26"
+PORTAL_BASE = "https://portal.galvestoncountytx.gov"
+PORTAL_URL = f"{PORTAL_BASE}/Portal/"
+SEARCH_HEARINGS_URL = f"{PORTAL_BASE}/Portal/Home/Dashboard/26"
 
 JP_JUDGES = [
     {"name": "Rikard, Gregory L.", "precinct": "JP1"},
@@ -30,6 +32,36 @@ JP_JUDGES = [
 
 JP_COURTS = {"JP1", "JP2", "JP3", "JP4"}
 EVICTION_KEYWORDS = ("eviction", "forcible entry")
+
+# All municipalities within Galveston County, longest first (matters for
+# longest-prefix matching of multi-word cities like "Texas City").
+GALVESTON_CITIES = (
+    "Clear Lake Shores",
+    "Jamaica Beach",
+    "Bayou Vista",
+    "League City",
+    "Tiki Island",
+    "Texas City",
+    "Friendswood",
+    "La Marque",
+    "Hitchcock",
+    "Dickinson",
+    "Galveston",
+    "Santa Fe",
+    "Bacliff",
+    "Kemah",
+)
+
+# Boilerplate prefixes that often precede defendant addresses in TX eviction
+# filings - stripped before address parsing.
+DEFENDANT_BOILERPLATE = (
+    "And All Other Occupants",
+    "All Other Occupants",
+    "and All Other Occupants",
+)
+
+# Regex: dollar amounts like $7,880.00 or $50.00
+MONEY_RE = re.compile(r"\$\s*([\d,]+\.\d{2})")
 
 
 class GalvestonTXJPScraper:
@@ -69,17 +101,9 @@ class GalvestonTXJPScraper:
             browser, context, page = self._launch(p)
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                return {
-                    "ok": True,
-                    "url": page.url,
-                    "title": page.title(),
-                }
+                return {"ok": True, "url": page.url, "title": page.title()}
             except Exception as e:
-                return {
-                    "ok": False,
-                    "error": str(e),
-                    "url": page.url,
-                }
+                return {"ok": False, "error": str(e), "url": page.url}
             finally:
                 browser.close()
 
@@ -95,23 +119,13 @@ class GalvestonTXJPScraper:
         return page.query_selector("iframe[src*='recaptcha']") is not None
 
     def attempt_captcha(self, page, max_wait_seconds: int = 15):
-        """
-        Attempt to pass reCAPTCHA v2 via stealth silent check.
-
-        Returns dict:
-          {'status': 'passed'}      - checkbox auto-approved (best case)
-          {'status': 'challenge'}   - image puzzle appeared; needs solver service
-          {'status': 'no_captcha'}  - no captcha on page
-          {'status': 'error', ...}  - unexpected failure
-        """
+        """Attempt reCAPTCHA v2 silent check via stealth. Returns status dict."""
         if not self.check_captcha_present(page):
             return {"status": "no_captcha"}
-
         try:
             anchor_frame = page.frame_locator("iframe[src*='recaptcha/api2/anchor']")
             checkbox = anchor_frame.locator("#recaptcha-anchor")
             checkbox.click()
-
             deadline = time.time() + max_wait_seconds
             while time.time() < deadline:
                 try:
@@ -119,46 +133,27 @@ class GalvestonTXJPScraper:
                         return {"status": "passed"}
                 except Exception:
                     pass
-
                 challenge = page.query_selector("iframe[src*='recaptcha/api2/bframe']")
                 if challenge and challenge.is_visible():
                     return {
                         "status": "challenge",
-                        "note": (
-                            "Silent check failed; image puzzle present. "
-                            "Requires captcha solver service integration."
-                        ),
+                        "note": "Silent check failed; image puzzle present.",
                     }
-
                 time.sleep(0.5)
-
             return {"status": "error", "error": "timeout waiting for captcha resolution"}
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    def search_judge(
-        self,
-        page,
-        judge_name: str,
-        date_from: str,
-        date_to: str,
-        hearing_type: str = "Civil",
-    ):
+    def search_judge(self, page, judge_name, date_from, date_to, hearing_type="Civil"):
         """Fill Search Hearings form for one judge and submit."""
-        page.get_by_label("Search By").select_option(
-            label="Judicial Officer", timeout=5000
-        )
+        page.get_by_label("Search By").select_option(label="Judicial Officer", timeout=5000)
         page.wait_for_selector(
             "select[name*='judicial' i], select[id*='judicial' i], "
             "label:has-text('Judicial Officer') + * select",
             timeout=5000,
         )
-        page.get_by_label("Judicial Officer").select_option(
-            label=judge_name, timeout=5000
-        )
-        page.get_by_label("Hearing Type").select_option(
-            label=hearing_type, timeout=5000
-        )
+        page.get_by_label("Judicial Officer").select_option(label=judge_name, timeout=5000)
+        page.get_by_label("Hearing Type").select_option(label=hearing_type, timeout=5000)
         page.get_by_label("Date From").fill(date_from)
         page.get_by_label("Date To").fill(date_to)
         page.get_by_role("button", name="Search").click()
@@ -178,34 +173,19 @@ class GalvestonTXJPScraper:
         return page
 
     def parse_results(self, page) -> list:
-        """
-        Parse the results table on the Search Hearings results page.
-
-        Returns list of dicts, one per row. Keys are column header text;
-        values are cell text. Also includes '_case_detail_url' if a
-        case-detail link is found in the row.
-
-        Resilient to column ordering changes - relies on header text not
-        column position. Tolerates missing tbody.
-        """
+        """Parse results table into list of dicts keyed by column header text."""
         rows_out = []
         table = page.query_selector("table")
         if not table:
             return rows_out
-
-        # Extract column headers (try thead first, fallback to first tr)
         header_cells = table.query_selector_all("thead th")
         if not header_cells:
             header_cells = table.query_selector_all("tr:first-child th")
         headers = [h.inner_text().strip() for h in header_cells]
-
-        # Parse body rows
         body_rows = table.query_selector_all("tbody tr")
         if not body_rows:
-            # Tables without explicit tbody - skip header row
             all_rows = table.query_selector_all("tr")
             body_rows = all_rows[1:] if len(all_rows) > 1 else []
-
         for row in body_rows:
             cells = row.query_selector_all("td")
             if not cells:
@@ -214,57 +194,216 @@ class GalvestonTXJPScraper:
             for i, cell in enumerate(cells):
                 key = headers[i] if i < len(headers) else f"col_{i}"
                 row_data[key] = cell.inner_text().strip()
-
-            # Try to extract case detail link
             link = row.query_selector("a[href*='Case']")
             if link:
-                row_data["_case_detail_url"] = link.get_attribute("href")
-
+                row_data["_case_detail_url"] = self._normalize_case_detail_url(
+                    link.get_attribute("href")
+                )
             rows_out.append(row_data)
-
         return rows_out
 
     def filter_jp_evictions(self, rows: list) -> list:
-        """
-        Filter scraped result rows to only JP eviction cases.
-
-        Keeps rows matching ALL of:
-          - Court column contains JP1/JP2/JP3/JP4
-          - Case type contains 'eviction' or 'forcible entry'
-            OR case number matches the 26-EV0N-XXXX pattern (EV0 substring)
-
-        Header keys are matched case-insensitively and flexibly to handle
-        variation in how Tyler labels columns (Court vs Location, Type vs
-        Case Type, etc.).
-        """
+        """Filter rows to only JP1-4 + eviction cases."""
         filtered = []
         for row in rows:
             court = self._extract_field(row, ("court", "location"))
             case_type = self._extract_field(row, ("type", "case type", "cause of action"))
             case_num = self._extract_field(row, ("case", "case number", "case #"))
-
             is_jp = any(jp in court for jp in JP_COURTS)
             is_eviction = (
                 any(kw in case_type.lower() for kw in EVICTION_KEYWORDS)
                 or "EV0" in case_num
             )
-
             if is_jp and is_eviction:
                 filtered.append(row)
         return filtered
 
     @staticmethod
     def _extract_field(row: dict, candidate_keys: tuple) -> str:
-        """
-        Find the first row value whose key (case-insensitive) matches any
-        of the candidate keys. Returns empty string if none match.
-        """
+        """Find first row value whose key (case-insensitive) matches any candidate."""
         for k, v in row.items():
             kl = k.lower().strip()
             for candidate in candidate_keys:
                 if candidate in kl:
                     return v
         return ""
+
+    @staticmethod
+    def _normalize_case_detail_url(href: str) -> str:
+        """Convert relative case-detail URL to absolute."""
+        if not href:
+            return ""
+        if href.startswith("http"):
+            return href
+        if href.startswith("/"):
+            return PORTAL_BASE + href
+        return f"{PORTAL_BASE}/Portal/" + href
+
+    @staticmethod
+    def parse_address(raw: str) -> dict:
+        """
+        Parse a raw address string into street/city/state/zip components.
+
+        Strategy: extract ZIP and STATE from end (anchored, unambiguous),
+        then match city against a known Galveston County municipality list.
+        This handles multi-word cities (Texas City, League City) which a
+        plain regex split cannot disambiguate from street tokens.
+
+        Falls back to splitting last word as city if no known city matches
+        (e.g., defendant lives in non-Galveston-county city).
+        """
+        result = {"street": "", "city": "", "state": "", "zip": "", "raw": raw or ""}
+        if not raw:
+            return result
+
+        cleaned = raw.strip()
+        # Strip known boilerplate prefixes (case-insensitive)
+        lower = cleaned.lower()
+        for boiler in DEFENDANT_BOILERPLATE:
+            if lower.startswith(boiler.lower()):
+                cleaned = cleaned[len(boiler):].strip()
+                break
+
+        # Extract ZIP from end (5 or 5-4)
+        zip_m = re.search(r'\b(\d{5}(?:-\d{4})?)\s*$', cleaned)
+        if not zip_m:
+            return result
+        result["zip"] = zip_m.group(1)
+        rest = cleaned[:zip_m.start()].strip()
+
+        # Extract 2-letter STATE from end of remaining
+        state_m = re.search(r'\b([A-Z]{2})\s*$', rest)
+        if not state_m:
+            return result
+        result["state"] = state_m.group(1)
+        rest = rest[:state_m.start()].strip()
+
+        # Match city from known Galveston County cities (longest first)
+        for city in GALVESTON_CITIES:
+            pattern = re.compile(
+                rf'(?:^|\s){re.escape(city)}\s*$', re.IGNORECASE
+            )
+            m = pattern.search(rest)
+            if m:
+                result["city"] = city
+                result["street"] = rest[:m.start()].strip().rstrip(',').strip()
+                return result
+
+        # Fallback: assume last whitespace-separated token is city
+        parts = rest.rsplit(None, 1)
+        if len(parts) == 2:
+            result["street"] = parts[0].rstrip(',').strip()
+            result["city"] = parts[1]
+        else:
+            result["street"] = rest.rstrip(',').strip()
+        return result
+
+    @staticmethod
+    def parse_money(raw: str):
+        """Parse a dollar amount string to float. Returns None if no match."""
+        if not raw:
+            return None
+        m = MONEY_RE.search(raw)
+        if not m:
+            return None
+        try:
+            return float(m.group(1).replace(",", ""))
+        except ValueError:
+            return None
+
+    def parse_case_detail(self, page, case_detail_url: str) -> dict:
+        """
+        Visit case detail page and extract structured data.
+
+        Returns dict with fields:
+          source_url, case_number, court, judicial_officer, cause_of_action,
+          plaintiff_name, defendant_name, defendant_address_raw,
+          defendant_street, defendant_city, defendant_state, defendant_zip,
+          judgment_amount
+
+        Tyler new Odyssey Portal case detail structure has labeled sections:
+          - Case Information (Case Number, Court, Judicial Officer, Cause of
+            Action)
+          - Party Information (Plaintiff, Defendant + addresses)
+          - Disposition Events (Judgment Amount when present)
+
+        Uses text-based extraction with label-near-value heuristics. Will need
+        DOM-based refinement once we see the actual HTML in Railway preview.
+        """
+        page.goto(case_detail_url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_load_state("networkidle", timeout=15000)
+
+        detail = {
+            "source_url": page.url,
+            "case_number": "",
+            "court": "",
+            "judicial_officer": "",
+            "cause_of_action": "",
+            "plaintiff_name": "",
+            "defendant_name": "",
+            "defendant_address_raw": "",
+            "defendant_street": "",
+            "defendant_city": "",
+            "defendant_state": "",
+            "defendant_zip": "",
+            "judgment_amount": None,
+        }
+
+        # Full page text for label-near-value extraction
+        try:
+            body_text = page.inner_text("body")
+        except Exception as e:
+            self.last_error = f"Failed to read body text: {e}"
+            return detail
+
+        # Field extractors using label patterns
+        def _grab_after_label(label_patterns, text):
+            for pat in label_patterns:
+                m = re.search(pat, text, re.IGNORECASE)
+                if m:
+                    return m.group(1).strip()
+            return ""
+
+        detail["case_number"] = _grab_after_label(
+            [r"Case (?:Number|No\.?)\s*:?\s*([^\n]+)"], body_text
+        )
+        detail["court"] = _grab_after_label(
+            [r"\bCourt\s*:?\s*(JP\d|District|County[^\n]+)"], body_text
+        )
+        detail["judicial_officer"] = _grab_after_label(
+            [r"Judicial Officer\s*:?\s*([^\n]+)"], body_text
+        )
+        detail["cause_of_action"] = _grab_after_label(
+            [r"Cause of Action\s*:?\s*([^\n]+)"], body_text
+        )
+        detail["judgment_amount"] = self.parse_money(
+            _grab_after_label([r"Judgment Amount\s*:?\s*([^\n]+)"], body_text)
+        )
+
+        # Party extraction: try to find Plaintiff and Defendant sections
+        plaintiff_match = re.search(
+            r"Plaintiff\s*:?\s*([^\n]+(?:\n[^\n]+)?)", body_text, re.IGNORECASE
+        )
+        if plaintiff_match:
+            detail["plaintiff_name"] = plaintiff_match.group(1).strip().split("\n")[0]
+
+        defendant_match = re.search(
+            r"Defendant\s*:?\s*([^\n]+(?:\n[^\n]+){0,4})", body_text, re.IGNORECASE
+        )
+        if defendant_match:
+            block = defendant_match.group(1).strip()
+            lines = [l.strip() for l in block.split("\n") if l.strip()]
+            if lines:
+                detail["defendant_name"] = lines[0]
+                if len(lines) > 1:
+                    address_lines = " ".join(lines[1:])
+                    detail["defendant_address_raw"] = address_lines
+                    parsed = self.parse_address(address_lines)
+                    detail["defendant_street"] = parsed["street"]
+                    detail["defendant_city"] = parsed["city"]
+                    detail["defendant_state"] = parsed["state"]
+                    detail["defendant_zip"] = parsed["zip"]
+        return detail
 
     def session_probe(self):
         """End-to-end session probe for Railway preview testing."""
@@ -282,11 +421,7 @@ class GalvestonTXJPScraper:
                     "captcha_result": captcha_result,
                 }
             except Exception as e:
-                return {
-                    "ok": False,
-                    "error": str(e),
-                    "url": page.url,
-                }
+                return {"ok": False, "error": str(e), "url": page.url}
             finally:
                 browser.close()
 
