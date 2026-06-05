@@ -33,8 +33,6 @@ JP_JUDGES = [
 JP_COURTS = {"JP1", "JP2", "JP3", "JP4"}
 EVICTION_KEYWORDS = ("eviction", "forcible entry")
 
-# All municipalities within Galveston County, longest first (matters for
-# longest-prefix matching of multi-word cities like "Texas City").
 GALVESTON_CITIES = (
     "Clear Lake Shores",
     "Jamaica Beach",
@@ -52,15 +50,12 @@ GALVESTON_CITIES = (
     "Kemah",
 )
 
-# Boilerplate prefixes that often precede defendant addresses in TX eviction
-# filings - stripped before address parsing.
 DEFENDANT_BOILERPLATE = (
     "And All Other Occupants",
     "All Other Occupants",
     "and All Other Occupants",
 )
 
-# Regex: dollar amounts like $7,880.00 or $50.00
 MONEY_RE = re.compile(r"\$\s*([\d,]+\.\d{2})")
 
 
@@ -75,6 +70,7 @@ class GalvestonTXJPScraper:
 
     def __init__(self):
         self.last_error = None
+        self.errors_per_judge = {}
 
     def _launch(self, p):
         """Launch headless Chromium with stealth-applied context."""
@@ -220,10 +216,18 @@ class GalvestonTXJPScraper:
 
     @staticmethod
     def _extract_field(row: dict, candidate_keys: tuple) -> str:
-        """Find first row value whose key (case-insensitive) matches any candidate."""
-        for k, v in row.items():
-            kl = k.lower().strip()
-            for candidate in candidate_keys:
+        """
+        Find first row value whose key contains a candidate.
+
+        Iterates candidates in priority order (most-specific first), so
+        broad fallback keywords like 'date' don't match earlier than
+        specific phrases like 'hearing date' or 'file date'. This prevents
+        e.g. hearing_date picking up File Date value when File Date column
+        appears before Hearing Date in the row.
+        """
+        for candidate in candidate_keys:
+            for k, v in row.items():
+                kl = k.lower().strip()
                 if candidate in kl:
                     return v
         return ""
@@ -241,55 +245,38 @@ class GalvestonTXJPScraper:
 
     @staticmethod
     def parse_address(raw: str) -> dict:
-        """
-        Parse a raw address string into street/city/state/zip components.
-
-        Strategy: extract ZIP and STATE from end (anchored, unambiguous),
-        then match city against a known Galveston County municipality list.
-        This handles multi-word cities (Texas City, League City) which a
-        plain regex split cannot disambiguate from street tokens.
-
-        Falls back to splitting last word as city if no known city matches
-        (e.g., defendant lives in non-Galveston-county city).
-        """
+        """Parse a raw address string into street/city/state/zip via Galveston city whitelist."""
         result = {"street": "", "city": "", "state": "", "zip": "", "raw": raw or ""}
         if not raw:
             return result
 
         cleaned = raw.strip()
-        # Strip known boilerplate prefixes (case-insensitive)
         lower = cleaned.lower()
         for boiler in DEFENDANT_BOILERPLATE:
             if lower.startswith(boiler.lower()):
                 cleaned = cleaned[len(boiler):].strip()
                 break
 
-        # Extract ZIP from end (5 or 5-4)
         zip_m = re.search(r'\b(\d{5}(?:-\d{4})?)\s*$', cleaned)
         if not zip_m:
             return result
         result["zip"] = zip_m.group(1)
         rest = cleaned[:zip_m.start()].strip()
 
-        # Extract 2-letter STATE from end of remaining
         state_m = re.search(r'\b([A-Z]{2})\s*$', rest)
         if not state_m:
             return result
         result["state"] = state_m.group(1)
         rest = rest[:state_m.start()].strip()
 
-        # Match city from known Galveston County cities (longest first)
         for city in GALVESTON_CITIES:
-            pattern = re.compile(
-                rf'(?:^|\s){re.escape(city)}\s*$', re.IGNORECASE
-            )
+            pattern = re.compile(rf'(?:^|\s){re.escape(city)}\s*$', re.IGNORECASE)
             m = pattern.search(rest)
             if m:
                 result["city"] = city
                 result["street"] = rest[:m.start()].strip().rstrip(',').strip()
                 return result
 
-        # Fallback: assume last whitespace-separated token is city
         parts = rest.rsplit(None, 1)
         if len(parts) == 2:
             result["street"] = parts[0].rstrip(',').strip()
@@ -312,24 +299,7 @@ class GalvestonTXJPScraper:
             return None
 
     def parse_case_detail(self, page, case_detail_url: str) -> dict:
-        """
-        Visit case detail page and extract structured data.
-
-        Returns dict with fields:
-          source_url, case_number, court, judicial_officer, cause_of_action,
-          plaintiff_name, defendant_name, defendant_address_raw,
-          defendant_street, defendant_city, defendant_state, defendant_zip,
-          judgment_amount
-
-        Tyler new Odyssey Portal case detail structure has labeled sections:
-          - Case Information (Case Number, Court, Judicial Officer, Cause of
-            Action)
-          - Party Information (Plaintiff, Defendant + addresses)
-          - Disposition Events (Judgment Amount when present)
-
-        Uses text-based extraction with label-near-value heuristics. Will need
-        DOM-based refinement once we see the actual HTML in Railway preview.
-        """
+        """Visit case detail page and extract structured data."""
         page.goto(case_detail_url, wait_until="domcontentloaded", timeout=30000)
         page.wait_for_load_state("networkidle", timeout=15000)
 
@@ -349,14 +319,12 @@ class GalvestonTXJPScraper:
             "judgment_amount": None,
         }
 
-        # Full page text for label-near-value extraction
         try:
             body_text = page.inner_text("body")
         except Exception as e:
             self.last_error = f"Failed to read body text: {e}"
             return detail
 
-        # Field extractors using label patterns
         def _grab_after_label(label_patterns, text):
             for pat in label_patterns:
                 m = re.search(pat, text, re.IGNORECASE)
@@ -380,7 +348,6 @@ class GalvestonTXJPScraper:
             _grab_after_label([r"Judgment Amount\s*:?\s*([^\n]+)"], body_text)
         )
 
-        # Party extraction: try to find Plaintiff and Defendant sections
         plaintiff_match = re.search(
             r"Plaintiff\s*:?\s*([^\n]+(?:\n[^\n]+)?)", body_text, re.IGNORECASE
         )
@@ -404,6 +371,131 @@ class GalvestonTXJPScraper:
                     detail["defendant_state"] = parsed["state"]
                     detail["defendant_zip"] = parsed["zip"]
         return detail
+
+    def _normalize_filing(self, row: dict, detail: dict, judge: dict) -> dict:
+        """
+        Normalize scraped row + detail into standard Filing schema dict.
+
+        Combines data from the results-table row (basic info) with the
+        case-detail page (defendant address, judgment amount, party info).
+        Detail values take precedence over row values when both exist.
+        """
+        return {
+            "state": STATE,
+            "county": COUNTY,
+            "notice_type": NOTICE_TYPE,
+            "case_number": (
+                detail.get("case_number")
+                or self._extract_field(row, ("case", "case number", "case #"))
+            ),
+            "court": (
+                detail.get("court")
+                or self._extract_field(row, ("court", "location"))
+            ),
+            "judicial_officer": detail.get("judicial_officer") or judge["name"],
+            "precinct": judge["precinct"],
+            "filed_date": self._extract_field(
+                row, ("file date", "filed", "date filed")
+            ),
+            "hearing_date": self._extract_field(
+                row, ("hearing date", "hearing", "setting date", "date")
+            ),
+            "cause_of_action": (
+                detail.get("cause_of_action")
+                or self._extract_field(row, ("type", "case type", "cause of action"))
+            ),
+            "style": self._extract_field(row, ("style",)),
+            "plaintiff_name": detail.get("plaintiff_name", ""),
+            "defendant_name": detail.get("defendant_name", ""),
+            "defendant_address_line1": detail.get("defendant_street", ""),
+            "defendant_address_city": detail.get("defendant_city", ""),
+            "defendant_address_state": detail.get("defendant_state", ""),
+            "defendant_address_zip": detail.get("defendant_zip", ""),
+            "defendant_address_raw": detail.get("defendant_address_raw", ""),
+            "judgment_amount": detail.get("judgment_amount"),
+            "source_url": detail.get("source_url", ""),
+        }
+
+    def scrape_all_judges(
+        self,
+        date_from: str,
+        date_to: str,
+        fetch_details: bool = True,
+    ) -> list:
+        """
+        Top-level orchestrator: loop all 4 JP judges, scrape evictions for
+        the given date range, optionally fetch case detail, normalize to
+        standard Filing schema, deduplicate by case_number.
+
+        Args:
+            date_from: MM/DD/YYYY (start of date range)
+            date_to: MM/DD/YYYY (end of date range)
+            fetch_details: If True (default), visit each case detail page
+                to extract defendant address + judgment amount. Set False
+                for a faster preview/smoke run.
+
+        Returns:
+            List of normalized filing dicts, deduplicated by case_number.
+
+        Side effects:
+            self.errors_per_judge populated with judge_name -> error_msg
+            for any judges that failed mid-scrape.
+        """
+        all_filings = []
+        seen_case_numbers = set()
+        self.errors_per_judge = {}
+
+        with sync_playwright() as p:
+            browser, context, page = self._launch(p)
+            try:
+                for judge in JP_JUDGES:
+                    try:
+                        self.navigate_to_search_hearings(page)
+
+                        if self.check_captcha_present(page):
+                            captcha_result = self.attempt_captcha(page)
+                            if captcha_result["status"] != "passed":
+                                self.errors_per_judge[judge["name"]] = (
+                                    f"Captcha failed: {captcha_result}"
+                                )
+                                continue
+
+                        self.search_judge(
+                            page, judge["name"], date_from, date_to, "Civil"
+                        )
+                        rows = self.parse_results(page)
+                        eviction_rows = self.filter_jp_evictions(rows)
+
+                        for row in eviction_rows:
+                            case_num = self._extract_field(
+                                row, ("case", "case number", "case #")
+                            )
+                            if not case_num or case_num in seen_case_numbers:
+                                continue
+                            seen_case_numbers.add(case_num)
+
+                            detail = {}
+                            if fetch_details and row.get("_case_detail_url"):
+                                try:
+                                    detail = self.parse_case_detail(
+                                        page, row["_case_detail_url"]
+                                    )
+                                except Exception as e:
+                                    detail = {}
+                                    self.errors_per_judge[
+                                        f"{judge['name']}/{case_num}"
+                                    ] = f"Detail fetch failed: {e}"
+
+                            filing = self._normalize_filing(row, detail, judge)
+                            all_filings.append(filing)
+
+                    except Exception as e:
+                        self.errors_per_judge[judge["name"]] = str(e)
+                        continue
+
+                return all_filings
+            finally:
+                browser.close()
 
     def session_probe(self):
         """End-to-end session probe for Railway preview testing."""
@@ -432,7 +524,22 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "probe":
         print("Running session probe against portal.galvestoncountytx.gov...")
         result = scraper.session_probe()
+        print(result)
+    elif len(sys.argv) > 1 and sys.argv[1] == "scrape":
+        # Real scrape with default 7-day window
+        from datetime import datetime, timedelta
+        end = datetime.now()
+        start = end - timedelta(days=7)
+        result = scraper.scrape_all_judges(
+            date_from=start.strftime("%m/%d/%Y"),
+            date_to=end.strftime("%m/%d/%Y"),
+        )
+        print(f"Scraped {len(result)} filings")
+        if scraper.errors_per_judge:
+            print(f"Errors: {scraper.errors_per_judge}")
+        for f in result[:3]:
+            print(f)
     else:
         print("Smoke test against example.com...")
         result = scraper.smoke_test("https://example.com")
-    print(result)
+        print(result)
