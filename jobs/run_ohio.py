@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 
 from models.filing import Filing
 from scrapers.ohio.barberton import BarbertonMunicipalScraper
+from scrapers.ohio.butler import ButlerCountyAreaCourtScraper
 from scrapers.ohio.franklin import FranklinCountyMunicipalScraper
 from scrapers.ohio.hamilton import HamiltonCountyMunicipalScraper
 from scrapers.ohio.montgomery import MontgomeryCountyMunicipalScraper
@@ -32,6 +33,7 @@ class OhioRunSummary:
     hamilton_filings: int
     montgomery_filings: int
     barberton_filings: int
+    butler_filings: int
     piped: bool
     wrote_supabase: bool = False
 
@@ -42,6 +44,7 @@ class OhioRunSummary:
             + self.hamilton_filings
             + self.montgomery_filings
             + self.barberton_filings
+            + self.butler_filings
         )
 
     def to_lines(self) -> list[str]:
@@ -56,6 +59,7 @@ class OhioRunSummary:
             f"Hamilton Municipal (Cincinnati): {self.hamilton_filings} filings",
             f"Montgomery Municipal (Dayton): {self.montgomery_filings} filings",
             f"Barberton Municipal (Summit): {self.barberton_filings} filings",
+            f"Butler Area Courts (Oxford/Hamilton/West Chester): {self.butler_filings} filings",
             f"Total: {self.total_filings}",
             runner_line,
         ]
@@ -73,6 +77,7 @@ async def main(
     run_hamilton = not counties or "hamilton" in counties
     run_montgomery = not counties or "montgomery" in counties
     run_barberton = not counties or "barberton" in counties or "summit" in counties
+    run_butler = not counties or "butler" in counties
 
     log.info("Starting Ohio %s", "pipeline run" if pipe else "scraper-only proof")
 
@@ -108,9 +113,23 @@ async def main(
         except Exception as e:
             log.error("Ohio / Barberton: unexpected error: %s", e, exc_info=True)
 
+    butler_filings: list[Filing] = []
+    if run_butler:
+        scraper = ButlerCountyAreaCourtScraper(lookback_days=lookback_days)
+        try:
+            butler_filings = scraper.scrape()
+        except Exception as e:
+            log.error("Ohio / Butler: unexpected error: %s", e, exc_info=True)
+
     if yes_write_supabase:
         from services import dedup_service
-        all_filings = franklin_filings + hamilton_filings + montgomery_filings + barberton_filings
+        all_filings = (
+            franklin_filings
+            + hamilton_filings
+            + montgomery_filings
+            + barberton_filings
+            + butler_filings
+        )
         inserted = duplicates = 0
         for filing in all_filings:
             if await dedup_service.is_duplicate(filing.case_number):
@@ -139,11 +158,16 @@ async def main(
         from pipeline import runner as pipeline_runner
         await pipeline_runner.run(barberton_filings, state="OH", county="Summit")
 
+    if pipe and butler_filings:
+        from pipeline import runner as pipeline_runner
+        await pipeline_runner.run(butler_filings, state="OH", county="Butler")
+
     summary = OhioRunSummary(
         franklin_filings=len(franklin_filings),
         hamilton_filings=len(hamilton_filings),
         montgomery_filings=len(montgomery_filings),
         barberton_filings=len(barberton_filings),
+        butler_filings=len(butler_filings),
         piped=pipe,
         wrote_supabase=yes_write_supabase,
     )
@@ -165,7 +189,8 @@ async def main(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Run Ohio eviction scrapers (Franklin + Hamilton + Montgomery + Barberton). "
+            "Run Ohio eviction scrapers "
+            "(Franklin + Hamilton + Montgomery + Barberton + Butler). "
             "Default: scraper-only proof. "
             "Use --yes-write-supabase to insert filings into Supabase (no pipeline). "
             "Use --pipe to send filings through the BatchData enrichment pipeline."
@@ -176,7 +201,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--counties",
         default="",
         help=(
-            "Comma-separated counties to run: franklin, hamilton, montgomery, barberton/summit. "
+            "Comma-separated counties to run: "
+            "franklin, hamilton, montgomery, barberton/summit, butler. "
             "Default: all."
         ),
     )
