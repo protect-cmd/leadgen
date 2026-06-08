@@ -171,7 +171,7 @@ class HarrisJudgmentScraper(BaseScraper):
             await page.fill("input#fdate", frm)
             await page.fill("input#tdate", to)
             async with page.expect_download(timeout=300_000) as dl_info:
-                await page.click("input#submitBtn")
+                await page.click("input#submitBtn", no_wait_after=True)
             download: Download = await dl_info.value
             tmp = Path(await download.path())
             csv_text = tmp.read_text(encoding="utf-8", errors="replace")
