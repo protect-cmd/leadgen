@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 from datetime import date
+import pytest
 import services.ists_store as store
 from models.judgment import JudgmentRecord
 
@@ -34,3 +35,21 @@ def test_store_module_references_no_prod_tables():
     src = Path("services/ists_store.py").read_text(encoding="utf-8")
     assert '"filings"' not in src and "'filings'" not in src
     assert '"lead_contacts"' not in src and "'lead_contacts'" not in src
+
+
+@pytest.mark.parametrize("path", [
+    "services/ists_store.py",
+    "jobs/run_ists_harris.py",
+    "scrapers/texas/harris_judgments.py",
+])
+def test_no_ists_module_writes_prod_tables(path):
+    src = Path(path).read_text(encoding="utf-8")
+    for forbidden in (".insert(", ".update(", ".upsert(", ".delete("):
+        if forbidden in src:
+            # The only allowed write is upsert to ists_judgments inside ists_store
+            assert path == "services/ists_store.py" and 'on_conflict="case_number"' in src, (
+                f"{path} performs a write ({forbidden}) — ISTS must only write ists_judgments"
+            )
+    # prior_work + scraper never reference prod tables as write targets
+    if path != "services/ists_store.py":
+        assert ".table(\"filings\")" not in src and ".table('filings')" not in src
