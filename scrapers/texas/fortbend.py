@@ -21,6 +21,8 @@ TIMEZONE = "America/Chicago"
 PORTAL_BASE = "https://tylerpaw.fortbendcountytx.gov"
 PORTAL_URL = f"{PORTAL_BASE}/PublicAccess/default.aspx"
 
+EVICTION_KEYWORDS = ("eviction", "forcible entry")
+
 
 class FortBendTXJPScraper:
     """Tyler legacy PublicAccess scraper for Fort Bend JP evictions."""
@@ -65,17 +67,9 @@ class FortBendTXJPScraper:
                 browser.close()
 
     def navigate_to_civil_search(self, page):
-        """
-        Navigate from portal landing page to the Civil, Family & Probate
-        Case Records search form.
-
-        Fort Bend has a single 'Fort Bend' location in the dropdown so no
-        location selection is needed (default is already correct).
-        """
+        """Navigate from portal landing to Civil records search form."""
         page.goto(PORTAL_URL, wait_until="domcontentloaded", timeout=30000)
         page.wait_for_load_state("networkidle", timeout=15000)
-
-        # Click the Civil records link
         page.get_by_role(
             "link", name="Civil, Family & Probate Case Records"
         ).click()
@@ -87,39 +81,18 @@ class FortBendTXJPScraper:
         return page
 
     def search_evictions(self, page, date_from: str, date_to: str):
-        """
-        Fill Civil records search form for eviction filings in date range.
-
-        Args:
-            page: Playwright page already on Civil records search form
-            date_from: MM/DD/YYYY (start of date range)
-            date_to: MM/DD/YYYY (end of date range)
-
-        Selector strategy: text-based locators with fallbacks for Tyler's
-        auto-generated ASP.NET WebForms IDs. May need tuning when first
-        exercised against the live portal from Railway.
-        """
-        # 1. Select "Date Filed" radio button (Search By group)
+        """Fill Civil records search form for eviction filings in date range."""
         try:
             page.get_by_role("radio", name="Date Filed").check()
         except Exception:
-            # Fallback: target input[type=radio] containing "Date Filed" value
             page.locator(
                 "input[type='radio'][value*='Date Filed' i]"
             ).first.check()
 
-        # Brief wait for conditional date inputs to render
         page.wait_for_timeout(500)
-
-        # 2. Fill date range
-        # Tyler legacy typically labels these "Date On or After" /
-        # "Date On or Before" or just "On or After" / "On or Before"
         page.get_by_label("On or After", exact=False).first.fill(date_from)
         page.get_by_label("On or Before", exact=False).first.fill(date_to)
 
-        # 3. Select Case Type = Eviction
-        # Tyler often uses a multi-select listbox here. select_option
-        # works on both single and multi-select.
         try:
             page.get_by_label("Case Type", exact=False).first.select_option(
                 label="Eviction"
@@ -132,7 +105,6 @@ class FortBendTXJPScraper:
             except Exception as e:
                 self.last_error = f"Could not select Eviction case type: {e}"
 
-        # 4. Set Sort By = Case Number (optional - skip if not present)
         try:
             page.get_by_label("Sort By", exact=False).first.select_option(
                 label="Case Number"
@@ -140,22 +112,105 @@ class FortBendTXJPScraper:
         except Exception:
             pass
 
-        # 5. Click Search
         page.get_by_role("button", name="Search").click()
-
-        # 6. Wait for results table to render
         page.wait_for_load_state("networkidle", timeout=30000)
         page.wait_for_selector("table", timeout=15000)
         return page
 
-    def session_probe(self, date_from: str = None, date_to: str = None):
+    def parse_results(self, page) -> list:
         """
-        End-to-end navigation probe: launch, navigate to civil search,
-        optionally submit a date-range search. Intended for Railway preview
-        deploy testing.
+        Parse results table into list of dicts keyed by column header text.
 
-        Returns dict with status, url, title, and any error.
+        Resilient to column-ordering changes; tolerates missing tbody.
+        Extracts case detail URL from any link found in the row.
         """
+        rows_out = []
+        table = page.query_selector("table")
+        if not table:
+            return rows_out
+
+        # Extract column headers
+        header_cells = table.query_selector_all("thead th")
+        if not header_cells:
+            header_cells = table.query_selector_all("tr:first-child th")
+        if not header_cells:
+            header_cells = table.query_selector_all("tr:first-child td")
+        headers = [h.inner_text().strip() for h in header_cells]
+
+        # Parse body rows
+        body_rows = table.query_selector_all("tbody tr")
+        if not body_rows:
+            all_rows = table.query_selector_all("tr")
+            body_rows = all_rows[1:] if len(all_rows) > 1 else []
+
+        for row in body_rows:
+            cells = row.query_selector_all("td")
+            if not cells:
+                continue
+            row_data = {}
+            for i, cell in enumerate(cells):
+                key = headers[i] if i < len(headers) else f"col_{i}"
+                row_data[key] = cell.inner_text().strip()
+
+            # Extract case detail link
+            link = row.query_selector(
+                "a[href*='CaseDetail'], a[href*='Case.aspx'], a[href*='Case ']"
+            )
+            if link:
+                row_data["_case_detail_url"] = self._normalize_url(
+                    link.get_attribute("href")
+                )
+
+            rows_out.append(row_data)
+        return rows_out
+
+    def filter_evictions(self, rows: list) -> list:
+        """
+        Defensive filter - keep only rows whose Case Type column contains
+        'eviction' or 'forcible entry'.
+
+        Search form filter already restricts to evictions, but this is a
+        safety net in case Tyler results include adjacent case types
+        (e.g. eviction appeals, related civil filings).
+        """
+        filtered = []
+        for row in rows:
+            case_type = self._extract_field(
+                row, ("type", "case type", "cause of action")
+            )
+            if any(kw in case_type.lower() for kw in EVICTION_KEYWORDS):
+                filtered.append(row)
+        return filtered
+
+    @staticmethod
+    def _extract_field(row: dict, candidate_keys: tuple) -> str:
+        """
+        Find first row value whose key contains a candidate.
+
+        Iterates candidates in priority order (most-specific first) so
+        broad fallback keywords don't match earlier than specific phrases.
+        (Same fix as galveston scraper.)
+        """
+        for candidate in candidate_keys:
+            for k, v in row.items():
+                kl = k.lower().strip()
+                if candidate in kl:
+                    return v
+        return ""
+
+    @staticmethod
+    def _normalize_url(href: str) -> str:
+        """Convert relative URL from Tyler PublicAccess to absolute."""
+        if not href:
+            return ""
+        if href.startswith("http"):
+            return href
+        if href.startswith("/"):
+            return PORTAL_BASE + href
+        return f"{PORTAL_BASE}/PublicAccess/" + href
+
+    def session_probe(self, date_from: str = None, date_to: str = None):
+        """End-to-end navigation probe for Railway preview testing."""
         with sync_playwright() as p:
             browser, context, page = self._launch(p)
             try:
@@ -167,8 +222,13 @@ class FortBendTXJPScraper:
                 }
                 if date_from and date_to:
                     self.search_evictions(page, date_from, date_to)
+                    rows = self.parse_results(page)
+                    eviction_rows = self.filter_evictions(rows)
                     result["after_search_url"] = page.url
-                    result["after_search_title"] = page.title()
+                    result["row_count"] = len(rows)
+                    result["eviction_count"] = len(eviction_rows)
+                    if eviction_rows:
+                        result["first_row_keys"] = list(eviction_rows[0].keys())
                 return result
             except Exception as e:
                 return {"ok": False, "error": str(e), "url": page.url}
@@ -180,12 +240,10 @@ if __name__ == "__main__":
     import sys
     scraper = FortBendTXJPScraper()
     if len(sys.argv) > 1 and sys.argv[1] == "probe":
-        # Navigation probe only (no search submit)
         print("Running session probe against tylerpaw.fortbendcountytx.gov...")
         result = scraper.session_probe()
         print(result)
     elif len(sys.argv) > 1 and sys.argv[1] == "search":
-        # Full search probe with 7-day window
         from datetime import datetime, timedelta
         end = datetime.now()
         start = end - timedelta(days=7)
