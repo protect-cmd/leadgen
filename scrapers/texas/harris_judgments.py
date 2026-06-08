@@ -18,7 +18,12 @@ import csv
 import io
 import logging
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+from playwright.async_api import Download
+from scrapers.base_scraper import BaseScraper
+from scrapers.dates import court_today
 
 from models.judgment import JudgmentRecord
 from pipeline.gates import gate_address, gate_name
@@ -128,3 +133,64 @@ def parse_judgments_csv(csv_text: str) -> list[JudgmentRecord]:
             log.warning("ISTS Harris: skipped row %s: %s", _get(row, C_CASE) or "?", e)
             continue
     return out
+
+
+COURT_TIMEZONE = "America/Chicago"
+FLOOR_DAYS = 3        # skip judgments newer than this (posting lag buffer)
+CEILING_DAYS = 90     # skip judgments older than this (batched publication; ~90d needed)
+
+
+class HarrisJudgmentScraper(BaseScraper):
+    """Downloads the Harris Civil 'Judgments Entered / Eviction' CSV for the
+    judgment-date lookback window and returns tenant-lost JudgmentRecords."""
+
+    def __init__(self, headless: bool = True,
+                 floor_days: int = FLOOR_DAYS, ceiling_days: int = CEILING_DAYS):
+        super().__init__(headless=headless)
+        self.floor_days = floor_days
+        self.ceiling_days = ceiling_days
+        self.last_error: str | None = None
+
+    async def scrape(self) -> list[JudgmentRecord]:  # type: ignore[override]
+        self.last_error = None
+        page = await self._launch_browser()
+        try:
+            today = court_today(COURT_TIMEZONE)
+            frm = (today - timedelta(days=self.ceiling_days)).strftime("%m/%d/%Y")
+            to = (today - timedelta(days=self.floor_days)).strftime("%m/%d/%Y")
+            await page.goto(SOURCE_URL, wait_until="networkidle")
+            await page.click("input#civil")
+            await page.wait_for_timeout(1200)
+            await self._select_by_text(page, "select#extract", "judgments entered")
+            await page.wait_for_timeout(800)
+            await page.select_option("select#court", value="300")
+            await page.wait_for_timeout(400)
+            await self._select_by_text(page, "select#casetype", "eviction")
+            await page.wait_for_timeout(300)
+            await page.select_option("select#format", value="csv")
+            await page.fill("input#fdate", frm)
+            await page.fill("input#tdate", to)
+            async with page.expect_download(timeout=300_000) as dl_info:
+                await page.click("input#submitBtn")
+            download: Download = await dl_info.value
+            tmp = Path(await download.path())
+            csv_text = tmp.read_text(encoding="utf-8", errors="replace")
+            tmp.unlink(missing_ok=True)
+            return parse_judgments_csv(csv_text)
+        except Exception as e:
+            self.last_error = str(e)
+            log.error("ISTS Harris judgment scrape failed: %s", e, exc_info=True)
+            return []
+        finally:
+            await self._close_browser()
+
+    @staticmethod
+    async def _select_by_text(page, selector: str, want_text: str) -> None:
+        opts = await page.eval_on_selector_all(
+            f"{selector} option",
+            "els => els.map(o => ({value:o.value, text:o.innerText.trim()}))",
+        )
+        val = next((o["value"] for o in opts if o["text"].lower() == want_text), None)
+        if not val:
+            raise RuntimeError(f"option '{want_text}' not found in {selector}")
+        await page.select_option(selector, value=val)
