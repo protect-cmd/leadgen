@@ -11,6 +11,8 @@ exposes full address per TX Justice Court Rule 510.3 (extracted via
 pdfplumber).
 """
 
+import re
+
 from playwright.sync_api import sync_playwright
 
 STATE = "TX"
@@ -118,31 +120,21 @@ class FortBendTXJPScraper:
         return page
 
     def parse_results(self, page) -> list:
-        """
-        Parse results table into list of dicts keyed by column header text.
-
-        Resilient to column-ordering changes; tolerates missing tbody.
-        Extracts case detail URL from any link found in the row.
-        """
+        """Parse results table into list of dicts keyed by column header text."""
         rows_out = []
         table = page.query_selector("table")
         if not table:
             return rows_out
-
-        # Extract column headers
         header_cells = table.query_selector_all("thead th")
         if not header_cells:
             header_cells = table.query_selector_all("tr:first-child th")
         if not header_cells:
             header_cells = table.query_selector_all("tr:first-child td")
         headers = [h.inner_text().strip() for h in header_cells]
-
-        # Parse body rows
         body_rows = table.query_selector_all("tbody tr")
         if not body_rows:
             all_rows = table.query_selector_all("tr")
             body_rows = all_rows[1:] if len(all_rows) > 1 else []
-
         for row in body_rows:
             cells = row.query_selector_all("td")
             if not cells:
@@ -151,8 +143,6 @@ class FortBendTXJPScraper:
             for i, cell in enumerate(cells):
                 key = headers[i] if i < len(headers) else f"col_{i}"
                 row_data[key] = cell.inner_text().strip()
-
-            # Extract case detail link
             link = row.query_selector(
                 "a[href*='CaseDetail'], a[href*='Case.aspx'], a[href*='Case ']"
             )
@@ -160,19 +150,11 @@ class FortBendTXJPScraper:
                 row_data["_case_detail_url"] = self._normalize_url(
                     link.get_attribute("href")
                 )
-
             rows_out.append(row_data)
         return rows_out
 
     def filter_evictions(self, rows: list) -> list:
-        """
-        Defensive filter - keep only rows whose Case Type column contains
-        'eviction' or 'forcible entry'.
-
-        Search form filter already restricts to evictions, but this is a
-        safety net in case Tyler results include adjacent case types
-        (e.g. eviction appeals, related civil filings).
-        """
+        """Defensive filter - keep only rows whose case-type column contains eviction keyword."""
         filtered = []
         for row in rows:
             case_type = self._extract_field(
@@ -184,13 +166,7 @@ class FortBendTXJPScraper:
 
     @staticmethod
     def _extract_field(row: dict, candidate_keys: tuple) -> str:
-        """
-        Find first row value whose key contains a candidate.
-
-        Iterates candidates in priority order (most-specific first) so
-        broad fallback keywords don't match earlier than specific phrases.
-        (Same fix as galveston scraper.)
-        """
+        """Find first row value whose key contains a candidate (priority order)."""
         for candidate in candidate_keys:
             for k, v in row.items():
                 kl = k.lower().strip()
@@ -200,7 +176,7 @@ class FortBendTXJPScraper:
 
     @staticmethod
     def _normalize_url(href: str) -> str:
-        """Convert relative URL from Tyler PublicAccess to absolute."""
+        """Convert Tyler relative URL to absolute."""
         if not href:
             return ""
         if href.startswith("http"):
@@ -208,6 +184,143 @@ class FortBendTXJPScraper:
         if href.startswith("/"):
             return PORTAL_BASE + href
         return f"{PORTAL_BASE}/PublicAccess/" + href
+
+    @staticmethod
+    def parse_partial_address(raw: str) -> dict:
+        """
+        Parse a partial defendant address (city + state + zip only).
+
+        Fort Bend case detail pages redact the street address per TX JP
+        privacy convention; only city/state/zip appear at this layer. Full
+        street address is recovered separately from the Original Petition
+        PDF (Step 6).
+
+        Returns dict with city, state, zip keys (empty strings if no match).
+        Does NOT raise - missing fields stay empty.
+        """
+        result = {"city": "", "state": "", "zip": ""}
+        if not raw:
+            return result
+
+        cleaned = raw.strip()
+
+        # ZIP from end (5 or 5-4)
+        zip_m = re.search(r"\b(\d{5}(?:-\d{4})?)\s*$", cleaned)
+        if not zip_m:
+            return result
+        result["zip"] = zip_m.group(1)
+        rest = cleaned[:zip_m.start()].strip().rstrip(",").strip()
+
+        # State (2 uppercase) before ZIP
+        state_m = re.search(r"\b([A-Z]{2})\s*$", rest)
+        if not state_m:
+            return result
+        result["state"] = state_m.group(1)
+        rest = rest[:state_m.start()].strip().rstrip(",").strip()
+
+        # Remaining is city
+        result["city"] = rest
+        return result
+
+    @staticmethod
+    def _grab_after_label(text: str, patterns: list) -> str:
+        """Extract first match after any of the label patterns from text."""
+        for pat in patterns:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                return m.group(1).strip()
+        return ""
+
+    def parse_case_detail(self, page, case_detail_url: str) -> dict:
+        """
+        Visit Tyler legacy case detail page and extract structured data.
+
+        Returns dict with case_number, court, filed_date, cause_of_action,
+        plaintiff_name, defendant_name, defendant_city/state/zip (partial -
+        street is hidden here), petition_url (link to Original Petition PDF
+        for Step 6 extraction), and source_url.
+
+        Uses label-near-value text extraction. Will need DOM-based
+        refinement once Railway preview reveals actual page structure.
+        """
+        page.goto(case_detail_url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_load_state("networkidle", timeout=15000)
+
+        detail = {
+            "source_url": page.url,
+            "case_number": "",
+            "court": "",
+            "filed_date": "",
+            "cause_of_action": "",
+            "plaintiff_name": "",
+            "defendant_name": "",
+            "defendant_city": "",
+            "defendant_state": "",
+            "defendant_zip": "",
+            "petition_url": "",
+        }
+
+        try:
+            body_text = page.inner_text("body")
+        except Exception as e:
+            self.last_error = f"Failed to read body text: {e}"
+            return detail
+
+        # Case header
+        detail["case_number"] = self._grab_after_label(
+            body_text, [r"Case (?:Number|No\.?|#)\s*:?\s*([^\n]+)"]
+        )
+        detail["court"] = self._grab_after_label(
+            body_text, [r"\bCourt\s*:?\s*([^\n]+)"]
+        )
+        detail["filed_date"] = self._grab_after_label(
+            body_text,
+            [r"Date Filed\s*:?\s*([^\n]+)", r"File Date\s*:?\s*([^\n]+)"],
+        )
+        detail["cause_of_action"] = self._grab_after_label(
+            body_text,
+            [r"Cause of Action\s*:?\s*([^\n]+)", r"Case Type\s*:?\s*([^\n]+)"],
+        )
+
+        # Plaintiff
+        plaintiff_match = re.search(
+            r"Plaintiff\s*:?\s*([^\n]+(?:\n[^\n]+){0,2})",
+            body_text,
+            re.IGNORECASE,
+        )
+        if plaintiff_match:
+            detail["plaintiff_name"] = (
+                plaintiff_match.group(1).strip().split("\n")[0]
+            )
+
+        # Defendant + partial address (city/state/zip only)
+        defendant_match = re.search(
+            r"Defendant\s*:?\s*([^\n]+(?:\n[^\n]+){0,4})",
+            body_text,
+            re.IGNORECASE,
+        )
+        if defendant_match:
+            block = defendant_match.group(1).strip()
+            lines = [l.strip() for l in block.split("\n") if l.strip()]
+            if lines:
+                detail["defendant_name"] = lines[0]
+                if len(lines) > 1:
+                    addr_text = " ".join(lines[1:])
+                    parsed = self.parse_partial_address(addr_text)
+                    detail["defendant_city"] = parsed["city"]
+                    detail["defendant_state"] = parsed["state"]
+                    detail["defendant_zip"] = parsed["zip"]
+
+        # Find Original Petition link - the critical handoff for Step 6
+        petition_link = page.query_selector(
+            "a:has-text('Original Petition'), "
+            "a[href*='ViewDocumentFragment']"
+        )
+        if petition_link:
+            href = petition_link.get_attribute("href")
+            detail["petition_url"] = self._normalize_url(href)
+
+        return detail
 
     def session_probe(self, date_from: str = None, date_to: str = None):
         """End-to-end navigation probe for Railway preview testing."""
@@ -229,6 +342,15 @@ class FortBendTXJPScraper:
                     result["eviction_count"] = len(eviction_rows)
                     if eviction_rows:
                         result["first_row_keys"] = list(eviction_rows[0].keys())
+                        # Probe one case detail to verify parser
+                        first = eviction_rows[0]
+                        if first.get("_case_detail_url"):
+                            sample = self.parse_case_detail(
+                                page, first["_case_detail_url"]
+                            )
+                            result["sample_detail_fields"] = {
+                                k: v for k, v in sample.items() if v
+                            }
                 return result
             except Exception as e:
                 return {"ok": False, "error": str(e), "url": page.url}
