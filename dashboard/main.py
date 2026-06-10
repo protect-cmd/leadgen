@@ -123,13 +123,16 @@ async def dashboard_lists():
 
 
 @app.get("/api/queue/{which}", dependencies=[Depends(require_queue)])
-async def api_queue(which: str, limit: int = 0):
-    """which = 'to-enrich' (good_leads_now, needs SearchBug) or
-    'to-fire' (enriched + actionable + not-yet-dialed -> stage to GHL + dial Bland;
-    'staged' flag shows which already have a GHL contact)."""
+async def api_queue(which: str, track: str = "vantage", limit: int = 0):
+    """track = 'vantage' (filings) | 'ists' (judgments).
+    which = 'to-enrich' (needs SearchBug) | 'to-fire' (stage GHL + dial Bland)."""
     from services.dedup_service import _client as sb
-    from pipeline.queue_builder import build_to_enrich, build_to_fire
-    if which == "to-enrich":
+    from pipeline.queue_builder import build_to_enrich, build_to_fire, build_ists_to_enrich
+    if track == "ists":
+        if which != "to-enrich":
+            raise HTTPException(400, "ISTS To-Fire uses the ISTS pipeline (run_ists_outreach) — not wired here yet")
+        rows = await asyncio.to_thread(build_ists_to_enrich, sb, _DNC_DIR)
+    elif which == "to-enrich":
         rows = await asyncio.to_thread(build_to_enrich, sb, _DNC_DIR)
     elif which == "to-fire":
         rows = await asyncio.to_thread(build_to_fire, sb, _DNC_DIR)

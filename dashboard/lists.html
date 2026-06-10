@@ -52,9 +52,13 @@
 <body>
 <header>
   <h1>Lead Queue</h1>
+  <div class="tabs" id="tracks">
+    <div class="tab active" data-track="vantage" onclick="switchTrack(this)">Vantage <span class="sub">· VDG</span></div>
+    <div class="tab" data-track="ists" onclick="switchTrack(this)">ISTS <span class="sub">· judgments</span></div>
+  </div>
   <div class="tabs">
     <div class="tab active" data-list="to-enrich" onclick="switchTab(this)">To Enrich <span class="sub">· SearchBug</span></div>
-    <div class="tab" data-list="to-fire" onclick="switchTab(this)">To Fire <span class="sub">· GHL + Bland</span></div>
+    <div class="tab" id="fireTab" data-list="to-fire" onclick="switchTab(this)">To Fire <span class="sub">· GHL + Bland</span></div>
   </div>
   <div class="sub" id="hint">Ordered by priority ZIP, then score (best SearchBug spend first)</div>
 </header>
@@ -83,6 +87,7 @@
 
 <script>
 let LIST = "to-enrich";
+let TRACK = "vantage";
 let ROWS = [];
 const SEL = new Set();
 
@@ -101,8 +106,8 @@ async function load(){
   document.getElementById("loading").hidden = false;
   document.getElementById("tbl").hidden = true;
   SEL.clear();
-  const res = await fetch(`/api/queue/${LIST}`);
-  ROWS = await res.json();
+  const res = await fetch(`/api/queue/${LIST}?track=${TRACK}`);
+  ROWS = res.ok ? await res.json() : [];
   render();
 }
 
@@ -146,8 +151,21 @@ function clearSel(){ SEL.forEach(i=>{ const tr=rowEl(i); if(tr){tr.classList.rem
 function updateCounts(){ document.getElementById("selCount").textContent=SEL.size; document.getElementById("total").textContent=ROWS.length; }
 
 function switchTab(el){
-  document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+  document.querySelectorAll("[data-list]").forEach(t=>t.classList.remove("active"));
   el.classList.add("active"); LIST = el.dataset.list; load();
+}
+
+function switchTrack(el){
+  document.querySelectorAll("[data-track]").forEach(t=>t.classList.remove("active"));
+  el.classList.add("active"); TRACK = el.dataset.track;
+  // ISTS has no To-Fire here (separate pipeline) — force To-Enrich, hide the tab
+  const fireTab = document.getElementById("fireTab");
+  if(TRACK==="ists"){
+    fireTab.style.display="none";
+    if(LIST!=="to-enrich"){ LIST="to-enrich";
+      document.querySelectorAll("[data-list]").forEach(t=>t.classList.toggle("active", t.dataset.list==="to-enrich")); }
+  } else { fireTab.style.display=""; }
+  load();
 }
 
 async function fireSelected(){
