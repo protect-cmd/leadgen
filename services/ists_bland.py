@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -71,7 +71,10 @@ def _split_name(full_name: str) -> tuple[str, str]:
                   flags=re.IGNORECASE).strip()
     if "," in name:
         last, _, first = name.partition(",")
-        return first.strip().split()[0].title(), last.strip().title()
+        first_parts = first.strip().split()
+        if first_parts:
+            return first_parts[0].title(), last.strip().title()
+        return last.strip().title(), ""
     parts = name.split()
     return (parts[0].title(), " ".join(parts[1:]).title()) if len(parts) >= 2 else (name.title(), "")
 
@@ -108,6 +111,12 @@ async def trigger_call(rec: dict, dry_run: bool = False) -> str | None:
                  rec["case_number"], first, rec["phone"][:4] + "****",
                  agent_id[:8] + "...", "es" if is_spanish else "en")
         return "dry-run"
+
+    # DNC compliance gate — scrub at dial-time, never dial a DNC number.
+    from services import dnc_service
+    if dnc_service.verdict(rec["phone"]) == "dnc":
+        log.info("ISTS Bland: DNC — skipping %s", rec["case_number"])
+        return "dnc_skip"
 
     payload = {
         "phone_number": rec["phone"],
@@ -146,8 +155,17 @@ async def trigger_call(rec: dict, dry_run: bool = False) -> str | None:
     return call_id
 
 
+_FRESHNESS_DAYS = 14  # only call records within this many days of today
+
+
 async def trigger_batch(limit: int = 50, dry_run: bool = False) -> dict:
-    """Trigger W1 Bland calls for up to `limit` GHL-pushed, uncalled records."""
+    """Trigger W1 Bland calls for up to `limit` GHL-pushed, uncalled records.
+
+    Freshness gate: only processes records where judgment_date >= today - 14 days.
+    Stale records are silently excluded — they must be purged separately.
+    """
+    cutoff = (date.today() - timedelta(days=_FRESHNESS_DAYS)).isoformat()
+
     def _fetch() -> list[dict]:
         return (
             _client.table(_TABLE)
@@ -156,6 +174,7 @@ async def trigger_batch(limit: int = 50, dry_run: bool = False) -> dict:
             .not_.is_("phone", "null")
             .not_.is_("ghl_contact_id", "null")
             .is_("bland_call_id", "null")
+            .gte("judgment_date", cutoff)
             .limit(limit)
             .execute()
             .data or []
@@ -165,7 +184,7 @@ async def trigger_batch(limit: int = 50, dry_run: bool = False) -> dict:
     log.info("ISTS Bland: %d ready-to-call records (limit=%d)", len(records), limit)
 
     metrics = {"total": len(records), "dispatched": 0, "skipped_window": 0,
-               "no_agent": 0, "failed": 0}
+               "skipped_dnc": 0, "no_agent": 0, "failed": 0}
 
     for rec in records:
         call_id = await trigger_call(rec, dry_run=dry_run)
@@ -173,6 +192,9 @@ async def trigger_batch(limit: int = 50, dry_run: bool = False) -> dict:
 
         if call_id == "outside_window":
             metrics["skipped_window"] += 1
+            continue
+        if call_id == "dnc_skip":
+            metrics["skipped_dnc"] += 1
             continue
         if call_id is None:
             # Check if it was a missing agent (no_agent) vs API failure
