@@ -125,7 +125,8 @@ async def dashboard_lists():
 @app.get("/api/queue/{which}", dependencies=[Depends(require_queue)])
 async def api_queue(which: str, limit: int = 0):
     """which = 'to-enrich' (good_leads_now, needs SearchBug) or
-    'to-fire' (enriched + actionable + not-yet-dialed, needs Bland)."""
+    'to-fire' (enriched + actionable + not-yet-dialed -> stage to GHL + dial Bland;
+    'staged' flag shows which already have a GHL contact)."""
     from services.dedup_service import _client as sb
     from pipeline.queue_builder import build_to_enrich, build_to_fire
     if which == "to-enrich":

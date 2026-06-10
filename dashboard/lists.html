@@ -51,7 +51,7 @@
   <h1>Lead Queue</h1>
   <div class="tabs">
     <div class="tab active" data-list="to-enrich" onclick="switchTab(this)">To Enrich <span class="sub">· SearchBug</span></div>
-    <div class="tab" data-list="to-fire" onclick="switchTab(this)">To Fire <span class="sub">· Bland</span></div>
+    <div class="tab" data-list="to-fire" onclick="switchTab(this)">To Fire <span class="sub">· GHL + Bland</span></div>
   </div>
   <div class="sub" id="hint">Ordered by priority ZIP, then score (best SearchBug spend first)</div>
 </header>
@@ -121,7 +121,7 @@ function render(){
   document.getElementById("tbl").hidden = false;
   document.getElementById("hint").textContent = LIST==="to-enrich"
     ? "good_leads_now — needs a SearchBug query (no phone yet)"
-    : "enriched + actionable + not yet dialed — ready for Bland";
+    : "enriched + actionable + not yet dialed — stage to GHL + dial Bland (status shows if already staged)";
   updateCounts();
 }
 
