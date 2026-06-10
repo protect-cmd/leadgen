@@ -3,6 +3,8 @@ from datetime import date
 from pipeline.qualification import classify_lead, extract_property_zip, is_approved_zip
 
 
+# ── ZIP extraction (unchanged data-quality helper) ────────────────────────────
+
 def test_extract_property_zip_from_standard_and_zip4_addresses():
     assert extract_property_zip("123 Main St, Nashville, TN 37211") == "37211"
     assert extract_property_zip("123 Main St, Nashville, TN 37211-1234") == "37211"
@@ -13,261 +15,97 @@ def test_extract_property_zip_returns_none_when_missing():
     assert extract_property_zip("") is None
 
 
-def test_tennessee_whitelist_accepts_only_approved_nashville_zips():
+def test_is_approved_zip_helper_still_exposed():
+    # APPROVED_ZIPS is retained (used elsewhere / future priority signal) even
+    # though classify_lead no longer gates on it.
     assert is_approved_zip("TN", "37211") is True
     assert is_approved_zip("TN", "37013") is False
     assert is_approved_zip("TX", "37211") is False
 
 
-def test_classify_discards_missing_zip_without_touching_enriched_data():
+# ── Classification (Phase 1: ZIP allowlist + rent gate + held bucket removed) ──
+
+def test_missing_zip_still_discarded():
+    """Missing ZIP is a data-quality gate (until Phase 2 self-heal), not policy."""
     outcome = classify_lead(
-        state="TN",
-        property_address="Unknown",
-        filing_date=date(2026, 5, 5),
+        state="TN", property_address="Unknown", filing_date=date(2026, 5, 5),
         today=date(2026, 5, 5),
     )
-
     assert outcome.property_zip is None
     assert outcome.lead_bucket == "discarded"
     assert outcome.discard_reason == "missing_zip"
-    assert outcome.qualification_notes == "Discarded before enrichment: no property ZIP found."
 
 
-def test_classify_discards_non_whitelisted_tennessee_zip():
+def test_any_residential_zip_approved_regardless_of_allowlist():
+    """ZIP allowlist dropped — an off-allowlist Nashville ZIP now qualifies."""
     outcome = classify_lead(
-        state="TN",
-        property_address="123 Main St, Nashville, TN 37013",
-        filing_date=date(2026, 5, 5),
-        today=date(2026, 5, 5),
+        state="TN", property_address="123 Main St, Nashville, TN 37013",
+        filing_date=date(2026, 5, 5), today=date(2026, 5, 5),
     )
-
     assert outcome.property_zip == "37013"
-    assert outcome.lead_bucket == "discarded"
-    assert outcome.discard_reason == "zip_not_approved"
-
-
-def test_classify_approved_tennessee_zip_as_residential_fallback_when_rent_missing():
-    outcome = classify_lead(
-        state="TN",
-        property_address="123 Main St, Nashville, TN 37211",
-        filing_date=date(2026, 5, 5),
-        today=date(2026, 5, 5),
-    )
-
-    assert outcome.property_zip == "37211"
     assert outcome.lead_bucket == "residential_approved"
     assert outcome.discard_reason is None
-    assert outcome.qualification_notes == "Approved by ZIP fallback; rent estimate unavailable."
 
 
-def test_classify_approved_old_filing_as_held():
+def test_old_filing_no_longer_held():
+    """7-day held bucket removed — freshness is enforced by good_leads_now, not here."""
     outcome = classify_lead(
-        state="TN",
-        property_address="123 Main St, Nashville, TN 37211",
-        filing_date=date(2026, 4, 20),
-        today=date(2026, 5, 5),
+        state="TN", property_address="123 Main St, Nashville, TN 37211",
+        filing_date=date(2026, 4, 20), today=date(2026, 5, 5),
     )
-
-    assert outcome.lead_bucket == "held"
+    assert outcome.lead_bucket == "residential_approved"
     assert outcome.discard_reason is None
-    assert outcome.qualification_notes == "Held for Chris review: filing is 7+ days old."
 
 
-def test_classify_commercial_as_high_priority_when_zip_approved():
+def test_low_rent_no_longer_discarded():
+    """Rent gate dropped — rent is a priority signal now, never a discard."""
     outcome = classify_lead(
-        state="TN",
-        property_address="123 Main St, Nashville, TN 37211",
-        filing_date=date(2026, 5, 5),
-        property_type="Office",
-        estimated_rent=1200,
-        today=date(2026, 5, 5),
+        state="TX", property_address="123 Main St, Houston, TX 77002",
+        filing_date=date(2026, 5, 5), property_type="residential",
+        estimated_rent=900, today=date(2026, 5, 5),
     )
+    assert outcome.lead_bucket == "residential_approved"
+    assert outcome.discard_reason is None
 
+
+def test_commercial_routes_to_commercial():
+    outcome = classify_lead(
+        state="TN", property_address="100 Industrial Way, Nashville, TN 37013",
+        filing_date=date(2026, 5, 5), property_type="Office",
+        estimated_rent=1200, today=date(2026, 5, 5),
+    )
     assert outcome.lead_bucket == "commercial"
     assert outcome.discard_reason is None
-    assert outcome.qualification_notes == "Commercial lead: high priority."
 
 
-def test_classify_low_rent_residential_as_discarded_after_zip_approval():
+def test_off_allowlist_ohio_zip_approved():
     outcome = classify_lead(
-        state="TN",
-        property_address="123 Main St, Nashville, TN 37211",
-        filing_date=date(2026, 5, 5),
-        property_type="residential",
-        estimated_rent=1200,
-        today=date(2026, 5, 5),
+        state="OH", property_address="123 Greenspoint Dr, Columbus, OH 43004",
+        filing_date=date(2026, 5, 12), today=date(2026, 5, 14),
     )
-
-    assert outcome.lead_bucket == "discarded"
-    assert outcome.discard_reason == "rent_below_threshold"
-
-
-def test_classify_texas_uses_1500_rent_threshold():
-    below = classify_lead(
-        state="TX",
-        property_address="123 Main St, Houston, TX 77002",
-        filing_date=date(2026, 5, 5),
-        property_type="residential",
-        estimated_rent=1499,
-        today=date(2026, 5, 5),
-    )
-    at_threshold = classify_lead(
-        state="TX",
-        property_address="123 Main St, Houston, TX 77002",
-        filing_date=date(2026, 5, 5),
-        property_type="residential",
-        estimated_rent=1500,
-        today=date(2026, 5, 5),
-    )
-
-    assert below.lead_bucket == "discarded"
-    assert below.discard_reason == "rent_below_threshold"
-    assert at_threshold.lead_bucket == "residential_approved"
-    assert at_threshold.discard_reason is None
-
-
-def test_classify_columbus_ohio_zip_as_residential_fallback_when_rent_missing():
-    outcome = classify_lead(
-        state="OH",
-        property_address="123 Main St, Columbus, OH 43229",
-        filing_date=date(2026, 5, 12),
-        today=date(2026, 5, 14),
-    )
-
-    assert outcome.property_zip == "43229"
+    assert outcome.property_zip == "43004"
     assert outcome.lead_bucket == "residential_approved"
-    assert outcome.discard_reason is None
 
 
-def test_classify_cincinnati_ohio_zip_as_residential_fallback_when_rent_missing():
-    outcome = classify_lead(
-        state="OH",
-        property_address="456 Elm St, Cincinnati, OH 45219",
-        filing_date=date(2026, 5, 12),
-        today=date(2026, 5, 14),
-    )
-
-    assert outcome.property_zip == "45219"
-    assert outcome.lead_bucket == "residential_approved"
-    assert outcome.discard_reason is None
-
-
-def test_classify_off_allowlist_zip_with_capture_expanded_true_returns_captured():
-    outcome = classify_lead(
-        state="TX",
-        property_address="123 Greenspoint Dr, Houston, TX 77090",
-        filing_date=date(2026, 5, 25),
-        today=date(2026, 5, 25),
-        capture_expanded=True,
-    )
-    assert outcome.property_zip == "77090"
-    assert outcome.lead_bucket == "captured"
-    assert outcome.discard_reason is None
-    assert "captured" in outcome.qualification_notes.lower()
-
-
-def test_classify_off_allowlist_zip_with_capture_expanded_false_falls_back_to_legacy_discard():
-    outcome = classify_lead(
-        state="TX",
-        property_address="123 Greenspoint Dr, Houston, TX 77090",
-        filing_date=date(2026, 5, 25),
-        today=date(2026, 5, 25),
-        capture_expanded=False,
-    )
-    assert outcome.lead_bucket == "discarded"
-    assert outcome.discard_reason == "zip_not_approved"
-
-
-def test_classify_on_allowlist_zip_unaffected_by_capture_expanded():
+def test_legacy_flags_are_noops():
+    """capture_expanded / bypass_zip_filter are retained for caller compat but
+    have no effect now that the ZIP gate is gone — always residential_approved."""
     for cap in (True, False):
-        outcome = classify_lead(
-            state="TX",
-            property_address="123 Main St, Houston, TX 77002",
-            filing_date=date(2026, 5, 25),
-            today=date(2026, 5, 25),
-            capture_expanded=cap,
-        )
-        assert outcome.lead_bucket == "residential_approved"
+        for byp in (True, False):
+            outcome = classify_lead(
+                state="TX", property_address="123 Greenspoint Dr, Houston, TX 77090",
+                filing_date=date(2026, 5, 25), today=date(2026, 5, 25),
+                capture_expanded=cap, bypass_zip_filter=byp,
+            )
+            assert outcome.lead_bucket == "residential_approved"
+            assert outcome.discard_reason is None
 
 
-def test_classify_missing_zip_still_discarded_under_capture_mode():
+def test_legacy_flags_still_discard_missing_zip():
     outcome = classify_lead(
-        state="TX",
-        property_address="Unknown",
-        filing_date=date(2026, 5, 25),
-        today=date(2026, 5, 25),
-        capture_expanded=True,
+        state="TX", property_address="No ZIP here, Houston, TX",
+        filing_date=date(2026, 5, 25), today=date(2026, 5, 25),
+        capture_expanded=True, bypass_zip_filter=True,
     )
     assert outcome.lead_bucket == "discarded"
     assert outcome.discard_reason == "missing_zip"
-
-
-# ── BYPASS_ZIP_FILTER ─────────────────────────────────────────────────────
-# When bypass_zip_filter=True, off-allowlist ZIPs flow through the full
-# pipeline as residential_approved instead of being captured or discarded.
-
-def test_classify_off_allowlist_zip_with_bypass_treats_as_approved():
-    outcome = classify_lead(
-        state="TX",
-        property_address="123 Greenspoint Dr, Houston, TX 77090",
-        filing_date=date(2026, 5, 25),
-        today=date(2026, 5, 25),
-        bypass_zip_filter=True,
-    )
-    assert outcome.property_zip == "77090"
-    assert outcome.lead_bucket == "residential_approved"
-    assert outcome.discard_reason is None
-
-
-def test_classify_bypass_overrides_capture_expanded():
-    """If both flags are set, BYPASS wins — captured bucket should not fire."""
-    outcome = classify_lead(
-        state="TX",
-        property_address="123 Greenspoint Dr, Houston, TX 77090",
-        filing_date=date(2026, 5, 25),
-        today=date(2026, 5, 25),
-        capture_expanded=True,
-        bypass_zip_filter=True,
-    )
-    assert outcome.lead_bucket == "residential_approved"
-
-
-def test_classify_bypass_still_discards_missing_zip():
-    """Missing-ZIP discard is a data-quality gate, not a policy gate — bypass
-    must not let leads through when we can't extract any ZIP at all."""
-    outcome = classify_lead(
-        state="TX",
-        property_address="No ZIP here, Houston, TX",
-        filing_date=date(2026, 5, 25),
-        today=date(2026, 5, 25),
-        bypass_zip_filter=True,
-    )
-    assert outcome.lead_bucket == "discarded"
-    assert outcome.discard_reason == "missing_zip"
-
-
-def test_classify_bypass_still_applies_rent_threshold():
-    """Bypass affects ZIP gating only; rent threshold still drops cheap leads."""
-    outcome = classify_lead(
-        state="TX",
-        property_address="123 Cheap Dr, Houston, TX 77090",
-        filing_date=date(2026, 5, 25),
-        today=date(2026, 5, 25),
-        property_type="residential",
-        estimated_rent=900,  # below TX threshold of $1500
-        bypass_zip_filter=True,
-    )
-    assert outcome.lead_bucket == "discarded"
-    assert outcome.discard_reason == "rent_below_threshold"
-
-
-def test_classify_bypass_commercial_still_routes_to_commercial():
-    outcome = classify_lead(
-        state="TX",
-        property_address="100 Industrial Way, Houston, TX 77090",
-        filing_date=date(2026, 5, 25),
-        today=date(2026, 5, 25),
-        property_type="commercial",
-        bypass_zip_filter=True,
-    )
-    assert outcome.lead_bucket == "commercial"

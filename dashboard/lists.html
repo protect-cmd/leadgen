@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lead Queue — To Enrich / To Fire</title>
+<style>
+  :root{ --bg:#0f1419; --panel:#171e26; --line:#263241; --txt:#e6edf3; --mut:#8b98a5;
+         --accent:#3b82f6; --g:#16a34a; --y:#ca8a04; --r:#dc2626; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--txt); }
+  header{ padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:18px; }
+  h1{ font-size:16px; margin:0; font-weight:600; }
+  .tabs{ display:flex; gap:6px; }
+  .tab{ padding:7px 16px; border:1px solid var(--line); border-radius:7px; background:var(--panel);
+        color:var(--mut); cursor:pointer; font-weight:600; }
+  .tab.active{ color:#fff; border-color:var(--accent); background:#1a2740; }
+  .sub{ color:var(--mut); font-size:12px; }
+  .toolbar{ display:flex; align-items:center; gap:10px; padding:12px 20px; flex-wrap:wrap;
+            border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:5; }
+  button{ background:var(--panel); color:var(--txt); border:1px solid var(--line); border-radius:6px;
+          padding:6px 12px; cursor:pointer; font-weight:600; }
+  button:hover{ border-color:var(--accent); }
+  button.primary{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.fire{ background:#7f1d1d; border-color:#b91c1c; color:#fff; }
+  button.fire:hover{ background:#991b1b; }
+  button:disabled{ opacity:.6; cursor:wait; }
+  .grp{ display:flex; align-items:center; gap:4px; }
+  .grp .lbl{ color:var(--mut); font-size:12px; margin-right:4px; }
+  .count{ margin-left:auto; color:var(--mut); }
+  .count b{ color:var(--txt); }
+  .wrap{ padding:0 20px 40px; }
+  table{ width:100%; border-collapse:collapse; }
+  th,td{ text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th{ color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.04em;
+      position:sticky; top:53px; background:var(--bg); }
+  td.addr{ white-space:normal; color:var(--mut); max-width:360px; }
+  tr.sel{ background:#16243d; }
+  tr:hover{ background:#141c26; cursor:pointer; }
+  .badge{ display:inline-block; min-width:30px; text-align:center; padding:1px 7px; border-radius:20px;
+          font-weight:700; font-size:12px; }
+  .b-hi{ background:rgba(22,163,74,.18); color:#4ade80; }
+  .b-md{ background:rgba(202,138,4,.18); color:#facc15; }
+  .b-lo{ background:rgba(220,38,38,.16); color:#f87171; }
+  .chip{ font-size:11px; padding:1px 8px; border-radius:20px; background:#1f2937; color:#cbd5e1; }
+  .chip.p{ background:#1e3a8a; color:#bfdbfe; }
+  .tag{ font-size:11px; color:var(--mut); }
+  .tag.staged{ color:#4ade80; }
+  .loading{ padding:40px; text-align:center; color:var(--mut); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Lead Queue</h1>
+  <div class="tabs" id="tracks">
+    <div class="tab active" data-track="vantage" onclick="switchTrack(this)">Vantage <span class="sub">· VDG</span></div>
+    <div class="tab" data-track="ists" onclick="switchTrack(this)">ISTS <span class="sub">· judgments</span></div>
+  </div>
+  <div class="tabs">
+    <div class="tab active" data-list="to-enrich" onclick="switchTab(this)">To Enrich <span class="sub">· SearchBug</span></div>
+    <div class="tab" id="fireTab" data-list="to-fire" onclick="switchTab(this)">To Fire <span class="sub">· GHL + Bland</span></div>
+  </div>
+  <div class="sub" id="hint">Ordered by priority ZIP, then score (best SearchBug spend first)</div>
+</header>
+
+<div class="toolbar">
+  <div class="grp"><span class="lbl">Select first</span>
+    <button onclick="selectFirst(25)">25</button>
+    <button onclick="selectFirst(50)">50</button>
+    <button onclick="selectFirst(100)">100</button>
+    <button onclick="selectFirst(250)">250</button>
+  </div>
+  <button onclick="clearSel()">Clear</button>
+  <button class="primary" onclick="exportCsv(true)">Export selected</button>
+  <button onclick="exportCsv(false)">Export all</button>
+  <button id="fireBtn" class="fire" hidden onclick="fireSelected()">🔥 Fire selected</button>
+  <div class="count"><b id="selCount">0</b> selected · <b id="total">0</b> in list</div>
+</div>
+
+<div class="wrap">
+  <div id="loading" class="loading">Loading…</div>
+  <table id="tbl" hidden>
+    <thead><tr id="head"></tr></thead>
+    <tbody id="body"></tbody>
+  </table>
+</div>
+
+<script>
+let LIST = "to-enrich";
+let TRACK = "vantage";
+let ROWS = [];
+const SEL = new Set();
+
+const COLS = {
+  "to-enrich": [["#","i"],["Tier","tier"],["Score","score"],["Tenant","tenant_name"],
+                ["Address","property_address"],["County","county"],["Filed","filing_date"],["Court","court_date"]],
+  "to-fire":   [["#","i"],["Tier","tier"],["Score","score"],["Tenant","tenant_name"],
+                ["Phone","phone"],["County","county"],["Filed","filing_date"],["Status","statuscol"]],
+};
+
+function badge(s){ const c = s>=80?"b-hi":s>=60?"b-md":"b-lo"; return `<span class="badge ${c}">${s}</span>`; }
+function tier(r){ return r.priority_rank ? `<span class="chip p">#${r.priority_rank} ${r.priority_metro}</span>` : `<span class="chip">tail</span>`; }
+function statuscol(r){ return r.staged ? `<span class="tag staged">staged · ${r.bland_status||"pending"}</span>` : `<span class="tag">not staged</span>`; }
+
+async function load(){
+  document.getElementById("loading").hidden = false;
+  document.getElementById("tbl").hidden = true;
+  SEL.clear();
+  const res = await fetch(`/api/queue/${LIST}?track=${TRACK}`);
+  ROWS = res.ok ? await res.json() : [];
+  render();
+}
+
+function render(){
+  const head = document.getElementById("head");
+  head.innerHTML = `<th></th>` + COLS[LIST].map(c=>`<th>${c[0]}</th>`).join("");
+  const body = document.getElementById("body");
+  body.innerHTML = ROWS.map((r,i)=>{
+    const cells = COLS[LIST].map(([_,k])=>{
+      if(k==="i") return `<td>${i+1}</td>`;
+      if(k==="tier") return `<td>${tier(r)}</td>`;
+      if(k==="score") return `<td>${badge(r.score)}</td>`;
+      if(k==="statuscol") return `<td>${statuscol(r)}</td>`;
+      if(k==="property_address") return `<td class="addr">${r[k]||""}</td>`;
+      return `<td>${r[k]==null?"":r[k]}</td>`;
+    }).join("");
+    return `<tr data-i="${i}" onclick="toggle(${i})"><td><input type="checkbox" onclick="event.stopPropagation();toggle(${i})"></td>${cells}</tr>`;
+  }).join("");
+  document.getElementById("loading").hidden = true;
+  document.getElementById("tbl").hidden = false;
+  document.getElementById("hint").textContent = LIST==="to-enrich"
+    ? "good_leads_now — needs a SearchBug query (no phone yet)"
+    : "enriched + actionable + not yet dialed — stage to GHL + dial Bland (status shows if already staged)";
+  document.getElementById("fireBtn").hidden = (LIST !== "to-fire");
+  updateCounts();
+}
+
+function rowEl(i){ return document.querySelector(`tr[data-i="${i}"]`); }
+function toggle(i){
+  if(SEL.has(i)) SEL.delete(i); else SEL.add(i);
+  const tr = rowEl(i); tr.classList.toggle("sel", SEL.has(i));
+  tr.querySelector("input").checked = SEL.has(i);
+  updateCounts();
+}
+function selectFirst(n){
+  clearSel();
+  for(let i=0;i<Math.min(n,ROWS.length);i++){ SEL.add(i); const tr=rowEl(i); tr.classList.add("sel"); tr.querySelector("input").checked=true; }
+  updateCounts();
+}
+function clearSel(){ SEL.forEach(i=>{ const tr=rowEl(i); if(tr){tr.classList.remove("sel"); tr.querySelector("input").checked=false;} }); SEL.clear(); updateCounts(); }
+function updateCounts(){ document.getElementById("selCount").textContent=SEL.size; document.getElementById("total").textContent=ROWS.length; }
+
+function switchTab(el){
+  document.querySelectorAll("[data-list]").forEach(t=>t.classList.remove("active"));
+  el.classList.add("active"); LIST = el.dataset.list; load();
+}
+
+function switchTrack(el){
+  document.querySelectorAll("[data-track]").forEach(t=>t.classList.remove("active"));
+  el.classList.add("active"); TRACK = el.dataset.track;
+  // ISTS has no To-Fire here (separate pipeline) — force To-Enrich, hide the tab
+  const fireTab = document.getElementById("fireTab");
+  if(TRACK==="ists"){
+    fireTab.style.display="none";
+    if(LIST!=="to-enrich"){ LIST="to-enrich";
+      document.querySelectorAll("[data-list]").forEach(t=>t.classList.toggle("active", t.dataset.list==="to-enrich")); }
+  } else { fireTab.style.display=""; }
+  load();
+}
+
+async function fireSelected(){
+  const cns = [...SEL].sort((a,b)=>a-b).map(i=>ROWS[i].case_number);
+  if(!cns.length){ alert("Select leads to fire first."); return; }
+  const n = Math.min(cns.length, 25);
+  const extra = cns.length>25 ? ` (capped at 25; ${cns.length} selected)` : "";
+  if(!confirm(`Fire ${n} lead(s)?\n\nThis stages them to GHL and dials REAL Bland calls.${extra}`)) return;
+  const btn = document.getElementById("fireBtn");
+  btn.disabled = true; btn.textContent = "Firing…";
+  try{
+    const res = await fetch("/api/queue/fire", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify({case_numbers:cns})});
+    if(!res.ok){ alert("Fire failed: HTTP "+res.status); return; }
+    const j = await res.json();
+    const lines = Object.entries(j.summary).map(([k,v])=>`  ${k}: ${v}`).join("\n");
+    alert(`Fired ${Object.values(j.summary).reduce((a,b)=>a+b,0)} lead(s):\n${lines}${j.capped?"\n(capped at 25 — run again for more)":""}`);
+    await load();   // refresh: fired leads now have a call_id and drop off the list
+  }catch(e){ alert("Fire error: "+e); }
+  finally{ btn.disabled=false; btn.textContent="🔥 Fire selected"; }
+}
+
+function exportCsv(selectedOnly){
+  const rows = selectedOnly ? [...SEL].sort((a,b)=>a-b).map(i=>ROWS[i]) : ROWS;
+  if(!rows.length){ alert("Nothing to export."); return; }
+  const fields = ["priority_rank","priority_metro","score","case_number","tenant_name",
+                  "property_address","phone","state","county","filing_date","court_date","bland_status","staged"];
+  const esc = v => `"${String(v==null?"":v).replace(/"/g,'""')}"`;
+  const csv = [fields.join(",")].concat(rows.map(r=>fields.map(f=>esc(r[f])).join(","))).join("\n");
+  const blob = new Blob([csv], {type:"text/csv"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${LIST}_${selectedOnly?SEL.size:rows.length}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+load();
+</script>
+</body>
+</html>
