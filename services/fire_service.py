@@ -39,6 +39,19 @@ async def fire_case(sb, case_number: str) -> dict:
     if lc.get("bland_call_id"):
         return {"case_number": case_number, "status": "already_dialed"}
 
+    # DNC compliance gate — scrub at dial-time (TCPA: scrub close to call-time).
+    # Independent of the stored dnc_status, so we never dial a DNC number even if
+    # the To-Fire list was built before scrubbing.
+    from services import dnc_service
+    v = dnc_service.verdict(lc["phone"])
+    try:
+        sb.table("lead_contacts").update({"dnc_status": v}).eq(
+            "case_number", case_number).eq("track", "ng").execute()
+    except Exception:
+        pass  # dnc_status column may not be live yet — gate still enforced below
+    if v == "dnc":
+        return {"case_number": case_number, "status": "dnc_skip"}
+
     f = (sb.table("filings").select(_FILING_COLS)
          .eq("case_number", case_number).limit(1).execute().data or [])
     if not f:
