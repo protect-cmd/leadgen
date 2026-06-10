@@ -172,7 +172,9 @@ async def test_runner_alerts_when_enrichment_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_runner_skips_batchdata_when_rent_precheck_discards_low_rent(monkeypatch):
+async def test_runner_no_longer_discards_low_rent_proceeds_to_batchdata(monkeypatch):
+    """Phase 1: rent is a priority signal, not a gate. A low-rent residential
+    lead now classifies residential_approved and proceeds to BatchData."""
     filing = _filing(property_type_hint="residential", claim_amount=None)
     calls: list[str] = []
 
@@ -186,14 +188,20 @@ async def test_runner_skips_batchdata_when_rent_precheck_discards_low_rent(monke
             calls.append("rent_precheck")
             return 1200.0
 
-    async def batchdata_should_not_run(*args, **kwargs):
-        raise AssertionError("BatchData should not run for low-rent precheck rejects")
-
     async def update_classification(case_number: str, outcome) -> None:
         calls.append(f"classified:{outcome.lead_bucket}:{outcome.discard_reason}")
 
-    async def write_run_metrics(metrics: dict) -> None:
-        calls.append(f"metrics:{metrics['batchdata_calls']}:{metrics['address_skipped']}")
+    async def lookup_property_info(filing: Filing) -> batchdata_service.PropertyInfo:
+        calls.append("lookup")
+        return batchdata_service.PropertyInfo(property_type="residential")
+
+    async def enrich(filing: Filing, property_info=None, lookup_property_if_missing=True):
+        calls.append("ec_enrich")
+        return EnrichedContact(filing=filing, track="ec", phone="+12135550100",
+                               property_type="residential")
+
+    async def process_track(contact: EnrichedContact) -> runner.TrackResult:
+        return runner.TrackResult(ghl_created=True)
 
     monkeypatch.setenv("TENANT_TRACK_ENABLED", "false")
     monkeypatch.setenv("LANDLORD_TRACK_ENABLED", "true")
@@ -201,16 +209,18 @@ async def test_runner_skips_batchdata_when_rent_precheck_discards_low_rent(monke
     monkeypatch.setattr(runner.dedup_service, "is_duplicate", _async_false)
     monkeypatch.setattr(runner.dedup_service, "insert_filing", _async_none)
     monkeypatch.setattr(runner.dedup_service, "update_classification", update_classification)
-    monkeypatch.setattr(runner.dedup_service, "write_run_metrics", write_run_metrics)
+    monkeypatch.setattr(runner.dedup_service, "update_enrichment", _async_none)
+    monkeypatch.setattr(runner.dedup_service, "write_run_metrics", _async_none)
     monkeypatch.setattr(runner.geocode_service, "normalize_address", _async_none)
-    monkeypatch.setattr(runner.batchdata_service, "lookup_property_info", batchdata_should_not_run)
-    monkeypatch.setattr(runner.batchdata_service, "enrich", batchdata_should_not_run)
+    monkeypatch.setattr(runner.batchdata_service, "lookup_property_info", lookup_property_info)
+    monkeypatch.setattr(runner.batchdata_service, "enrich", enrich)
+    monkeypatch.setattr(runner, "_process_track", process_track)
 
     await runner.run([filing], state="TX", county="Harris")
 
-    assert "rent_precheck" in calls
-    assert "classified:discarded:rent_below_threshold" in calls
-    assert "metrics:0:1" in calls
+    assert "rent_precheck" in calls               # precheck still estimates (for scoring)
+    assert "classified:residential_approved:None" in calls  # no longer discarded
+    assert "ec_enrich" in calls                   # BatchData now proceeds
 
 
 @pytest.mark.asyncio

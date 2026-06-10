@@ -130,6 +130,21 @@ def classify_lead(
     capture_expanded: bool = False,
     bypass_zip_filter: bool = False,
 ) -> QualificationOutcome:
+    """Classify a filing into a lead_bucket.
+
+    Phase 1 (2026-06-10) removed three gates that were dropping tenant leads:
+      - ZIP allowlist  — was landlord-affluence calibrated, not tenant demographics
+      - rent threshold — rent is now a PRIORITY signal (Rentometer), never a discard
+      - 7-day 'held'   — freshness is enforced by good_leads_now, not classification
+
+    What remains is data-quality + type routing only:
+      - missing ZIP  -> discarded (until Phase 2 self-heal)
+      - commercial   -> commercial
+      - else         -> residential_approved
+
+    `capture_expanded` / `bypass_zip_filter` are retained for caller compatibility
+    (pipeline.runner passes them from env) but are now no-ops.
+    """
     property_zip = extract_property_zip(property_address)
     if property_zip is None:
         return QualificationOutcome(
@@ -137,23 +152,6 @@ def classify_lead(
             lead_bucket="discarded",
             discard_reason="missing_zip",
             qualification_notes="Discarded before enrichment: no property ZIP found.",
-        )
-
-    # BYPASS_ZIP_FILTER overrides CAPTURE_EXPANDED_ZIPS — off-allowlist ZIPs
-    # are treated as approved and flow through the full enrichment pipeline.
-    if not is_approved_zip(state, property_zip) and not bypass_zip_filter:
-        if capture_expanded:
-            return QualificationOutcome(
-                property_zip=property_zip,
-                lead_bucket="captured",
-                discard_reason=None,
-                qualification_notes="Captured: ZIP off legacy allowlist, awaiting Phase 3 promotion policy.",
-            )
-        return QualificationOutcome(
-            property_zip=property_zip,
-            lead_bucket="discarded",
-            discard_reason="zip_not_approved",
-            qualification_notes="Discarded before enrichment: property ZIP is not approved.",
         )
 
     normalized_type = (property_type or "").strip().lower()
@@ -165,34 +163,9 @@ def classify_lead(
             qualification_notes="Commercial lead: high priority.",
         )
 
-    rent_threshold = rent_threshold_for_state(state)
-    threshold_label = f"${rent_threshold:,.0f}"
-
-    if estimated_rent is not None and Decimal(str(estimated_rent)) < rent_threshold:
-        return QualificationOutcome(
-            property_zip=property_zip,
-            lead_bucket="discarded",
-            discard_reason="rent_below_threshold",
-            qualification_notes=f"Discarded after enrichment: estimated rent is below {threshold_label}.",
-        )
-
-    reference_date = today or date.today()
-    if (reference_date - filing_date).days >= FRESH_FILING_DAYS:
-        return QualificationOutcome(
-            property_zip=property_zip,
-            lead_bucket="held",
-            discard_reason=None,
-            qualification_notes="Held for Chris review: filing is 7+ days old.",
-        )
-
-    if estimated_rent is None:
-        notes = "Approved by ZIP fallback; rent estimate unavailable."
-    else:
-        notes = f"Approved residential lead: rent estimate is {threshold_label}+."
-
     return QualificationOutcome(
         property_zip=property_zip,
         lead_bucket="residential_approved",
         discard_reason=None,
-        qualification_notes=notes,
+        qualification_notes="Approved residential tenant lead.",
     )
