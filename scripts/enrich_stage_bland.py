@@ -204,9 +204,12 @@ async def main_async(argv=None) -> int:
         # DNCScrub at enrich-time (national, all area codes) — verdict stored on the
         # number so To-Fire shows only scrubbed-callable. No more 'held' bucket.
         verdict = dnc_service.verdict(phone)
-        sb.table("lead_contacts").update(
-            {"dnc_status": verdict, "dnc_checked_at": datetime.now(timezone.utc).isoformat()}
-        ).eq("case_number", r["case_number"]).eq("track", "ng").execute()
+        try:  # dnc_status column may not be live yet — verdict still gates below
+            sb.table("lead_contacts").update(
+                {"dnc_status": verdict, "dnc_checked_at": datetime.now(timezone.utc).isoformat()}
+            ).eq("case_number", r["case_number"]).eq("track", "ng").execute()
+        except Exception:
+            pass
         if verdict == "dnc":
             dnc_hit += 1
             print(f"  #{enriched:3} {r['county']:8} {phone:11} ON-DNC (skip)", flush=True)
