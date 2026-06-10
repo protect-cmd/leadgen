@@ -165,6 +165,7 @@ def _mock_common_runner_services(monkeypatch, calls: list[tuple]) -> None:
         raise AssertionError("property_type_hint should avoid property lookup")
 
     monkeypatch.setattr(runner.rent_estimate_service, "is_enabled", lambda: False)
+    monkeypatch.setattr("services.dnc_service.verdict", lambda phone: "callable")
     monkeypatch.setattr(runner.dedup_service, "is_duplicate", is_duplicate)
     monkeypatch.setattr(runner.dedup_service, "has_ng_phone", has_ng_phone)
     monkeypatch.setattr(runner.dedup_service, "insert_filing", insert_filing)

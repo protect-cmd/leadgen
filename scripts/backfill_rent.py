@@ -2,8 +2,7 @@
 leads missing it — so the dashboard shows a rent estimate per lead.
 
 Usage:
-    python scripts/backfill_rent.py            # all is_enrichable missing rent
-    python scripts/backfill_rent.py --limit 500
+    python scripts/backfill_rent.py --cap 300
 """
 from __future__ import annotations
 
@@ -23,12 +22,14 @@ from dotenv import load_dotenv
 load_dotenv()
 from supabase import create_client
 
-RENTOMETER_KEY = "gOc0kDVnoj6nRkSRlDpQqg"
 _CTX = ssl._create_unverified_context()
 
 
 def rentometer_median(address: str, bedrooms: int = 2):
-    q = urllib.parse.urlencode({"api_key": RENTOMETER_KEY, "address": address, "bedrooms": bedrooms})
+    api_key = os.environ.get("RENTOMETER_API_KEY")
+    if not api_key:
+        return None
+    q = urllib.parse.urlencode({"api_key": api_key, "address": address, "bedrooms": bedrooms})
     try:
         resp = urllib.request.urlopen(
             f"https://www.rentometer.com/api/v1/summary?{q}", timeout=30, context=_CTX)
@@ -38,24 +39,41 @@ def rentometer_median(address: str, bedrooms: int = 2):
         return None
 
 
+def _order_scored_backfill_rows(rows: list[dict], cap: int) -> list[dict]:
+    rows.sort(
+        key=lambda r: (
+            r.get("priority_rank") is None,
+            r.get("priority_rank") or 0,
+            [-ord(c) for c in (r.get("filing_date") or "")],
+        )
+    )
+    return rows[:cap]
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--cap", type=int, default=300, help="max Rentometer calls this run")
+    ap.add_argument("--limit", type=int, default=None, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
+    if a.limit is not None:
+        a.cap = a.limit
     sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
 
     rows, off = [], 0
     while True:
-        b = (sb.table("filings").select("case_number,property_address")
-             .eq("is_enrichable", True).is_("estimated_rent", "null")
+        b = (sb.table("good_leads_now")
+             .select("case_number,property_address,priority_rank,filing_date")
+             .is_("estimated_rent", "null")
              .not_.is_("property_address", "null").range(off, off + 999).execute().data or [])
         rows += b
-        if len(b) < 1000 or (a.limit and len(rows) >= a.limit):
+        if len(b) < 1000:
             break
         off += 1000
-    if a.limit:
-        rows = rows[:a.limit]
-    print(f"to backfill: {len(rows)}", flush=True)
+    rows = _order_scored_backfill_rows(rows, a.cap)
+    print(
+        f"rent backfill (scored leads, priority-first): {len(rows)} (cap {a.cap})",
+        flush=True,
+    )
 
     done = found = 0
     for r in rows:

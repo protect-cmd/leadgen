@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from pipeline.lead_score import score_lead, compute_coverage_rates
+from pipeline.lead_score import score_lead
 from pipeline.qualification import extract_property_zip
 from services.name_utils import clean_tenant_name, parse_name
 
@@ -44,11 +44,16 @@ _SELECT = ("case_number,tenant_name,property_address,state,county,"
            "filing_date,court_date,priority_rank,priority_metro,estimated_rent")
 
 
-def _score_and_sort(rows: list[dict], coverage: dict[str, float], today: date) -> list[dict]:
+def _score_and_sort(rows: list[dict], today: date, window: int = 21) -> list[dict]:
     for r in rows:
-        fd = date.fromisoformat(r["filing_date"]) if r.get("filing_date") else None
-        r["score"] = score_lead(tenant_name=r.get("tenant_name") or "", filing_date=fd,
-                                 county=r.get("county") or "", coverage_rates=coverage, today=today)
+        ld = date.fromisoformat(r["filing_date"]) if r.get("filing_date") else None
+        r["score"] = score_lead(
+            rent=r.get("estimated_rent"),
+            tenant_name=r.get("tenant_name") or "",
+            lead_date=ld,
+            today=today,
+            fresh_window_days=window,
+        )
     rows.sort(key=lambda r: (r.get("priority_rank") is None, r.get("priority_rank") or 0,
                              -r["score"], [-ord(c) for c in (r.get("filing_date") or "")]))
     return rows
@@ -56,7 +61,6 @@ def _score_and_sort(rows: list[dict], coverage: dict[str, float], today: date) -
 
 def build_to_enrich(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
     today = today or date.today()
-    coverage = compute_coverage_rates(sb, dnc_dir)
     rows, off = [], 0
     while True:
         b = sb.table("good_leads_now").select(_SELECT).range(off, off + 999).execute().data or []
@@ -65,7 +69,7 @@ def build_to_enrich(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
             break
         off += 1000
     rows = _suppress_ists(sb, rows)
-    return _score_and_sort(rows, coverage, today)
+    return _score_and_sort(rows, today)
 
 
 def _suppress_ists(sb, rows: list[dict]) -> list[dict]:
@@ -86,7 +90,6 @@ def build_ists_to_enrich(sb, dnc_dir: str, today: date | None = None) -> list[di
     """ISTS To-Enrich: tenant-lost judgments (gated at scrape) not yet enriched,
     within the 7-day legal window. Scored on judgment_date (7-day freshness)."""
     today = today or date.today()
-    coverage = compute_coverage_rates(sb, dnc_dir)
     fresh = (today - timedelta(days=7)).isoformat()
     pri = _priority_map(sb)
 
@@ -94,7 +97,7 @@ def build_ists_to_enrich(sb, dnc_dir: str, today: date | None = None) -> list[di
     while True:
         b = (sb.table("ists_judgments")
              .select("case_number,defendant_name,property_address,state,county,"
-                     "judgment_date,prior_phone")
+                     "judgment_date,prior_phone,estimated_rent")
              .is_("phone", "null").gte("judgment_date", fresh)
              .range(off, off + 999).execute().data or [])
         rows += b
@@ -109,13 +112,7 @@ def build_ists_to_enrich(sb, dnc_dir: str, today: date | None = None) -> list[di
         z = extract_property_zip(r.get("property_address") or "")
         rank, metro = pri.get(z, (None, None))
         r["priority_rank"], r["priority_metro"] = rank, metro
-        fd = date.fromisoformat(r["judgment_date"]) if r.get("judgment_date") else None
-        r["score"] = score_lead(tenant_name=r["tenant_name"] or "", filing_date=fd,
-                                county=r.get("county") or "", coverage_rates=coverage,
-                                today=today, fresh_window_days=7)
-    rows.sort(key=lambda r: (r.get("priority_rank") is None, r.get("priority_rank") or 0,
-                             -r["score"], [-ord(c) for c in (r.get("judgment_date") or "")]))
-    return rows
+    return _score_and_sort(rows, today, window=7)
 
 
 def build_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
@@ -123,7 +120,6 @@ def build_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
     21-day fresh) + not-yet-dialed (bland_call_id IS NULL). Stale/old-court leads
     fall away both via the gates and via low freshness score."""
     today = today or date.today()
-    coverage = compute_coverage_rates(sb, dnc_dir)
     fresh = (today - timedelta(days=21)).isoformat()
     today_s = today.isoformat()
 
@@ -175,20 +171,19 @@ def build_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
         r["bland_status"] = lc.get("bland_status")
         rows.append(r)
     rows = _suppress_ists(sb, rows)
-    return _score_and_sort(rows, coverage, today)
+    return _score_and_sort(rows, today)
 
 
 def build_ists_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
     """ISTS To-Fire: judgments enriched (phone) + scrubbed-callable + not-yet-dialed,
     within the dial window. Fires through the ISTS pipeline (ists_ghl + ists_bland)."""
     today = today or date.today()
-    coverage = compute_coverage_rates(sb, dnc_dir)
     fresh = (today - timedelta(days=14)).isoformat()
     pri = {p["zip"]: (p["queue_rank"], p["metro"])
            for p in (sb.table("priority_zips").select("zip,queue_rank,metro").execute().data or [])}
 
     sel = ("case_number,defendant_name,property_address,state,county,judgment_date,"
-           "phone,ghl_contact_id")
+           "phone,ghl_contact_id,estimated_rent")
     rows, off = [], 0
     while True:
         q = (sb.table("ists_judgments").select(sel + ",dnc_status")
@@ -212,10 +207,4 @@ def build_ists_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict
         r["staged"] = bool(r.get("ghl_contact_id"))
         rank, metro = pri.get(extract_property_zip(r.get("property_address") or ""), (None, None))
         r["priority_rank"], r["priority_metro"] = rank, metro
-        fd = date.fromisoformat(r["judgment_date"]) if r.get("judgment_date") else None
-        r["score"] = score_lead(tenant_name=r["tenant_name"] or "", filing_date=fd,
-                                county=r.get("county") or "", coverage_rates=coverage,
-                                today=today, fresh_window_days=7)
-    rows.sort(key=lambda r: (r.get("priority_rank") is None, r.get("priority_rank") or 0,
-                             -r["score"], [-ord(c) for c in (r.get("judgment_date") or "")]))
-    return rows
+    return _score_and_sort(rows, today, window=7)

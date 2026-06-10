@@ -17,7 +17,7 @@ async def test_tenant_only_mode_does_not_call_lookup_property_info(monkeypatch):
     filing = Filing(
         case_number="NB1", tenant_name="Maria Garcia",
         property_address="123 Oak St, Houston, TX 77002",
-        landlord_name="ACME LLC", filing_date=date(2026, 5, 25),
+        landlord_name="ACME LLC", filing_date=date.today(),
         state="TX", county="Harris",
         notice_type="Nonpayment - Residential", source_url="x",
         property_type_hint=None,
@@ -30,9 +30,11 @@ async def test_tenant_only_mode_does_not_call_lookup_property_info(monkeypatch):
     with patch("services.batchdata_service.lookup_property_info", new=AsyncMock()) as mock_lookup, \
          patch("services.batchdata_service.enrich_tenant", new=AsyncMock(return_value=ng_return)) as mock_tenant, \
          patch("services.dedup_service.is_duplicate", new=AsyncMock(return_value=False)), \
+         patch("services.dedup_service.has_ng_phone", new=AsyncMock(return_value=False)), \
          patch("services.dedup_service.insert_filing", new=AsyncMock()), \
          patch("services.dedup_service.update_classification", new=AsyncMock()), \
          patch("services.dedup_service.update_enrichment", new=AsyncMock()), \
+         patch("services.rent_estimate_service.is_enabled", return_value=False), \
          patch("services.geocode_service.normalize_address", new=AsyncMock(return_value=None)), \
          patch("services.notification_service.send_run_summary", new=AsyncMock()), \
          patch("services.dedup_service.write_run_metrics", new=AsyncMock()):

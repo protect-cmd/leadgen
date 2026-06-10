@@ -71,3 +71,34 @@ def test_mark_bland_triggered():
     row = _client.table("filings").select("bland_triggered").eq("case_number", TEST_CASE_NUMBER).execute()
     assert row.data[0]["bland_triggered"] is True
     _cleanup()
+
+
+def test_update_estimated_rent_calls_supabase(monkeypatch):
+    from services import dedup_service
+
+    captured = {}
+
+    class _Q:
+        def update(self, payload):
+            captured["payload"] = payload
+            return self
+
+        def eq(self, *a):
+            captured["eq"] = a
+            return self
+
+        def execute(self):
+            captured["exec"] = True
+
+    class _C:
+        def table(self, name):
+            captured["table"] = name
+            return _Q()
+
+    monkeypatch.setattr(dedup_service, "_client", _C())
+    asyncio.run(dedup_service.update_estimated_rent("CASE1", 1950.0))
+
+    assert captured["table"] == "filings"
+    assert captured["payload"] == {"estimated_rent": 1950.0}
+    assert captured["eq"] == ("case_number", "CASE1")
+    assert captured["exec"] is True
