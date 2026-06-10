@@ -27,41 +27,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 
 load_dotenv()
-from datetime import date
 from supabase import create_client
-from pipeline.lead_score import score_lead, compute_coverage_rates
+from pipeline.queue_builder import build_to_enrich
 
-DNC_DIR = r"C:\Users\Zeann\Downloads\DNC Scrub"
+DNC_DIR = os.getenv("DNC_DIR", r"C:\Users\Zeann\Downloads\DNC Scrub")
 FIELDS = ["priority_rank", "priority_metro", "score", "filing_date", "case_number",
           "tenant_name", "property_address", "state", "county", "court_date"]
 
 
 def fetch_queue(sb) -> list[dict]:
-    coverage = compute_coverage_rates(sb, DNC_DIR)
-    today = date.today()
-    rows, off = [], 0
-    while True:
-        b = (sb.table("good_leads_now")
-             .select("case_number,tenant_name,property_address,state,county,"
-                     "filing_date,court_date,priority_rank,priority_metro")
-             .range(off, off + 999).execute().data or [])
-        rows += b
-        if len(b) < 1000:
-            break
-        off += 1000
-    for r in rows:
-        fd = date.fromisoformat(r["filing_date"]) if r.get("filing_date") else None
-        r["score"] = score_lead(tenant_name=r["tenant_name"] or "", filing_date=fd,
-                                 county=r["county"], coverage_rates=coverage, today=today)
-    # priority tier first (NULLS last), then best score, then freshest
-    rows.sort(key=lambda r: (r["priority_rank"] is None, r["priority_rank"] or 0,
-                             -r["score"], _neg(r["filing_date"])))
-    return rows
-
-
-def _neg(d: str | None):
-    # sort filing_date descending via reversed codepoints
-    return [-ord(c) for c in (d or "")]
+    return build_to_enrich(sb, DNC_DIR)
 
 
 def main(argv=None) -> int:

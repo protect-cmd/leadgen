@@ -66,6 +66,8 @@ app = FastAPI(title="Grant Ellis Group Lead Queue", lifespan=lifespan)
 
 _HTML = Path(__file__).parent / "index.html"
 _SEARCH_HTML = Path(__file__).parent / "search.html"
+_LISTS_HTML = Path(__file__).parent / "lists.html"
+_DNC_DIR = os.getenv("DNC_DIR", r"C:\Users\Zeann\Downloads\DNC Scrub")
 
 
 def _truthy(value: str | None) -> bool:
@@ -112,6 +114,27 @@ async def dashboard_search():
 async def dashboard_queue():
     """Legacy multi-tab queue UI (moved from / in Spec 4)."""
     return FileResponse(_HTML)
+
+
+@app.get("/lists", response_class=FileResponse, dependencies=[Depends(require_queue)])
+async def dashboard_lists():
+    """Scored work lists: To Enrich / To Fire, with select-first-N + CSV export."""
+    return FileResponse(_LISTS_HTML)
+
+
+@app.get("/api/queue/{which}", dependencies=[Depends(require_queue)])
+async def api_queue(which: str, limit: int = 0):
+    """which = 'to-enrich' (good_leads_now, needs SearchBug) or
+    'to-fire' (enriched + actionable + not-yet-dialed, needs Bland)."""
+    from services.dedup_service import _client as sb
+    from pipeline.queue_builder import build_to_enrich, build_to_fire
+    if which == "to-enrich":
+        rows = await asyncio.to_thread(build_to_enrich, sb, _DNC_DIR)
+    elif which == "to-fire":
+        rows = await asyncio.to_thread(build_to_fire, sb, _DNC_DIR)
+    else:
+        raise HTTPException(404, "unknown list")
+    return JSONResponse(rows[:limit] if limit else rows)
 
 
 @app.get("/api/search", dependencies=[Depends(require_search)])
