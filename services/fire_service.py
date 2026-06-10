@@ -102,3 +102,54 @@ async def fire_cases(sb, case_numbers: list[str], cap: int = 25) -> dict:
         results.append(await fire_case(sb, cn))
     summary = dict(Counter(r["status"] for r in results))
     return {"results": results, "summary": summary, "capped": len(case_numbers) > cap}
+
+
+async def ists_fire_case(sb, case_number: str) -> dict:
+    """ISTS fire: push to GHL (ists_ghl) if needed + dial (ists_bland, DNC-gated)."""
+    from datetime import datetime, timezone
+    from services import ists_ghl, ists_bland
+
+    rec = (sb.table("ists_judgments").select("*")
+           .eq("case_number", case_number).limit(1).execute().data or [])
+    if not rec:
+        return {"case_number": case_number, "status": "no_record"}
+    rec = rec[0]
+    if not rec.get("phone"):
+        return {"case_number": case_number, "status": "no_phone"}
+    if rec.get("bland_call_id"):
+        return {"case_number": case_number, "status": "already_dialed"}
+    now = datetime.now(timezone.utc).isoformat()
+
+    ghl_id = rec.get("ghl_contact_id")
+    if not ghl_id:
+        try:
+            ghl_id = await ists_ghl.push_contact(rec)
+            if ghl_id:
+                sb.table("ists_judgments").update(
+                    {"ghl_contact_id": ghl_id, "ghl_pushed_at": now}
+                ).eq("case_number", case_number).execute()
+                rec["ghl_contact_id"] = ghl_id
+        except Exception as e:
+            return {"case_number": case_number, "status": "ghl_failed", "error": repr(e)[:120]}
+
+    try:
+        call_id = await ists_bland.trigger_call(rec)
+    except Exception as e:
+        return {"case_number": case_number, "status": "bland_failed", "error": repr(e)[:120]}
+    if call_id == "dnc_skip":
+        return {"case_number": case_number, "status": "dnc_skip"}
+    if call_id in (None, "outside_window"):
+        return {"case_number": case_number, "status": call_id or "failed"}
+    sb.table("ists_judgments").update(
+        {"bland_call_id": call_id, "bland_triggered_at": now}
+    ).eq("case_number", case_number).execute()
+    return {"case_number": case_number, "status": "fired", "ghl_id": ghl_id, "call_id": call_id}
+
+
+async def fire_cases_track(sb, case_numbers: list[str], track: str = "vantage", cap: int = 25) -> dict:
+    """Dispatch to the right fire path by track ('vantage' | 'ists')."""
+    from collections import Counter
+    fire = ists_fire_case if track == "ists" else fire_case
+    results = [await fire(sb, cn) for cn in case_numbers[:cap]]
+    return {"results": results, "summary": dict(Counter(r["status"] for r in results)),
+            "capped": len(case_numbers) > cap}

@@ -18,11 +18,13 @@ _API = "https://www.dncscrub.com/app/main/rpc/scrub"
 _DNC_DIR = os.getenv("DNC_DIR", r"C:\Users\Zeann\Downloads\DNC Scrub")
 _dnc_cache: dict[str, set | None] = {}
 
-# ResultCode legend (docs): C clean, W wireless-ok, G/H EBR overrides, B wireless-clean
-# (undocumented but observed) -> callable.  D do-not-call, L/F wireless-prohibited -> dnc.
-_CALLABLE_CODES = {"C", "W", "G", "H", "B"}
-_DNC_CODES = {"D", "L", "F"}
-_INVALID_CODES = {"I"}   # invalid / directory-assistance — don't dial
+# DNC = actually on a registry (Federal/State/Internal). The authoritative signal
+# is the Reason field; ResultCode is a hint. L/F ("wireless prohibited in state")
+# are NOT DNC-list members — they're clean cells flagged only for autodialer-wireless
+# state rules, so we treat them as callable (Bland dials a specific list, not an ATDS).
+_CALLABLE_CODES = {"C", "W", "G", "H", "B", "L", "F"}
+_DNC_CODES = {"D"}        # registry do-not-call (always carries a Reason segment too)
+_INVALID_CODES = {"I"}    # invalid / directory-assistance — don't dial
 
 
 def result_code_verdict(code: str | None) -> str:

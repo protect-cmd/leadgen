@@ -2,13 +2,20 @@ from services.dnc_service import result_code_verdict, row_verdict
 
 
 def test_callable_codes():
-    for c in ["C", "W", "G", "H", "B", "c", "b"]:
+    # L/F = wireless-prohibited-in-state, NOT on a DNC registry -> callable
+    for c in ["C", "W", "G", "H", "B", "L", "F", "c", "b", "l"]:
         assert result_code_verdict(c) == "callable"
 
 
 def test_dnc_codes():
-    for c in ["D", "L", "F", "d", "l"]:
+    for c in ["D", "d"]:
         assert result_code_verdict(c) == "dnc"
+
+
+def test_wireless_state_restriction_is_callable_when_not_on_a_list():
+    # the real-world shape: code L, Reason ';;;W' (clean of all registries)
+    assert row_verdict({"ResultCode": "L", "Reason": ";;;W"}) == "callable"
+    assert row_verdict({"ResultCode": "F", "Reason": ";;;W"}) == "callable"
 
 
 def test_unknown_codes():

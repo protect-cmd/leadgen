@@ -41,7 +41,7 @@ def ists_person_keys(sb) -> set[str]:
     return keys
 
 _SELECT = ("case_number,tenant_name,property_address,state,county,"
-           "filing_date,court_date,priority_rank,priority_metro")
+           "filing_date,court_date,priority_rank,priority_metro,estimated_rent")
 
 
 def _score_and_sort(rows: list[dict], coverage: dict[str, float], today: date) -> list[dict]:
@@ -133,7 +133,7 @@ def build_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
 
     # actionable filings (same gates as good_leads_now, minus the not-phoned clause)
     cols = ("case_number,tenant_name,property_address,state,county,"
-            "filing_date,court_date,property_zip")
+            "filing_date,court_date,property_zip,estimated_rent")
     base, off = [], 0
     while True:
         b = (sb.table("filings").select(cols)
@@ -176,3 +176,46 @@ def build_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
         rows.append(r)
     rows = _suppress_ists(sb, rows)
     return _score_and_sort(rows, coverage, today)
+
+
+def build_ists_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
+    """ISTS To-Fire: judgments enriched (phone) + scrubbed-callable + not-yet-dialed,
+    within the dial window. Fires through the ISTS pipeline (ists_ghl + ists_bland)."""
+    today = today or date.today()
+    coverage = compute_coverage_rates(sb, dnc_dir)
+    fresh = (today - timedelta(days=14)).isoformat()
+    pri = {p["zip"]: (p["queue_rank"], p["metro"])
+           for p in (sb.table("priority_zips").select("zip,queue_rank,metro").execute().data or [])}
+
+    sel = ("case_number,defendant_name,property_address,state,county,judgment_date,"
+           "phone,ghl_contact_id")
+    rows, off = [], 0
+    while True:
+        q = (sb.table("ists_judgments").select(sel + ",dnc_status")
+             .not_.is_("phone", "null").is_("bland_call_id", "null")
+             .gte("judgment_date", fresh))
+        try:
+            b = q.eq("dnc_status", "callable").range(off, off + 999).execute().data or []
+        except Exception:
+            b = (sb.table("ists_judgments").select(sel).not_.is_("phone", "null")
+                 .is_("bland_call_id", "null").gte("judgment_date", fresh)
+                 .range(off, off + 999).execute().data or [])
+        rows += b
+        if len(b) < 1000:
+            break
+        off += 1000
+
+    for r in rows:
+        r["tenant_name"] = r.get("defendant_name")
+        r["filing_date"] = r.get("judgment_date")
+        r["court_date"] = None
+        r["staged"] = bool(r.get("ghl_contact_id"))
+        rank, metro = pri.get(extract_property_zip(r.get("property_address") or ""), (None, None))
+        r["priority_rank"], r["priority_metro"] = rank, metro
+        fd = date.fromisoformat(r["judgment_date"]) if r.get("judgment_date") else None
+        r["score"] = score_lead(tenant_name=r["tenant_name"] or "", filing_date=fd,
+                                county=r.get("county") or "", coverage_rates=coverage,
+                                today=today, fresh_window_days=7)
+    rows.sort(key=lambda r: (r.get("priority_rank") is None, r.get("priority_rank") or 0,
+                             -r["score"], [-ord(c) for c in (r.get("judgment_date") or "")]))
+    return rows

@@ -92,15 +92,16 @@ let ROWS = [];
 const SEL = new Set();
 
 const COLS = {
-  "to-enrich": [["#","i"],["Tier","tier"],["Score","score"],["Tenant","tenant_name"],
+  "to-enrich": [["#","i"],["Tier","tier"],["Score","score"],["Rent","rent"],["Tenant","tenant_name"],
                 ["Address","property_address"],["County","county"],["Filed","filing_date"],["Court","court_date"]],
-  "to-fire":   [["#","i"],["Tier","tier"],["Score","score"],["Tenant","tenant_name"],
+  "to-fire":   [["#","i"],["Tier","tier"],["Score","score"],["Rent","rent"],["Tenant","tenant_name"],
                 ["Phone","phone"],["County","county"],["Filed","filing_date"],["Status","statuscol"]],
 };
 
 function badge(s){ const c = s>=80?"b-hi":s>=60?"b-md":"b-lo"; return `<span class="badge ${c}">${s}</span>`; }
 function tier(r){ return r.priority_rank ? `<span class="chip p">#${r.priority_rank} ${r.priority_metro}</span>` : `<span class="chip">tail</span>`; }
 function statuscol(r){ return r.staged ? `<span class="tag staged">staged · ${r.bland_status||"pending"}</span>` : `<span class="tag">not staged</span>`; }
+function rent(r){ return r.estimated_rent ? `$${Math.round(r.estimated_rent).toLocaleString()}` : `<span class="tag">—</span>`; }
 
 async function load(){
   document.getElementById("loading").hidden = false;
@@ -120,6 +121,7 @@ function render(){
       if(k==="i") return `<td>${i+1}</td>`;
       if(k==="tier") return `<td>${tier(r)}</td>`;
       if(k==="score") return `<td>${badge(r.score)}</td>`;
+      if(k==="rent") return `<td>${rent(r)}</td>`;
       if(k==="statuscol") return `<td>${statuscol(r)}</td>`;
       if(k==="property_address") return `<td class="addr">${r[k]||""}</td>`;
       return `<td>${r[k]==null?"":r[k]}</td>`;
@@ -158,14 +160,7 @@ function switchTab(el){
 function switchTrack(el){
   document.querySelectorAll("[data-track]").forEach(t=>t.classList.remove("active"));
   el.classList.add("active"); TRACK = el.dataset.track;
-  // ISTS has no To-Fire here (separate pipeline) — force To-Enrich, hide the tab
-  const fireTab = document.getElementById("fireTab");
-  if(TRACK==="ists"){
-    fireTab.style.display="none";
-    if(LIST!=="to-enrich"){ LIST="to-enrich";
-      document.querySelectorAll("[data-list]").forEach(t=>t.classList.toggle("active", t.dataset.list==="to-enrich")); }
-  } else { fireTab.style.display=""; }
-  load();
+  load();  // both tracks have To-Enrich + To-Fire
 }
 
 async function fireSelected(){
@@ -177,7 +172,7 @@ async function fireSelected(){
   const btn = document.getElementById("fireBtn");
   btn.disabled = true; btn.textContent = "Firing…";
   try{
-    const res = await fetch("/api/queue/fire", {method:"POST",
+    const res = await fetch(`/api/queue/fire?track=${TRACK}`, {method:"POST",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify({case_numbers:cns})});
     if(!res.ok){ alert("Fire failed: HTTP "+res.status); return; }
     const j = await res.json();
