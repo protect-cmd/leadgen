@@ -27,13 +27,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 
 load_dotenv()
+from datetime import date
 from supabase import create_client
+from pipeline.lead_score import score_lead, compute_coverage_rates
 
-FIELDS = ["priority_rank", "priority_metro", "filing_date", "case_number",
+DNC_DIR = r"C:\Users\Zeann\Downloads\DNC Scrub"
+FIELDS = ["priority_rank", "priority_metro", "score", "filing_date", "case_number",
           "tenant_name", "property_address", "state", "county", "court_date"]
 
 
 def fetch_queue(sb) -> list[dict]:
+    coverage = compute_coverage_rates(sb, DNC_DIR)
+    today = date.today()
     rows, off = [], 0
     while True:
         b = (sb.table("good_leads_now")
@@ -44,9 +49,13 @@ def fetch_queue(sb) -> list[dict]:
         if len(b) < 1000:
             break
         off += 1000
-    # priority_rank asc (NULLS last), then freshest filing first
+    for r in rows:
+        fd = date.fromisoformat(r["filing_date"]) if r.get("filing_date") else None
+        r["score"] = score_lead(tenant_name=r["tenant_name"] or "", filing_date=fd,
+                                 county=r["county"], coverage_rates=coverage, today=today)
+    # priority tier first (NULLS last), then best score, then freshest
     rows.sort(key=lambda r: (r["priority_rank"] is None, r["priority_rank"] or 0,
-                             _neg(r["filing_date"])))
+                             -r["score"], _neg(r["filing_date"])))
     return rows
 
 
@@ -69,10 +78,10 @@ def main(argv=None) -> int:
     print(f"  priority-ZIP leads (enrich first): {len(prio)}")
     print(f"  priority tiers: {dict(Counter((r['priority_rank'], r['priority_metro']) for r in prio).most_common())}")
     print(f"  by county: {dict(Counter(r['county'] for r in rows).most_common())}\n")
-    print(f"Top {min(a.limit, len(rows))}:")
+    print(f"Top {min(a.limit, len(rows))} (tier | score | filed | name):")
     for r in rows[:a.limit]:
         tier = f"#{r['priority_rank']} {r['priority_metro']}" if r["priority_rank"] else "  (rent tail)"
-        print(f"  {tier:18} {r['filing_date']} {(r['tenant_name'] or '')[:24]:24} {r['county']}")
+        print(f"  {tier:18} {r['score']:3} {r['filing_date']} {(r['tenant_name'] or '')[:24]:24} {r['county']}")
 
     if a.csv:
         with open(a.csv, "w", newline="", encoding="utf-8") as f:
