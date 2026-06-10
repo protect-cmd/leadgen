@@ -22,6 +22,9 @@
           padding:6px 12px; cursor:pointer; font-weight:600; }
   button:hover{ border-color:var(--accent); }
   button.primary{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.fire{ background:#7f1d1d; border-color:#b91c1c; color:#fff; }
+  button.fire:hover{ background:#991b1b; }
+  button:disabled{ opacity:.6; cursor:wait; }
   .grp{ display:flex; align-items:center; gap:4px; }
   .grp .lbl{ color:var(--mut); font-size:12px; margin-right:4px; }
   .count{ margin-left:auto; color:var(--mut); }
@@ -66,6 +69,7 @@
   <button onclick="clearSel()">Clear</button>
   <button class="primary" onclick="exportCsv(true)">Export selected</button>
   <button onclick="exportCsv(false)">Export all</button>
+  <button id="fireBtn" class="fire" hidden onclick="fireSelected()">🔥 Fire selected</button>
   <div class="count"><b id="selCount">0</b> selected · <b id="total">0</b> in list</div>
 </div>
 
@@ -122,6 +126,7 @@ function render(){
   document.getElementById("hint").textContent = LIST==="to-enrich"
     ? "good_leads_now — needs a SearchBug query (no phone yet)"
     : "enriched + actionable + not yet dialed — stage to GHL + dial Bland (status shows if already staged)";
+  document.getElementById("fireBtn").hidden = (LIST !== "to-fire");
   updateCounts();
 }
 
@@ -143,6 +148,26 @@ function updateCounts(){ document.getElementById("selCount").textContent=SEL.siz
 function switchTab(el){
   document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
   el.classList.add("active"); LIST = el.dataset.list; load();
+}
+
+async function fireSelected(){
+  const cns = [...SEL].sort((a,b)=>a-b).map(i=>ROWS[i].case_number);
+  if(!cns.length){ alert("Select leads to fire first."); return; }
+  const n = Math.min(cns.length, 25);
+  const extra = cns.length>25 ? ` (capped at 25; ${cns.length} selected)` : "";
+  if(!confirm(`Fire ${n} lead(s)?\n\nThis stages them to GHL and dials REAL Bland calls.${extra}`)) return;
+  const btn = document.getElementById("fireBtn");
+  btn.disabled = true; btn.textContent = "Firing…";
+  try{
+    const res = await fetch("/api/queue/fire", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify({case_numbers:cns})});
+    if(!res.ok){ alert("Fire failed: HTTP "+res.status); return; }
+    const j = await res.json();
+    const lines = Object.entries(j.summary).map(([k,v])=>`  ${k}: ${v}`).join("\n");
+    alert(`Fired ${Object.values(j.summary).reduce((a,b)=>a+b,0)} lead(s):\n${lines}${j.capped?"\n(capped at 25 — run again for more)":""}`);
+    await load();   // refresh: fired leads now have a call_id and drop off the list
+  }catch(e){ alert("Fire error: "+e); }
+  finally{ btn.disabled=false; btn.textContent="🔥 Fire selected"; }
 }
 
 function exportCsv(selectedOnly){

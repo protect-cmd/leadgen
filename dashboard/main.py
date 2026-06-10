@@ -138,6 +138,17 @@ async def api_queue(which: str, limit: int = 0):
     return JSONResponse(rows[:limit] if limit else rows)
 
 
+@app.post("/api/queue/fire", dependencies=[Depends(require_queue)])
+async def api_fire(payload: dict):
+    """Stage-to-GHL + dial-Bland the given case_numbers (To-Fire action). Capped per call."""
+    case_numbers = (payload or {}).get("case_numbers") or []
+    if not isinstance(case_numbers, list) or not case_numbers:
+        raise HTTPException(400, "case_numbers required")
+    from services.dedup_service import _client as sb
+    from services.fire_service import fire_cases
+    return JSONResponse(await fire_cases(sb, [str(c) for c in case_numbers], cap=25))
+
+
 @app.get("/api/search", dependencies=[Depends(require_search)])
 async def api_search(q: str = "", limit: int = 20):
     if not q or len(q.strip()) < 2:
