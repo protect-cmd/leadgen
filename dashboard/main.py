@@ -68,6 +68,15 @@ _HTML = Path(__file__).parent / "index.html"
 _SEARCH_HTML = Path(__file__).parent / "search.html"
 _LISTS_HTML = Path(__file__).parent / "lists.html"
 _DNC_DIR = os.getenv("DNC_DIR", r"C:\Users\Zeann\Downloads\DNC Scrub")
+_QUEUE_SORT_KEYS = {
+    "score": "score",
+    "rent": "estimated_rent",
+    "estimated_rent": "estimated_rent",
+    "filing_date": "filing_date",
+    "filed": "filing_date",
+    "court_date": "court_date",
+    "court": "court_date",
+}
 
 
 def _truthy(value: str | None) -> bool:
@@ -76,6 +85,49 @@ def _truthy(value: str | None) -> bool:
 
 def _bland_test_calls_enabled() -> bool:
     return _truthy(os.getenv("BLAND_ENABLED")) and _truthy(os.getenv("BLAND_TEST_CALLS_ENABLED"))
+
+
+def _sort_queue_rows(rows: list[dict], sort: str, direction: str) -> list[dict]:
+    key = _QUEUE_SORT_KEYS.get((sort or "").strip().lower())
+    if not key:
+        return rows
+    reverse = (direction or "desc").strip().lower() != "asc"
+
+    def value(row: dict):
+        raw = row.get(key)
+        missing = raw is None or raw == ""
+        if key in {"score", "estimated_rent"}:
+            val = float(raw or 0)
+        else:
+            val = str(raw or "")
+        return (missing, val)
+
+    present = [r for r in rows if r.get(key) is not None and r.get(key) != ""]
+    missing = [r for r in rows if r.get(key) is None or r.get(key) == ""]
+    return sorted(present, key=value, reverse=reverse) + missing
+
+
+def _queue_response(
+    rows: list[dict],
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    sort: str = "",
+    direction: str = "desc",
+) -> dict:
+    limit = max(1, min(limit or 100, 500))
+    offset = max(0, offset or 0)
+    ordered = _sort_queue_rows(rows, sort, direction)
+    total = len(ordered)
+    return {
+        "rows": ordered[offset:offset + limit],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "sort": sort,
+        "direction": direction,
+        "has_more": offset + limit < total,
+    }
 
 
 def _build_bland_test_contact(track: str) -> EnrichedContact:
@@ -123,7 +175,14 @@ async def dashboard_lists():
 
 
 @app.get("/api/queue/{which}", dependencies=[Depends(require_queue)])
-async def api_queue(which: str, track: str = "vantage", limit: int = 0):
+async def api_queue(
+    which: str,
+    track: str = "vantage",
+    limit: int = 100,
+    offset: int = 0,
+    sort: str = "",
+    direction: str = "desc",
+):
     """track = 'vantage' (filings) | 'ists' (judgments).
     which = 'to-enrich' (needs SearchBug) | 'to-fire' (stage GHL + dial Bland)."""
     from services.dedup_service import _client as sb
@@ -138,7 +197,15 @@ async def api_queue(which: str, track: str = "vantage", limit: int = 0):
     if fn is None:
         raise HTTPException(404, "unknown list/track")
     rows = await asyncio.to_thread(fn, sb, _DNC_DIR)
-    return JSONResponse(rows[:limit] if limit else rows)
+    return JSONResponse(
+        _queue_response(
+            rows,
+            limit=limit,
+            offset=offset,
+            sort=sort,
+            direction=direction,
+        )
+    )
 
 
 @app.post("/api/queue/fire", dependencies=[Depends(require_queue)])

@@ -169,3 +169,44 @@ async def test_business_name_tenant_with_landlord_disabled_skips_filing(monkeypa
 
     mock_enrich.assert_not_called()
     mock_enrich_tenant.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_track_skips_auto_bland_when_dnc(monkeypatch):
+    from pipeline import runner
+
+    filing = _filing()
+    contact = _ng_contact(filing)
+
+    monkeypatch.setattr(runner, "_AUTO_BLAND_CALLS_ENABLED", True)
+    monkeypatch.setattr("services.dnc_service.verdict", lambda phone: "dnc")
+
+    with contextlib.ExitStack() as stack:
+        mock_create = stack.enter_context(
+            patch("services.ghl_service.create_contact", new_callable=AsyncMock, return_value="ghl-123")
+        )
+        mock_update_ghl = stack.enter_context(
+            patch("services.dedup_service.update_ghl_id", new_callable=AsyncMock)
+        )
+        mock_enroll = stack.enter_context(
+            patch(
+                "services.instantly_service.enroll",
+                new_callable=AsyncMock,
+                return_value=MagicMock(enrolled=False, error=None),
+            )
+        )
+        mock_bland = stack.enter_context(
+            patch("services.bland_service.trigger_voicemail", new_callable=AsyncMock)
+        )
+        mock_status = stack.enter_context(
+            patch("services.dedup_service.set_bland_status", new_callable=AsyncMock)
+        )
+
+        result = await runner._process_track(contact)
+
+    assert result.ghl_created is True
+    mock_create.assert_called_once()
+    mock_update_ghl.assert_called_once_with(filing.case_number, "ghl-123", "ng")
+    mock_enroll.assert_called_once()
+    mock_bland.assert_not_called()
+    mock_status.assert_called_once_with(filing.case_number, "ng", "dnc_skip")

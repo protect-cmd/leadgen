@@ -436,6 +436,18 @@ async def update_language_hint(case_number: str, language_hint: str | None) -> N
     await asyncio.to_thread(_update)
 
 
+async def update_estimated_rent(case_number: str, rent: float) -> None:
+    def _update() -> None:
+        _execute_with_retry(
+            _client.table("filings").update({
+                "estimated_rent": rent,
+            }).eq("case_number", case_number),
+            "update estimated rent",
+        )
+
+    await asyncio.to_thread(_update)
+
+
 async def update_routing(case_number: str, outcome: RoutingOutcome) -> None:
     def _update() -> None:
         _execute_with_retry(

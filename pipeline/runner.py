@@ -219,6 +219,22 @@ async def _process_track(contact: EnrichedContact) -> TrackResult:
     instantly_result = await instantly_service.enroll(contact)
 
     if contact.phone:
+        from services import dnc_service
+
+        if dnc_service.verdict(contact.phone) == "dnc":
+            await dedup_service.set_bland_status(
+                filing.case_number,
+                contact.track,
+                "dnc_skip",
+            )
+            log.info("%s [%s] DNC - auto-dial skipped", filing.case_number, contact.track.upper())
+            return TrackResult(
+                True,
+                instantly_enrolled=instantly_result.enrolled,
+                instantly_error=instantly_result.error,
+                track=contact.track,
+            )
+
         if _AUTO_BLAND_CALLS_ENABLED:
             try:
                 call_id = await bland_service.trigger_voicemail(contact)
@@ -282,6 +298,11 @@ async def _apply_rent_precheck(filing: Filing) -> bool:
     estimated_rent = await rent_estimate_service.estimate_rent(filing)
     if estimated_rent is None:
         return False
+
+    try:
+        await dedup_service.update_estimated_rent(filing.case_number, estimated_rent)
+    except Exception as e:
+        log.warning("persist estimated_rent failed for %s: %s", filing.case_number, e)
 
     outcome = classify_lead(
         state=filing.state,

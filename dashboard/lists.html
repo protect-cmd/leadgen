@@ -34,6 +34,9 @@
   th,td{ text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
   th{ color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.04em;
       position:sticky; top:53px; background:var(--bg); }
+  th.sortable{ cursor:pointer; user-select:none; }
+  th.sortable:hover{ color:var(--txt); }
+  select{ background:var(--panel); color:var(--txt); border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
   td.addr{ white-space:normal; color:var(--mut); max-width:360px; }
   tr.sel{ background:#16243d; }
   tr:hover{ background:#141c26; cursor:pointer; }
@@ -72,7 +75,19 @@
   </div>
   <button onclick="clearSel()">Clear</button>
   <button class="primary" onclick="exportCsv(true)">Export selected</button>
-  <button onclick="exportCsv(false)">Export all</button>
+  <button onclick="exportCsv(false)">Export page</button>
+  <button onclick="load()">Refresh</button>
+  <div class="grp">
+    <span class="lbl">Rows</span>
+    <select id="pageSize" onchange="setPageSize(this.value)">
+      <option value="50">50</option>
+      <option value="100" selected>100</option>
+      <option value="250">250</option>
+    </select>
+    <button id="prevBtn" onclick="prevPage()">Prev</button>
+    <button id="nextBtn" onclick="nextPage()">Next</button>
+    <span class="tag" id="range">0-0</span>
+  </div>
   <button id="fireBtn" class="fire" hidden onclick="fireSelected()">🔥 Fire selected</button>
   <div class="count"><b id="selCount">0</b> selected · <b id="total">0</b> in list</div>
 </div>
@@ -89,13 +104,18 @@
 let LIST = "to-enrich";
 let TRACK = "vantage";
 let ROWS = [];
+let TOTAL = 0;
+let OFFSET = 0;
+let LIMIT = 100;
+let SORT = "";
+let DIR = "desc";
 const SEL = new Set();
 
 const COLS = {
-  "to-enrich": [["#","i"],["Tier","tier"],["Score","score"],["Rent","rent"],["Tenant","tenant_name"],
-                ["Address","property_address"],["County","county"],["Filed","filing_date"],["Court","court_date"]],
-  "to-fire":   [["#","i"],["Tier","tier"],["Score","score"],["Rent","rent"],["Tenant","tenant_name"],
-                ["Phone","phone"],["County","county"],["Filed","filing_date"],["Status","statuscol"]],
+  "to-enrich": [["#","i"],["Tier","tier"],["Score","score","score"],["Rent","rent","rent"],["Tenant","tenant_name"],
+                ["Address","property_address"],["County","county"],["Filed","filing_date","filing_date"],["Court","court_date","court_date"]],
+  "to-fire":   [["#","i"],["Tier","tier"],["Score","score","score"],["Rent","rent","rent"],["Tenant","tenant_name"],
+                ["Phone","phone"],["County","county"],["Filed","filing_date","filing_date"],["Court","court_date","court_date"],["Status","statuscol"]],
 };
 
 function badge(s){ const c = s>=80?"b-hi":s>=60?"b-md":"b-lo"; return `<span class="badge ${c}">${s}</span>`; }
@@ -105,20 +125,47 @@ function rent(r){ return r.estimated_rent ? `$${Math.round(r.estimated_rent).toL
 
 async function load(){
   document.getElementById("loading").hidden = false;
+  document.getElementById("loading").textContent = "Loading...";
   document.getElementById("tbl").hidden = true;
   SEL.clear();
-  const res = await fetch(`/api/queue/${LIST}?track=${TRACK}`);
-  ROWS = res.ok ? await res.json() : [];
+  const params = new URLSearchParams({
+    track: TRACK,
+    limit: String(LIMIT),
+    offset: String(OFFSET),
+    sort: SORT,
+    direction: DIR,
+  });
+  const res = await fetch(`/api/queue/${LIST}?${params.toString()}`);
+  if(!res.ok){
+    ROWS = []; TOTAL = 0;
+    document.getElementById("loading").textContent = `Load failed: HTTP ${res.status}`;
+    updateCounts();
+    return;
+  }
+  const payload = await res.json();
+  if(Array.isArray(payload)){
+    ROWS = payload;
+    TOTAL = payload.length;
+    OFFSET = 0;
+  }else{
+    ROWS = payload.rows || [];
+    TOTAL = payload.total || 0;
+    OFFSET = payload.offset || 0;
+    LIMIT = payload.limit || LIMIT;
+  }
   render();
 }
 
 function render(){
   const head = document.getElementById("head");
-  head.innerHTML = `<th></th>` + COLS[LIST].map(c=>`<th>${c[0]}</th>`).join("");
+  head.innerHTML = `<th></th>` + COLS[LIST].map(c=>{
+    const mark = c[2] && SORT===c[2] ? (DIR==="asc" ? " up" : " down") : "";
+    return c[2] ? `<th class="sortable" onclick="sortBy('${c[2]}')">${c[0]}${mark}</th>` : `<th>${c[0]}</th>`;
+  }).join("");
   const body = document.getElementById("body");
   body.innerHTML = ROWS.map((r,i)=>{
     const cells = COLS[LIST].map(([_,k])=>{
-      if(k==="i") return `<td>${i+1}</td>`;
+      if(k==="i") return `<td>${OFFSET+i+1}</td>`;
       if(k==="tier") return `<td>${tier(r)}</td>`;
       if(k==="score") return `<td>${badge(r.score)}</td>`;
       if(k==="rent") return `<td>${rent(r)}</td>`;
@@ -150,16 +197,53 @@ function selectFirst(n){
   updateCounts();
 }
 function clearSel(){ SEL.forEach(i=>{ const tr=rowEl(i); if(tr){tr.classList.remove("sel"); tr.querySelector("input").checked=false;} }); SEL.clear(); updateCounts(); }
-function updateCounts(){ document.getElementById("selCount").textContent=SEL.size; document.getElementById("total").textContent=ROWS.length; }
+function updateCounts(){
+  document.getElementById("selCount").textContent=SEL.size;
+  document.getElementById("total").textContent=TOTAL;
+  const start = TOTAL ? OFFSET + 1 : 0;
+  const end = Math.min(OFFSET + ROWS.length, TOTAL);
+  const range = document.getElementById("range");
+  if(range) range.textContent = `${start}-${end}`;
+  const prev = document.getElementById("prevBtn");
+  const next = document.getElementById("nextBtn");
+  if(prev) prev.disabled = OFFSET <= 0;
+  if(next) next.disabled = OFFSET + LIMIT >= TOTAL;
+}
+
+function sortBy(k){
+  if(SORT===k) DIR = DIR==="asc" ? "desc" : "asc";
+  else { SORT = k; DIR = "desc"; }
+  OFFSET = 0;
+  load();
+}
+
+function setPageSize(v){
+  LIMIT = parseInt(v, 10) || 100;
+  OFFSET = 0;
+  load();
+}
+
+function prevPage(){
+  OFFSET = Math.max(0, OFFSET - LIMIT);
+  load();
+}
+
+function nextPage(){
+  if(OFFSET + LIMIT < TOTAL){
+    OFFSET += LIMIT;
+    load();
+  }
+}
 
 function switchTab(el){
   document.querySelectorAll("[data-list]").forEach(t=>t.classList.remove("active"));
-  el.classList.add("active"); LIST = el.dataset.list; load();
+  el.classList.add("active"); LIST = el.dataset.list; OFFSET = 0; load();
 }
 
 function switchTrack(el){
   document.querySelectorAll("[data-track]").forEach(t=>t.classList.remove("active"));
   el.classList.add("active"); TRACK = el.dataset.track;
+  OFFSET = 0;
   load();  // both tracks have To-Enrich + To-Fire
 }
 

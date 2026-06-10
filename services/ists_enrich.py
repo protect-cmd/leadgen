@@ -10,11 +10,12 @@ import asyncio
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
+from services.name_utils import clean_tenant_name, parse_name
 from services.searchbug_service import search_tenant_detailed
 
 load_dotenv()
@@ -28,11 +29,6 @@ _client: Client = create_client(
 
 _TABLE = "ists_judgments"
 
-# Strip occupant qualifiers before SearchBug query
-_OCCUPANT_RE = re.compile(
-    r"\s+(?:and\s+)?all\s+(?:other\s+)?occupants?.*$",
-    re.IGNORECASE,
-)
 # Spanish-surname heuristic: common Latin endings
 _SPANISH_SURNAME_RE = re.compile(
     r"(ez|os|as|ia|io|ón|on|ar|er|ado|eda|ero|era|illo|illo|ito|ita|uez|quez|ndo)$",
@@ -40,21 +36,10 @@ _SPANISH_SURNAME_RE = re.compile(
 )
 
 
-def _clean_name(raw: str) -> str:
-    """Strip occupant trailers and normalise."""
-    return _OCCUPANT_RE.sub("", raw).strip()
-
-
 def _split_name(full_name: str) -> tuple[str, str]:
-    """Return (first, last). Handles 'Last, First' format from Harris extract."""
-    name = _clean_name(full_name).strip()
-    if "," in name:
-        last, _, first = name.partition(",")
-        return first.strip().split()[0], last.strip()
-    parts = name.split()
-    if len(parts) >= 2:
-        return parts[0], parts[-1]
-    return name, ""
+    """Return (first, last) using the shared Vantage-grade parser."""
+    cleaned = clean_tenant_name(full_name)
+    return parse_name(cleaned)
 
 
 def _parse_address_parts(address: str) -> tuple[str, str, str]:
@@ -75,17 +60,26 @@ def _language_hint(first: str, last: str) -> str:
     return "english_likely"
 
 
+_FRESHNESS_DAYS = 14  # only enrich records within this many days of today
+
+
 async def enrich_batch(limit: int = 50, dry_run: bool = False) -> dict:
     """Enrich up to `limit` unenriched ists_judgments records with SearchBug.
 
+    Freshness gate: only processes records where judgment_date >= today - 14 days.
+    Stale records are excluded — wasting SearchBug credits on them has no value.
+
     Returns metrics dict: {total, phone_found, no_records, ambiguous, errors, skipped}
     """
+    cutoff = (date.today() - timedelta(days=_FRESHNESS_DAYS)).isoformat()
+
     def _fetch() -> list[dict]:
         return (
             _client.table(_TABLE)
             .select("case_number,defendant_name,property_address,state,county")
             .is_("phone", "null")
             .is_("enriched_at", "null")
+            .gte("judgment_date", cutoff)
             .limit(limit)
             .execute()
             .data or []
@@ -110,6 +104,27 @@ async def enrich_batch(limit: int = 50, dry_run: bool = False) -> dict:
 
         city, state, zip_ = _parse_address_parts(address)
         hint = _language_hint(first, last)
+        rent = None
+
+        try:
+            from models.filing import Filing as _F
+            from services import rent_estimate_service
+
+            rent = await rent_estimate_service.estimate_rent(
+                _F(
+                    case_number=case_number,
+                    tenant_name=defendant,
+                    property_address=address,
+                    landlord_name="",
+                    filing_date=date.today(),
+                    state=state,
+                    county=rec["county"],
+                    notice_type="Judgment",
+                    source_url="",
+                )
+            )
+        except Exception:
+            rent = None
 
         if dry_run:
             log.info("DRY ENRICH %s | %s %s | %s, %s %s | hint=%s",
@@ -128,10 +143,12 @@ async def enrich_batch(limit: int = 50, dry_run: bool = False) -> dict:
         phone = result.phone if result.status in ("phone_found", "name_mismatch") else None
         now = datetime.now(timezone.utc).isoformat()
 
-        def _update(case=case_number, p=phone, h=hint, t=now):
+        def _update(case=case_number, p=phone, h=hint, t=now, rnt=rent):
             payload = {"enriched_at": t, "language_hint": h}
             if p:
                 payload["phone"] = p
+            if rnt:
+                payload["estimated_rent"] = rnt
             _client.table(_TABLE).update(payload).eq("case_number", case).execute()
 
         await asyncio.to_thread(_update)

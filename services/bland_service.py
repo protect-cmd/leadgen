@@ -120,6 +120,10 @@ async def trigger_voicemail(contact: EnrichedContact) -> str:
     """Dispatch an outbound call via Bland.ai. Returns the Bland call_id."""
     if not contact.phone:
         raise ValueError("No phone number on contact - cannot trigger voicemail")
+    from services import dnc_service
+
+    if dnc_service.verdict(contact.phone) == "dnc":
+        raise RuntimeError("DNC blocked - cannot trigger voicemail")
 
     filing = contact.filing
     is_ec = contact.track == "ec"
