@@ -12,6 +12,33 @@ from datetime import date, timedelta
 
 from pipeline.lead_score import score_lead, compute_coverage_rates
 from pipeline.qualification import extract_property_zip
+from services.name_utils import clean_tenant_name, parse_name
+
+
+def _person_key(name: str | None, zip_: str | None) -> str | None:
+    """Cross-track identity = normalized first+last + property ZIP. None if unparseable."""
+    first, last = parse_name(clean_tenant_name(name or ""))
+    if not (first and last):
+        return None
+    return f"{first.lower()}|{last.lower()}|{zip_ or ''}"
+
+
+def ists_person_keys(sb) -> set[str]:
+    """Person-keys of all ISTS judgments — ISTS WINS, so these are suppressed from
+    the Vantage queues (a tenant on both tracks gets only the ISTS offer)."""
+    keys: set[str] = set()
+    off = 0
+    while True:
+        b = (sb.table("ists_judgments").select("defendant_name,property_address")
+             .range(off, off + 999).execute().data or [])
+        for r in b:
+            k = _person_key(r.get("defendant_name"), extract_property_zip(r.get("property_address") or ""))
+            if k:
+                keys.add(k)
+        if len(b) < 1000:
+            break
+        off += 1000
+    return keys
 
 _SELECT = ("case_number,tenant_name,property_address,state,county,"
            "filing_date,court_date,priority_rank,priority_metro")
@@ -37,7 +64,17 @@ def build_to_enrich(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
         if len(b) < 1000:
             break
         off += 1000
+    rows = _suppress_ists(sb, rows)
     return _score_and_sort(rows, coverage, today)
+
+
+def _suppress_ists(sb, rows: list[dict]) -> list[dict]:
+    """Drop Vantage leads whose person is an ISTS judgment (ISTS wins)."""
+    keys = ists_person_keys(sb)
+    if not keys:
+        return rows
+    return [r for r in rows
+            if _person_key(r.get("tenant_name"), r.get("property_zip")) not in keys]
 
 
 def _priority_map(sb) -> dict[str, tuple[int, str]]:
@@ -128,4 +165,5 @@ def build_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
         r["staged"] = bool(lc.get("ghl_contact_id"))
         r["bland_status"] = lc.get("bland_status")
         rows.append(r)
+    rows = _suppress_ists(sb, rows)
     return _score_and_sort(rows, coverage, today)
