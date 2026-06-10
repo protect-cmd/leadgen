@@ -50,6 +50,21 @@
   .tag{ font-size:11px; color:var(--mut); }
   .tag.staged{ color:#4ade80; }
   .loading{ padding:40px; text-align:center; color:var(--mut); }
+  .modal{ position:fixed; inset:0; background:rgba(0,0,0,.62); display:flex; align-items:center;
+          justify-content:center; padding:20px; z-index:20; }
+  .modal[hidden]{ display:none; }
+  .modal-box{ width:min(720px,100%); max-height:80vh; overflow:auto; background:var(--panel);
+              border:1px solid var(--line); border-radius:8px; box-shadow:0 24px 60px rgba(0,0,0,.35); }
+  .modal-head{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+               padding:14px 16px; border-bottom:1px solid var(--line); }
+  .modal-head h2{ margin:0; font-size:15px; }
+  .modal-body{ padding:14px 16px; color:#cbd5e1; }
+  .summary-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; margin-bottom:12px; }
+  .summary-item{ border:1px solid var(--line); border-radius:6px; padding:8px 10px; background:#101821; }
+  .summary-item b{ display:block; color:#fff; font-size:17px; }
+  .result-list{ margin:0; padding:0; list-style:none; }
+  .result-list li{ display:flex; justify-content:space-between; gap:12px; padding:6px 0; border-top:1px solid var(--line); }
+  .result-list code{ color:#e6edf3; }
 </style>
 </head>
 <body>
@@ -88,6 +103,8 @@
     <button id="nextBtn" onclick="nextPage()">Next</button>
     <span class="tag" id="range">0-0</span>
   </div>
+  <button id="rentBtn" hidden onclick="rentSelected()">Estimate rent selected</button>
+  <button id="enrichBtn" class="primary" hidden onclick="enrichSelected()">Enrich selected</button>
   <button id="fireBtn" class="fire" hidden onclick="fireSelected()">🔥 Fire selected</button>
   <div class="count"><b id="selCount">0</b> selected · <b id="total">0</b> in list</div>
 </div>
@@ -98,6 +115,16 @@
     <thead><tr id="head"></tr></thead>
     <tbody id="body"></tbody>
   </table>
+</div>
+
+<div id="resultModal" class="modal" hidden>
+  <div class="modal-box">
+    <div class="modal-head">
+      <h2 id="modalTitle">Action result</h2>
+      <button onclick="closeModal()">Close</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
 </div>
 
 <script>
@@ -180,6 +207,8 @@ function render(){
   document.getElementById("hint").textContent = LIST==="to-enrich"
     ? "good_leads_now — needs a SearchBug query (no phone yet)"
     : "enriched + actionable + not yet dialed — stage to GHL + dial Bland (status shows if already staged)";
+  document.getElementById("rentBtn").hidden = (LIST !== "to-enrich");
+  document.getElementById("enrichBtn").hidden = (LIST !== "to-enrich");
   document.getElementById("fireBtn").hidden = (LIST !== "to-fire");
   updateCounts();
 }
@@ -247,8 +276,71 @@ function switchTrack(el){
   load();  // both tracks have To-Enrich + To-Fire
 }
 
+function selectedCaseNumbers(){
+  return [...SEL].sort((a,b)=>a-b).map(i=>ROWS[i].case_number);
+}
+
+function modalResult(title, payload){
+  const body = document.getElementById("modalBody");
+  const summary = payload.summary || {};
+  const summaryHtml = Object.entries(summary).map(([k,v]) =>
+    `<div class="summary-item"><b>${v}</b>${k.replace(/_/g," ")}</div>`
+  ).join("") || `<div class="summary-item"><b>0</b>processed</div>`;
+  const capped = payload.capped ? `<p class="tag">Capped for this run. Select again to continue.</p>` : "";
+  const results = (payload.results || []).slice(0, 50).map(r => {
+    const detail = r.rent ? `$${Math.round(r.rent).toLocaleString()}` :
+      r.dnc_status ? `DNC: ${r.dnc_status}` : "";
+    return `<li><code>${r.case_number}</code><span>${r.status}${detail ? " - " + detail : ""}</span></li>`;
+  }).join("");
+  document.getElementById("modalTitle").textContent = title;
+  body.innerHTML = `<div class="summary-grid">${summaryHtml}</div>${capped}<ul class="result-list">${results}</ul>`;
+  document.getElementById("resultModal").hidden = false;
+}
+
+function closeModal(){
+  document.getElementById("resultModal").hidden = true;
+}
+
+async function runSelectedAction({endpoint, buttonId, workingText, confirmText, title}){
+  const cns = selectedCaseNumbers();
+  if(!cns.length){ alert("Select leads first."); return; }
+  if(!confirm(confirmText(cns.length))) return;
+  const btn = document.getElementById(buttonId);
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = workingText;
+  try{
+    const res = await fetch(`/api/queue/${endpoint}?track=${TRACK}`, {method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify({case_numbers:cns})});
+    if(!res.ok){ alert(`${title} failed: HTTP ${res.status}`); return; }
+    const payload = await res.json();
+    modalResult(title, payload);
+    await load();
+  }catch(e){ alert(`${title} error: ${e}`); }
+  finally{ btn.disabled=false; btn.textContent=original; }
+}
+
+async function rentSelected(){
+  await runSelectedAction({
+    endpoint: "rent",
+    buttonId: "rentBtn",
+    workingText: "Estimating...",
+    title: "Rentometer results",
+    confirmText: n => `Run Rentometer on ${Math.min(n,50)} selected lead(s)?\n\nThis uses paid Rentometer credits.${n>50 ? `\nCapped at 50; ${n} selected.` : ""}`,
+  });
+}
+
+async function enrichSelected(){
+  await runSelectedAction({
+    endpoint: "enrich",
+    buttonId: "enrichBtn",
+    workingText: "Enriching...",
+    title: "SearchBug enrichment results",
+    confirmText: n => `Run SearchBug enrichment on ${Math.min(n,25)} selected lead(s)?\n\nThis uses paid SearchBug lookups and only saves results; it does not fire calls.${n>25 ? `\nCapped at 25; ${n} selected.` : ""}`,
+  });
+}
+
 async function fireSelected(){
-  const cns = [...SEL].sort((a,b)=>a-b).map(i=>ROWS[i].case_number);
+  const cns = selectedCaseNumbers();
   if(!cns.length){ alert("Select leads to fire first."); return; }
   const n = Math.min(cns.length, 25);
   const extra = cns.length>25 ? ` (capped at 25; ${cns.length} selected)` : "";
