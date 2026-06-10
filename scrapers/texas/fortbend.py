@@ -27,9 +27,6 @@ PORTAL_URL = f"{PORTAL_BASE}/PublicAccess/default.aspx"
 
 EVICTION_KEYWORDS = ("eviction", "forcible entry")
 
-# Common street suffix words for anchoring street/city boundary in
-# free-form petition text. Critical for addresses without comma
-# delimiters between street and city (e.g. "5500 Oak Drive Richmond TX").
 STREET_SUFFIX_REGEX = (
     r"(?:St|Street|Ave|Avenue|Blvd|Boulevard|"
     r"Dr|Drive|Rd|Road|Ln|Lane|"
@@ -39,10 +36,6 @@ STREET_SUFFIX_REGEX = (
     r"Loop|Run|Plaza|Sq|Square)"
 )
 
-# Regex for TX address pattern: <street ending in suffix> <city> TX <zip>
-# Optional apt/unit modifier between street and city. Anchored on street
-# suffix word so multi-word cities (Missouri City, Sugar Land) parse
-# correctly even without comma delimiters.
 PETITION_ADDRESS_RE = re.compile(
     rf"(\d+\s+[\w\s.,#&\-/]{{1,80}}?\b{STREET_SUFFIX_REGEX}\b\.?"
     rf"(?:\s+(?:#|Apt\.?|Unit|Suite|Ste\.?)\s*[\w\-]+)?)\s*,?\s+"
@@ -51,6 +44,7 @@ PETITION_ADDRESS_RE = re.compile(
     rf"(\d{{5}}(?:-\d{{4}})?)",
     re.IGNORECASE,
 )
+
 
 class FortBendTXJPScraper:
     """Tyler legacy PublicAccess scraper for Fort Bend JP evictions."""
@@ -67,10 +61,7 @@ class FortBendTXJPScraper:
     def _launch(self, p):
         browser = p.chromium.launch(
             headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-            ],
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
         )
         context = browser.new_context(
             viewport={"width": 1920, "height": 1080},
@@ -108,11 +99,9 @@ class FortBendTXJPScraper:
             page.get_by_role("radio", name="Date Filed").check()
         except Exception:
             page.locator("input[type='radio'][value*='Date Filed' i]").first.check()
-
         page.wait_for_timeout(500)
         page.get_by_label("On or After", exact=False).first.fill(date_from)
         page.get_by_label("On or Before", exact=False).first.fill(date_to)
-
         try:
             page.get_by_label("Case Type", exact=False).first.select_option(label="Eviction")
         except Exception:
@@ -120,12 +109,10 @@ class FortBendTXJPScraper:
                 page.get_by_label("Case Types", exact=False).first.select_option(label="Eviction")
             except Exception as e:
                 self.last_error = f"Could not select Eviction case type: {e}"
-
         try:
             page.get_by_label("Sort By", exact=False).first.select_option(label="Case Number")
         except Exception:
             pass
-
         page.get_by_role("button", name="Search").click()
         page.wait_for_load_state("networkidle", timeout=30000)
         page.wait_for_selector("table", timeout=15000)
@@ -219,7 +206,6 @@ class FortBendTXJPScraper:
     def parse_case_detail(self, page, case_detail_url: str) -> dict:
         page.goto(case_detail_url, wait_until="domcontentloaded", timeout=30000)
         page.wait_for_load_state("networkidle", timeout=15000)
-
         detail = {
             "source_url": page.url,
             "case_number": "",
@@ -233,13 +219,11 @@ class FortBendTXJPScraper:
             "defendant_zip": "",
             "petition_url": "",
         }
-
         try:
             body_text = page.inner_text("body")
         except Exception as e:
             self.last_error = f"Failed to read body text: {e}"
             return detail
-
         detail["case_number"] = self._grab_after_label(
             body_text, [r"Case (?:Number|No\.?|#)\s*:?\s*([^\n]+)"]
         )
@@ -250,13 +234,11 @@ class FortBendTXJPScraper:
         detail["cause_of_action"] = self._grab_after_label(
             body_text, [r"Cause of Action\s*:?\s*([^\n]+)", r"Case Type\s*:?\s*([^\n]+)"]
         )
-
         plaintiff_match = re.search(
             r"Plaintiff\s*:?\s*([^\n]+(?:\n[^\n]+){0,2})", body_text, re.IGNORECASE
         )
         if plaintiff_match:
             detail["plaintiff_name"] = plaintiff_match.group(1).strip().split("\n")[0]
-
         defendant_match = re.search(
             r"Defendant\s*:?\s*([^\n]+(?:\n[^\n]+){0,4})", body_text, re.IGNORECASE
         )
@@ -271,34 +253,21 @@ class FortBendTXJPScraper:
                     detail["defendant_city"] = parsed["city"]
                     detail["defendant_state"] = parsed["state"]
                     detail["defendant_zip"] = parsed["zip"]
-
         petition_link = page.query_selector(
             "a:has-text('Original Petition'), a[href*='ViewDocumentFragment']"
         )
         if petition_link:
             href = petition_link.get_attribute("href")
             detail["petition_url"] = self._normalize_url(href)
-
         return detail
 
     def fetch_petition_pdf(self, page, petition_url: str) -> bytes:
-        """
-        Fetch the Original Petition PDF using the Playwright session.
-
-        Uses page.context.request which shares cookies with the browser
-        session - this matters because the SecurityToken in the URL may
-        be session-bound.
-
-        Returns raw PDF bytes, or empty bytes on failure.
-        """
         if not petition_url:
             return b""
         try:
             response = page.context.request.get(petition_url, timeout=30000)
             if not response.ok:
-                self.last_error = (
-                    f"Petition fetch HTTP {response.status} for {petition_url}"
-                )
+                self.last_error = f"Petition fetch HTTP {response.status} for {petition_url}"
                 return b""
             return response.body()
         except Exception as e:
@@ -307,13 +276,6 @@ class FortBendTXJPScraper:
 
     @staticmethod
     def extract_petition_text(pdf_bytes: bytes) -> str:
-        """
-        Extract text from petition PDF bytes via pdfplumber.
-
-        Returns concatenated text from all pages, or empty string if
-        extraction fails. Scanned-image PDFs (no embedded text) will
-        return empty - those would need OCR which is out of scope here.
-        """
         if not pdf_bytes:
             return ""
         try:
@@ -325,41 +287,179 @@ class FortBendTXJPScraper:
 
     @staticmethod
     def parse_petition_address(text: str) -> dict:
-        """
-        Find defendant street address in TX eviction petition text.
-
-        TX Justice Court Rule 510.3 standardizes the petition layout.
-        Defendant section is typically labeled 'Defendant' or 'Tenant';
-        their full street address follows. The petition includes BOTH
-        plaintiff (landlord) and defendant addresses - we prefer the
-        address found in proximity to 'Defendant' or 'Tenant' labels.
-
-        Returns dict with street/city/state/zip/raw keys (empty strings
-        if no address found). Best-effort parser; may need refinement
-        once Railway preview reveals actual extracted text formatting.
-        """
         result = {"street": "", "city": "", "state": "", "zip": "", "raw": ""}
         if not text:
             return result
-
         matches = list(PETITION_ADDRESS_RE.finditer(text))
         if not matches:
             return result
-
-        # Prefer match near 'Defendant' or 'Tenant' label
         best = matches[0]
         for m in matches:
             preceding = text[max(0, m.start() - 500):m.start()].lower()
             if "defendant" in preceding or "tenant" in preceding:
                 best = m
                 break
-
         result["raw"] = best.group(0).strip()
         result["street"] = best.group(1).strip().rstrip(",").strip()
         result["city"] = best.group(2).strip().rstrip(",").strip()
         result["state"] = "TX"
         result["zip"] = best.group(4)
         return result
+
+    def normalize_filing(self, case_detail: dict, petition_address: dict = None) -> dict:
+        """
+        Convert raw case detail + petition address into the standard Filing schema.
+
+        Fort Bend specifics: judicial_officer / precinct / hearing_date /
+        judgment_amount are typically empty (single pooled location, no
+        per-judge dropdown, eviction filing doesn't capture hearing or
+        disposition data in case detail).
+
+        Street address comes from petition_address (PDF parse) when available;
+        falls back to empty street with city/state/zip from case_detail's
+        partial-address layer.
+        """
+        petition_address = petition_address or {}
+        street = petition_address.get("street", "")
+        city = petition_address.get("city") or case_detail.get("defendant_city", "")
+        state = petition_address.get("state") or case_detail.get("defendant_state", "")
+        zip_code = petition_address.get("zip") or case_detail.get("defendant_zip", "")
+        return {
+            "state": STATE,
+            "county": COUNTY,
+            "notice_type": NOTICE_TYPE,
+            "case_number": (case_detail.get("case_number") or "").strip(),
+            "court": (case_detail.get("court") or "").strip(),
+            "judicial_officer": "",
+            "precinct": "",
+            "filed_date": (case_detail.get("filed_date") or "").strip(),
+            "hearing_date": "",
+            "cause_of_action": (case_detail.get("cause_of_action") or "").strip(),
+            "plaintiff_name": (case_detail.get("plaintiff_name") or "").strip(),
+            "defendant_name": (case_detail.get("defendant_name") or "").strip(),
+            "defendant_address_line1": street,
+            "defendant_city": city,
+            "defendant_state": state,
+            "defendant_zip": zip_code,
+            "judgment_amount": "",
+            "source_url": case_detail.get("source_url", ""),
+        }
+
+    @staticmethod
+    def dedupe_by_case_number(filings: list) -> list:
+        """Remove duplicate filings by case_number, keep first occurrence."""
+        seen = set()
+        unique = []
+        for f in filings:
+            cn = (f.get("case_number") or "").strip()
+            if not cn or cn in seen:
+                continue
+            seen.add(cn)
+            unique.append(f)
+        return unique
+
+    def scrape_all(
+        self, date_from: str, date_to: str, fetch_petitions: bool = True
+    ) -> dict:
+        """
+        Full scrape orchestrator for a date range.
+
+        Args:
+            date_from, date_to: MM/DD/YYYY (inclusive) date range bounds
+            fetch_petitions: if True, fetch Original Petition PDF for each case
+                and extract street address. Set False for fast preview (no
+                addresses) - useful for selector verification on Railway.
+
+        Returns:
+            {
+                "ok": bool,
+                "filings": [Filing dicts],
+                "filings_count": int,
+                "address_hit_count": int,
+                "address_hit_rate": float (percentage 0-100),
+                "raw_row_count": int,
+                "eviction_row_count": int,
+                "errors": [str],
+            }
+        """
+        filings = []
+        errors = []
+        raw_count = 0
+        eviction_count = 0
+
+        with sync_playwright() as p:
+            browser, context, page = self._launch(p)
+            try:
+                self.navigate_to_civil_search(page)
+                self.search_evictions(page, date_from, date_to)
+
+                rows = self.parse_results(page)
+                raw_count = len(rows)
+                eviction_rows = self.filter_evictions(rows)
+                eviction_count = len(eviction_rows)
+
+                for row in eviction_rows:
+                    case_url = row.get("_case_detail_url", "")
+                    if not case_url:
+                        errors.append(
+                            f"No case URL for row: {row.get('Case Number', '?')}"
+                        )
+                        continue
+
+                    try:
+                        case_detail = self.parse_case_detail(page, case_url)
+                    except Exception as e:
+                        errors.append(f"parse_case_detail failed for {case_url}: {e}")
+                        continue
+
+                    petition_address = None
+                    if fetch_petitions and case_detail.get("petition_url"):
+                        try:
+                            pdf_bytes = self.fetch_petition_pdf(
+                                page, case_detail["petition_url"]
+                            )
+                            if pdf_bytes:
+                                text = self.extract_petition_text(pdf_bytes)
+                                if text:
+                                    petition_address = self.parse_petition_address(text)
+                        except Exception as e:
+                            errors.append(
+                                "Petition extraction failed for "
+                                f"{case_detail.get('case_number', '?')}: {e}"
+                            )
+
+                    filing = self.normalize_filing(case_detail, petition_address)
+                    filings.append(filing)
+
+            except Exception as e:
+                errors.append(f"Scrape session failed: {e}")
+                return {
+                    "ok": False,
+                    "filings": filings,
+                    "filings_count": len(filings),
+                    "address_hit_count": 0,
+                    "address_hit_rate": 0.0,
+                    "raw_row_count": raw_count,
+                    "eviction_row_count": eviction_count,
+                    "errors": errors,
+                }
+            finally:
+                browser.close()
+
+        filings = self.dedupe_by_case_number(filings)
+        address_hit = sum(1 for f in filings if f.get("defendant_address_line1"))
+        address_hit_rate = (address_hit / len(filings) * 100.0) if filings else 0.0
+
+        return {
+            "ok": True,
+            "filings": filings,
+            "filings_count": len(filings),
+            "address_hit_count": address_hit,
+            "address_hit_rate": round(address_hit_rate, 2),
+            "raw_row_count": raw_count,
+            "eviction_row_count": eviction_count,
+            "errors": errors,
+        }
 
     def session_probe(self, date_from: str = None, date_to: str = None):
         """End-to-end navigation probe for Railway preview testing."""
@@ -382,16 +482,10 @@ class FortBendTXJPScraper:
                     if eviction_rows:
                         first = eviction_rows[0]
                         if first.get("_case_detail_url"):
-                            sample = self.parse_case_detail(
-                                page, first["_case_detail_url"]
-                            )
-                            result["sample_detail"] = {
-                                k: v for k, v in sample.items() if v
-                            }
+                            sample = self.parse_case_detail(page, first["_case_detail_url"])
+                            result["sample_detail"] = {k: v for k, v in sample.items() if v}
                             if sample.get("petition_url"):
-                                pdf_bytes = self.fetch_petition_pdf(
-                                    page, sample["petition_url"]
-                                )
+                                pdf_bytes = self.fetch_petition_pdf(page, sample["petition_url"])
                                 result["petition_pdf_bytes"] = len(pdf_bytes)
                                 if pdf_bytes:
                                     text = self.extract_petition_text(pdf_bytes)
@@ -408,22 +502,30 @@ class FortBendTXJPScraper:
 
 if __name__ == "__main__":
     import sys
+    import json
     scraper = FortBendTXJPScraper()
     if len(sys.argv) > 1 and sys.argv[1] == "probe":
-        print("Running session probe against tylerpaw.fortbendcountytx.gov...")
-        result = scraper.session_probe()
-        print(result)
+        print("Running session probe...")
+        print(scraper.session_probe())
     elif len(sys.argv) > 1 and sys.argv[1] == "search":
         from datetime import datetime, timedelta
         end = datetime.now()
         start = end - timedelta(days=7)
         print(f"Running search probe: {start:%m/%d/%Y} -> {end:%m/%d/%Y}")
-        result = scraper.session_probe(
+        print(scraper.session_probe(
+            date_from=start.strftime("%m/%d/%Y"),
+            date_to=end.strftime("%m/%d/%Y"),
+        ))
+    elif len(sys.argv) > 1 and sys.argv[1] == "full":
+        from datetime import datetime, timedelta
+        end = datetime.now()
+        start = end - timedelta(days=7)
+        print(f"Full scrape: {start:%m/%d/%Y} -> {end:%m/%d/%Y}")
+        result = scraper.scrape_all(
             date_from=start.strftime("%m/%d/%Y"),
             date_to=end.strftime("%m/%d/%Y"),
         )
-        print(result)
+        print(json.dumps(result, indent=2, default=str))
     else:
         print("Smoke test against example.com...")
-        result = scraper.smoke_test("https://example.com")
-        print(result)
+        print(scraper.smoke_test("https://example.com"))
