@@ -127,29 +127,29 @@ async def api_queue(which: str, track: str = "vantage", limit: int = 0):
     """track = 'vantage' (filings) | 'ists' (judgments).
     which = 'to-enrich' (needs SearchBug) | 'to-fire' (stage GHL + dial Bland)."""
     from services.dedup_service import _client as sb
-    from pipeline.queue_builder import build_to_enrich, build_to_fire, build_ists_to_enrich
-    if track == "ists":
-        if which != "to-enrich":
-            raise HTTPException(400, "ISTS To-Fire uses the ISTS pipeline (run_ists_outreach) — not wired here yet")
-        rows = await asyncio.to_thread(build_ists_to_enrich, sb, _DNC_DIR)
-    elif which == "to-enrich":
-        rows = await asyncio.to_thread(build_to_enrich, sb, _DNC_DIR)
-    elif which == "to-fire":
-        rows = await asyncio.to_thread(build_to_fire, sb, _DNC_DIR)
-    else:
-        raise HTTPException(404, "unknown list")
+    from pipeline.queue_builder import (build_to_enrich, build_to_fire,
+                                        build_ists_to_enrich, build_ists_to_fire)
+    fn = {
+        ("vantage", "to-enrich"): build_to_enrich,
+        ("vantage", "to-fire"): build_to_fire,
+        ("ists", "to-enrich"): build_ists_to_enrich,
+        ("ists", "to-fire"): build_ists_to_fire,
+    }.get((track, which))
+    if fn is None:
+        raise HTTPException(404, "unknown list/track")
+    rows = await asyncio.to_thread(fn, sb, _DNC_DIR)
     return JSONResponse(rows[:limit] if limit else rows)
 
 
 @app.post("/api/queue/fire", dependencies=[Depends(require_queue)])
-async def api_fire(payload: dict):
-    """Stage-to-GHL + dial-Bland the given case_numbers (To-Fire action). Capped per call."""
+async def api_fire(payload: dict, track: str = "vantage"):
+    """Fire the given case_numbers — Vantage (fire_service) or ISTS (ists pipeline). Capped."""
     case_numbers = (payload or {}).get("case_numbers") or []
     if not isinstance(case_numbers, list) or not case_numbers:
         raise HTTPException(400, "case_numbers required")
     from services.dedup_service import _client as sb
-    from services.fire_service import fire_cases
-    return JSONResponse(await fire_cases(sb, [str(c) for c in case_numbers], cap=25))
+    from services.fire_service import fire_cases_track
+    return JSONResponse(await fire_cases_track(sb, [str(c) for c in case_numbers], track=track, cap=25))
 
 
 @app.get("/api/search", dependencies=[Depends(require_search)])
