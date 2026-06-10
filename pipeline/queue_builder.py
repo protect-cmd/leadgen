@@ -42,6 +42,11 @@ def ists_person_keys(sb) -> set[str]:
 
 _SELECT = ("case_number,tenant_name,property_address,state,county,"
            "filing_date,court_date,priority_rank,priority_metro,estimated_rent")
+_REVIEW_SEARCHBUG_STATUSES = {"name_mismatch", "ambiguous"}
+
+
+def _is_fireable_contact(contact: dict) -> bool:
+    return contact.get("searchbug_status") not in _REVIEW_SEARCHBUG_STATUSES
 
 
 def _score_and_sort(rows: list[dict], today: date, window: int = 21) -> list[dict]:
@@ -152,15 +157,16 @@ def build_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
         # Guard: if migration 019 (dnc_status) isn't applied, fall back to unscrubbed.
         try:
             data = (sb.table("lead_contacts")
-                    .select("case_number,phone,bland_status,ghl_contact_id,dnc_status")
+                    .select("case_number,phone,bland_status,ghl_contact_id,dnc_status,searchbug_status")
                     .in_("case_number", chunk).eq("track", "ng").not_.is_("phone", "null")
                     .is_("bland_call_id", "null").eq("dnc_status", "callable").execute().data or [])
         except Exception:
-            data = (sb.table("lead_contacts").select("case_number,phone,bland_status,ghl_contact_id")
+            data = (sb.table("lead_contacts").select("case_number,phone,bland_status,ghl_contact_id,searchbug_status")
                     .in_("case_number", chunk).eq("track", "ng").not_.is_("phone", "null")
                     .is_("bland_call_id", "null").execute().data or [])
         for lc in data:
-            ready[lc["case_number"]] = lc
+            if _is_fireable_contact(lc):
+                ready[lc["case_number"]] = lc
     rows = []
     for r in base:
         lc = ready.get(r["case_number"])
