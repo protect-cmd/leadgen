@@ -148,13 +148,22 @@ def build_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
         rank, metro = pri.get(r.get("property_zip"), (None, None))
         r["priority_rank"], r["priority_metro"] = rank, metro
 
-    # join lead_contacts: phone present, not yet dialed
+    # join lead_contacts: phone present, not dialed, scrubbed-callable.
     cns = [r["case_number"] for r in base]
     ready: dict[str, dict] = {}
     for i in range(0, len(cns), 200):
-        for lc in (sb.table("lead_contacts").select("case_number,phone,bland_status,ghl_contact_id")
-                   .in_("case_number", cns[i:i + 200]).eq("track", "ng")
-                   .not_.is_("phone", "null").is_("bland_call_id", "null").execute().data or []):
+        chunk = cns[i:i + 200]
+        # Guard: if migration 019 (dnc_status) isn't applied, fall back to unscrubbed.
+        try:
+            data = (sb.table("lead_contacts")
+                    .select("case_number,phone,bland_status,ghl_contact_id,dnc_status")
+                    .in_("case_number", chunk).eq("track", "ng").not_.is_("phone", "null")
+                    .is_("bland_call_id", "null").eq("dnc_status", "callable").execute().data or [])
+        except Exception:
+            data = (sb.table("lead_contacts").select("case_number,phone,bland_status,ghl_contact_id")
+                    .in_("case_number", chunk).eq("track", "ng").not_.is_("phone", "null")
+                    .is_("bland_call_id", "null").execute().data or [])
+        for lc in data:
             ready[lc["case_number"]] = lc
     rows = []
     for r in base:

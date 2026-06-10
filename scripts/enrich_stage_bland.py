@@ -19,7 +19,7 @@ import glob
 import os
 import sys
 from collections import Counter, defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -77,7 +77,7 @@ async def main_async(argv=None) -> int:
 
     load_dotenv()
     from supabase import create_client
-    from services import batchdata_service, enformion_service, dedup_service, bland_service, ghl_service
+    from services import batchdata_service, enformion_service, dedup_service, bland_service, ghl_service, dnc_service
     enrich_vendor = enformion_service if a.vendor == "enformion" else batchdata_service
     from services.dedup_service import update_ghl_id, set_bland_status
     from pipeline import router, runner
@@ -201,14 +201,15 @@ async def main_async(argv=None) -> int:
         consec_fail = 0
         found += 1
 
-        d = on_dnc(phone)
-        if d is True:
+        # DNCScrub at enrich-time (national, all area codes) — verdict stored on the
+        # number so To-Fire shows only scrubbed-callable. No more 'held' bucket.
+        verdict = dnc_service.verdict(phone)
+        sb.table("lead_contacts").update(
+            {"dnc_status": verdict, "dnc_checked_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("case_number", r["case_number"]).eq("track", "ng").execute()
+        if verdict == "dnc":
             dnc_hit += 1
             print(f"  #{enriched:3} {r['county']:8} {phone:11} ON-DNC (skip)", flush=True)
-            continue
-        if d is None:
-            held += 1
-            print(f"  #{enriched:3} {r['county']:8} {phone:11} no-list (HELD)", flush=True)
             continue
 
         # callable -> stage GHL + dial Bland
@@ -244,8 +245,7 @@ async def main_async(argv=None) -> int:
     print(f"  phones found:               {found}")
     print(f"  CALLABLE staged to GHL:     {staged}")
     print(f"  dialed via Bland:           {dialed}")
-    print(f"  ON-DNC (skipped):           {dnc_hit}")
-    print(f"  no-list (held, not dialed): {held}")
+    print(f"  ON-DNC (scrubbed, skipped): {dnc_hit}")
     print(f"  no phone:                   {enriched - found}")
     import time
     stamp = time.strftime("%Y-%m-%d_%H%M%S")
