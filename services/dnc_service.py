@@ -18,19 +18,36 @@ _API = "https://www.dncscrub.com/app/main/rpc/scrub"
 _DNC_DIR = os.getenv("DNC_DIR", r"C:\Users\Zeann\Downloads\DNC Scrub")
 _dnc_cache: dict[str, set | None] = {}
 
-# ResultCode -> verdict (C/W/G/H callable, D/L do-not-call)
-_CALLABLE_CODES = {"C", "W", "G", "H"}
-_DNC_CODES = {"D", "L"}
+# ResultCode legend (docs): C clean, W wireless-ok, G/H EBR overrides, B wireless-clean
+# (undocumented but observed) -> callable.  D do-not-call, L/F wireless-prohibited -> dnc.
+_CALLABLE_CODES = {"C", "W", "G", "H", "B"}
+_DNC_CODES = {"D", "L", "F"}
+_INVALID_CODES = {"I"}   # invalid / directory-assistance — don't dial
 
 
 def result_code_verdict(code: str | None) -> str:
     """Map a DNCScrub ResultCode to callable | dnc | unknown (pure, testable)."""
     c = (code or "").strip().upper()[:1]
-    if c in _CALLABLE_CODES:
-        return "callable"
     if c in _DNC_CODES:
         return "dnc"
+    if c in _CALLABLE_CODES:
+        return "callable"
     return "unknown"
+
+
+def row_verdict(row: dict) -> str:
+    """Authoritative per-row verdict: the Reason field is delimited
+    'National;State;Internal;Wireless' — any populated DNC segment (first three) =
+    dnc, regardless of ResultCode. Falls back to the code otherwise."""
+    code = (row.get("ResultCode") or "").strip().upper()[:1]
+    if code in _DNC_CODES:
+        return "dnc"
+    segs = (row.get("Reason") or "").split(";")
+    if any(s.strip() for s in segs[:3]):   # on National / State / Internal DNC
+        return "dnc"
+    if code in _INVALID_CODES:
+        return "unknown"
+    return "callable"
 
 
 def _digits(phone: str | None) -> str | None:
@@ -92,7 +109,7 @@ def _api_verdicts(phones: list[str]) -> dict[str, str]:
         for row in r.json():
             d = _digits(str(row.get("Phone")))
             if d:
-                out[d] = result_code_verdict(row.get("ResultCode"))
+                out[d] = row_verdict(row)
         return out
     except Exception:
         return {}
