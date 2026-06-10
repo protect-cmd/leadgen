@@ -130,6 +130,13 @@ def _queue_response(
     }
 
 
+def _case_numbers_required(payload: dict | None) -> list[str]:
+    case_numbers = (payload or {}).get("case_numbers") or []
+    if not isinstance(case_numbers, list) or not case_numbers:
+        raise HTTPException(400, "case_numbers required")
+    return [str(c) for c in case_numbers]
+
+
 def _build_bland_test_contact(track: str) -> EnrichedContact:
     if track not in _BLAND_TEST_RECIPIENTS:
         raise HTTPException(404, "Unknown Bland QA track")
@@ -211,12 +218,28 @@ async def api_queue(
 @app.post("/api/queue/fire", dependencies=[Depends(require_queue)])
 async def api_fire(payload: dict, track: str = "vantage"):
     """Fire the given case_numbers — Vantage (fire_service) or ISTS (ists pipeline). Capped."""
-    case_numbers = (payload or {}).get("case_numbers") or []
-    if not isinstance(case_numbers, list) or not case_numbers:
-        raise HTTPException(400, "case_numbers required")
+    case_numbers = _case_numbers_required(payload)
     from services.dedup_service import _client as sb
     from services.fire_service import fire_cases_track
-    return JSONResponse(await fire_cases_track(sb, [str(c) for c in case_numbers], track=track, cap=25))
+    return JSONResponse(await fire_cases_track(sb, case_numbers, track=track, cap=25))
+
+
+@app.post("/api/queue/rent", dependencies=[Depends(require_queue)])
+async def api_queue_rent(payload: dict, track: str = "vantage"):
+    """Run Rentometer for selected queue rows. Capped to control paid API spend."""
+    case_numbers = _case_numbers_required(payload)
+    from services.dedup_service import _client as sb
+    from services.queue_actions import rent_cases_track
+    return JSONResponse(await rent_cases_track(sb, case_numbers, track=track, cap=50))
+
+
+@app.post("/api/queue/enrich", dependencies=[Depends(require_queue)])
+async def api_queue_enrich(payload: dict, track: str = "vantage"):
+    """Run SearchBug tenant enrichment for selected queue rows. Capped to control spend."""
+    case_numbers = _case_numbers_required(payload)
+    from services.dedup_service import _client as sb
+    from services.queue_actions import enrich_cases_track
+    return JSONResponse(await enrich_cases_track(sb, case_numbers, track=track, cap=25))
 
 
 @app.get("/api/search", dependencies=[Depends(require_search)])
