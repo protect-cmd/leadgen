@@ -84,38 +84,114 @@ class FortBendTXJPScraper:
                 browser.close()
 
     def navigate_to_civil_search(self, page):
-        page.goto(PORTAL_URL, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_load_state("networkidle", timeout=15000)
-        page.get_by_role("link", name="Civil, Family & Probate Case Records").click()
-        page.wait_for_load_state("networkidle", timeout=15000)
-        page.wait_for_selector(
-            "input[type='submit'][value='Search'], button:has-text('Search')",
-            timeout=10000,
-        )
+        """
+        Navigate from portal landing page to the Civil records search form.
+
+        Verified DOM (2026-06-09 via user VPN inspection):
+        - Civil link: <a class="ssSearchHyperlink"
+            href="javascript:LaunchSearch('Search.aspx?ID=400', ...)">
+            Civil, Family Case Records</a>
+        (NOT "Civil, Family & Probate Case Records" - no Probate)
+        - Search button on the form: <input id="SearchSubmit" type="submit">
+        """
+        try:
+            page.goto(PORTAL_URL, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception as e:
+            self.last_error = f"navigate_to_civil_search: portal load failed: {e}"
+            raise
+
+        try:
+            page.locator(
+                "a.ssSearchHyperlink", has_text="Civil, Family Case Records"
+            ).first.click()
+        except Exception as e:
+            self.last_error = (
+                f"navigate_to_civil_search: Civil link click failed - "
+                f"expected 'Civil, Family Case Records' class=ssSearchHyperlink: {e}"
+            )
+            raise
+
+        try:
+            page.wait_for_load_state("networkidle", timeout=15000)
+            page.wait_for_selector("#SearchSubmit", timeout=10000)
+        except Exception as e:
+            self.last_error = (
+                f"navigate_to_civil_search: search form did not load (#SearchSubmit missing): {e}"
+            )
+            raise
+
         return page
 
     def search_evictions(self, page, date_from: str, date_to: str):
+        """
+        Fill Civil records search form for eviction filings in date range.
+
+        Verified DOM (2026-06-09):
+        - Date Filed radio: id="DateFiled" value="6" with onclick handler
+        SwitchCaseSearch(this.value, true) - reveals date inputs on click
+        - On or After input: id="DateFiledOnAfter"
+        - On or Before input: id="DateFiledOnBefore"
+        - Case Type "Evictions" option (PLURAL): value="296"
+        - Sort By: id="selectSortBy", option value="casenumber"
+        - Search button: id="SearchSubmit" (input type=submit)
+        """
         try:
-            page.get_by_role("radio", name="Date Filed").check()
-        except Exception:
-            page.locator("input[type='radio'][value*='Date Filed' i]").first.check()
-        page.wait_for_timeout(500)
-        page.get_by_label("On or After", exact=False).first.fill(date_from)
-        page.get_by_label("On or Before", exact=False).first.fill(date_to)
+            page.locator("#DateFiled").check()
+        except Exception as e:
+            self.last_error = (
+                f"search_evictions: Date Filed radio (#DateFiled) not clickable: {e}"
+            )
+            raise
+
+        # SwitchCaseSearch handler renders date inputs conditionally
+        page.wait_for_timeout(800)
+
         try:
-            page.get_by_label("Case Type", exact=False).first.select_option(label="Eviction")
-        except Exception:
-            try:
-                page.get_by_label("Case Types", exact=False).first.select_option(label="Eviction")
-            except Exception as e:
-                self.last_error = f"Could not select Eviction case type: {e}"
+            page.locator("#DateFiledOnAfter").fill(date_from)
+            page.locator("#DateFiledOnBefore").fill(date_to)
+        except Exception as e:
+            self.last_error = (
+                f"search_evictions: date inputs (#DateFiledOnAfter / #DateFiledOnBefore) "
+                f"not fillable: {e}"
+            )
+            raise
+
+        # Case Type: option text is "Evictions" (PLURAL)
         try:
-            page.get_by_label("Sort By", exact=False).first.select_option(label="Case Number")
+            case_type_select = page.locator(
+                "select:has(option:text-is('Evictions'))"
+            ).first
+            case_type_select.select_option(label="Evictions")
+        except Exception as e:
+            self.last_error = (
+                f"search_evictions: could not select Evictions case type "
+                f"(expected option text 'Evictions' plural): {e}"
+            )
+            raise
+
+        # Sort By: id=selectSortBy, value=casenumber
+        try:
+            page.locator("#selectSortBy").select_option(value="casenumber")
         except Exception:
+            # Non-critical - default sort (Filed Date) is acceptable
             pass
-        page.get_by_role("button", name="Search").click()
-        page.wait_for_load_state("networkidle", timeout=30000)
-        page.wait_for_selector("table", timeout=15000)
+
+        try:
+            page.locator("#SearchSubmit").click()
+        except Exception as e:
+            self.last_error = (
+                f"search_evictions: Search button (#SearchSubmit) click failed: {e}"
+            )
+            raise
+
+        try:
+            page.wait_for_load_state("networkidle", timeout=30000)
+            page.wait_for_selector("table", timeout=15000)
+        except Exception as e:
+            self.last_error = f"search_evictions: results table did not load: {e}"
+            raise
+
         return page
 
     def parse_results(self, page) -> list:
