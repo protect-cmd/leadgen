@@ -431,7 +431,7 @@ class ButlerCountyAreaCourtScraper:
                     property_address=address or "Unknown",
                     landlord_name=landlord or "Unknown",
                     filing_date=filing_date or stub["court_date"] or today,
-                    court_date=stub["court_date"] or today,
+                    court_date=stub["court_date"],
                     state=STATE,
                     county=COUNTY,
                     notice_type=NOTICE_TYPE,
