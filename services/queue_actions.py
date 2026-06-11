@@ -203,9 +203,19 @@ async def enrich_vantage_case(sb, case_number: str) -> dict:
             "ng",
         )
 
+    # searchbug_status is None only when the cost gates declined to call
+    # SearchBug at all (common surname w/o narrowing address, daily cap hit,
+    # circuit breaker, unparseable name). Report that as "skipped" so an
+    # un-queried lead is never mistaken for one SearchBug confirmed has no phone.
+    if contact.searchbug_status:
+        status = contact.searchbug_status
+    elif contact.phone:
+        status = "phone_found"
+    else:
+        status = "skipped"
     return {
         "case_number": case_number,
-        "status": contact.searchbug_status or ("phone_found" if contact.phone else "no_phone"),
+        "status": status,
         "phone_found": bool(contact.phone),
         "dnc_status": dnc_status,
     }

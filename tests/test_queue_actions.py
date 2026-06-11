@@ -31,6 +31,13 @@ class Query:
     def limit(self, _value):
         return self
 
+    @property
+    def not_(self):
+        return self
+
+    def is_(self, *_args, **_kwargs):
+        return self
+
     def execute(self):
         case_number = self.filters.get("case_number")
         if self.payload is not None:
@@ -160,6 +167,49 @@ async def test_rent_cases_track_reports_missing_rentometer_key(monkeypatch):
     assert payload["summary"] == {"rent_key_missing": 1}
     assert payload["results"][0]["status"] == "rent_key_missing"
     assert sb.updates == []
+
+
+@pytest.mark.asyncio
+async def test_enrich_vantage_reports_skipped_when_searchbug_not_called(monkeypatch):
+    """A lead the cost gates declined to query must read 'skipped', not 'no_phone'."""
+    from models.contact import EnrichedContact
+    from services.queue_actions import enrich_cases_track
+
+    sb = FakeSupabase({
+        "filings": {
+            "CN1": {
+                "case_number": "CN1",
+                "tenant_name": "Alex Smith",
+                "landlord_name": "Owner",
+                "property_address": "100 Main St, Houston, TX 77002",
+                "filing_date": "2026-06-09",
+                "court_date": "2026-06-30",
+                "state": "TX",
+                "county": "Harris",
+                "notice_type": "Eviction",
+                "source_url": "",
+                "estimated_rent": None,
+                "property_type": "residential",
+                "language_hint": "en",
+            }
+        }
+    })
+
+    async def fake_enrich_tenant(filing, **kwargs):
+        # searchbug_status None == cost gates skipped the call entirely.
+        return EnrichedContact(filing=filing, track="ng", phone=None, searchbug_status=None)
+
+    async def fake_update_enrichment(_contact):
+        return None
+
+    monkeypatch.setattr("services.batchdata_service.enrich_tenant", fake_enrich_tenant)
+    monkeypatch.setattr("services.dedup_service.update_enrichment", fake_update_enrichment)
+
+    payload = await enrich_cases_track(sb, ["CN1"], track="vantage", cap=25)
+
+    assert payload["summary"] == {"skipped": 1}
+    assert payload["results"][0]["status"] == "skipped"
+    assert payload["results"][0]["phone_found"] is False
 
 
 @pytest.mark.asyncio
