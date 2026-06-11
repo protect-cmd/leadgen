@@ -30,7 +30,7 @@ def ists_person_keys(sb) -> set[str]:
     off = 0
     while True:
         b = (sb.table("ists_judgments").select("defendant_name,property_address")
-             .range(off, off + 999).execute().data or [])
+             .order("case_number").range(off, off + 999).execute().data or [])
         for r in b:
             k = _person_key(r.get("defendant_name"), extract_property_zip(r.get("property_address") or ""))
             if k:
@@ -40,7 +40,10 @@ def ists_person_keys(sb) -> set[str]:
         off += 1000
     return keys
 
-_SELECT = ("case_number,tenant_name,property_address,state,county,"
+# property_zip is required by _suppress_ists (cross-track dedup keys on it). Without
+# it every Vantage person-key carries an empty ZIP and never matches an ISTS judgment,
+# so the "ISTS wins" suppression silently no-ops on the To-Enrich queue.
+_SELECT = ("case_number,tenant_name,property_address,property_zip,state,county,"
            "filing_date,court_date,priority_rank,priority_metro,estimated_rent")
 _REVIEW_SEARCHBUG_STATUSES = {"name_mismatch", "ambiguous"}
 
@@ -68,7 +71,8 @@ def build_to_enrich(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
     today = today or date.today()
     rows, off = [], 0
     while True:
-        b = sb.table("good_leads_now").select(_SELECT).range(off, off + 999).execute().data or []
+        b = (sb.table("good_leads_now").select(_SELECT)
+             .order("case_number").range(off, off + 999).execute().data or [])
         rows += b
         if len(b) < 1000:
             break
@@ -104,7 +108,7 @@ def build_ists_to_enrich(sb, dnc_dir: str, today: date | None = None) -> list[di
              .select("case_number,defendant_name,property_address,state,county,"
                      "judgment_date,prior_phone,estimated_rent")
              .is_("phone", "null").gte("judgment_date", fresh)
-             .range(off, off + 999).execute().data or [])
+             .order("case_number").range(off, off + 999).execute().data or [])
         rows += b
         if len(b) < 1000:
             break
@@ -139,7 +143,7 @@ def build_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
     while True:
         b = (sb.table("filings").select(cols)
              .eq("is_enrichable", True).gte("filing_date", fresh)
-             .range(off, off + 999).execute().data or [])
+             .order("case_number").range(off, off + 999).execute().data or [])
         base += b
         if len(b) < 1000:
             break
@@ -196,11 +200,11 @@ def build_ists_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict
              .not_.is_("phone", "null").is_("bland_call_id", "null")
              .gte("judgment_date", fresh))
         try:
-            b = q.eq("dnc_status", "callable").range(off, off + 999).execute().data or []
+            b = q.eq("dnc_status", "callable").order("case_number").range(off, off + 999).execute().data or []
         except Exception:
             b = (sb.table("ists_judgments").select(sel).not_.is_("phone", "null")
                  .is_("bland_call_id", "null").gte("judgment_date", fresh)
-                 .range(off, off + 999).execute().data or [])
+                 .order("case_number").range(off, off + 999).execute().data or [])
         rows += b
         if len(b) < 1000:
             break
