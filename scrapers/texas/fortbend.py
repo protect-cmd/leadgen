@@ -162,20 +162,60 @@ class FortBendTXJPScraper:
         return page
 
     def parse_results(self, page) -> list:
+        """
+        Parse Tyler legacy PublicAccess results grid into list of dicts.
+
+        Tyler results pages contain MULTIPLE layout tables with no
+        class/id to distinguish them. Document-order selection ('table')
+        grabs the first nav/header layout table - empty data, looks
+        like 0 results. Boss live-tested 2026-06-09: 7 tables on the
+        results page, real data grid is at index 5 with 63 rows / 60
+        case-detail links.
+
+        Strategy: select the table containing the MOST case-detail
+        links (CaseID or CaseDetail in href). This signal is portable
+        across Tyler installs since case-detail link patterns are
+        universal, and is robust to table reorderings or chrome
+        additions.
+        """
         rows_out = []
-        table = page.query_selector("table")
+
+        tables = page.query_selector_all("table")
+        if not tables:
+            return rows_out
+
+        # Find the table with the most case-detail links - that's the
+        # data grid. Layout tables have 0; data grid has dozens.
+        table = max(
+            tables,
+            key=lambda t: len(
+                t.query_selector_all("a[href*='CaseID'], a[href*='CaseDetail']")
+            ),
+            default=None,
+        )
         if not table:
             return rows_out
+
+        # If even the best table has 0 case-detail links, results
+        # are genuinely empty - bail rather than parse layout chrome
+        link_count = len(
+            table.query_selector_all("a[href*='CaseID'], a[href*='CaseDetail']")
+        )
+        if link_count == 0:
+            return rows_out
+
         header_cells = table.query_selector_all("thead th")
         if not header_cells:
             header_cells = table.query_selector_all("tr:first-child th")
         if not header_cells:
             header_cells = table.query_selector_all("tr:first-child td")
         headers = [h.inner_text().strip() for h in header_cells]
+
         body_rows = table.query_selector_all("tbody tr")
         if not body_rows:
             all_rows = table.query_selector_all("tr")
             body_rows = all_rows[1:] if len(all_rows) > 1 else []
+
         for row in body_rows:
             cells = row.query_selector_all("td")
             if not cells:
@@ -185,7 +225,7 @@ class FortBendTXJPScraper:
                 key = headers[i] if i < len(headers) else f"col_{i}"
                 row_data[key] = cell.inner_text().strip()
             link = row.query_selector(
-                "a[href*='CaseDetail'], a[href*='Case.aspx'], a[href*='Case ']"
+                "a[href*='CaseDetail'], a[href*='CaseID'], a[href*='Case.aspx']"
             )
             if link:
                 row_data["_case_detail_url"] = self._normalize_url(
