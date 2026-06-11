@@ -6,9 +6,17 @@ Type: Tyler legacy PublicAccess (same template as Denton/Montgomery).
 Coverage: All JP precincts pooled under single 'Fort Bend' location entry.
 Geo: Requires US IP (Railway US deployment) - .gov subdomain.
 Anti-bot: Cloudflare on main county site; tylerpaw subdomain accessible.
-Address recovery: Case detail page hides street; Original Petition PDF
-exposes full address per TX Justice Court Rule 510.3 (extracted via
-pdfplumber).
+
+Address recovery (two-stage):
+  Case detail page hides street; clicking 'Original Petition' navigates
+  to CPR.aspx event page which lists 1+ filed documents (petition,
+  lease, exhibits). Each document opens via ViewDocumentFragment.aspx
+  as PDF. We fetch ALL documents for the event and parse address from
+  combined text (petition AND lease both contain defendant address per
+  TX Justice Court Rule 510.3, giving us redundancy).
+
+Case number parsing: '26-JEV11-02324' format encodes year, JP court,
+case type (EV=eviction), precinct (1), court_num (1), sequence.
 """
 
 import io
@@ -44,6 +52,10 @@ PETITION_ADDRESS_RE = re.compile(
     rf"(\d{{5}}(?:-\d{{4}})?)",
     re.IGNORECASE,
 )
+
+# Fort Bend JP case number format: YY-J<CASE_TYPE><PRECINCT><COURT_NUM>-NNNNN
+# Example: '26-JEV11-02324' => year=26, type=EV, precinct=1, court=1, seq=02324
+CASE_NUMBER_RE = re.compile(r"^(\d{2})-J([A-Z]+)(\d)(\d)-(\d+)$")
 
 
 class FortBendTXJPScraper:
@@ -84,80 +96,44 @@ class FortBendTXJPScraper:
                 browser.close()
 
     def navigate_to_civil_search(self, page):
-        """
-        Navigate from portal landing page to the Civil records search form.
-
-        Verified DOM (2026-06-09 via user VPN inspection):
-        - Civil link: <a class="ssSearchHyperlink"
-            href="javascript:LaunchSearch('Search.aspx?ID=400', ...)">
-            Civil, Family Case Records</a>
-        (NOT "Civil, Family & Probate Case Records" - no Probate)
-        - Search button on the form: <input id="SearchSubmit" type="submit">
-        """
         try:
             page.goto(PORTAL_URL, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_load_state("networkidle", timeout=15000)
         except Exception as e:
             self.last_error = f"navigate_to_civil_search: portal load failed: {e}"
             raise
-
         try:
             page.locator(
                 "a.ssSearchHyperlink", has_text="Civil, Family Case Records"
             ).first.click()
         except Exception as e:
             self.last_error = (
-                f"navigate_to_civil_search: Civil link click failed - "
-                f"expected 'Civil, Family Case Records' class=ssSearchHyperlink: {e}"
+                f"navigate_to_civil_search: Civil link click failed: {e}"
             )
             raise
-
         try:
             page.wait_for_load_state("networkidle", timeout=15000)
             page.wait_for_selector("#SearchSubmit", timeout=10000)
         except Exception as e:
             self.last_error = (
-                f"navigate_to_civil_search: search form did not load (#SearchSubmit missing): {e}"
+                f"navigate_to_civil_search: search form did not load: {e}"
             )
             raise
-
         return page
 
     def search_evictions(self, page, date_from: str, date_to: str):
-        """
-        Fill Civil records search form for eviction filings in date range.
-
-        Verified DOM (2026-06-09):
-        - Date Filed radio: id="DateFiled" value="6" with onclick handler
-        SwitchCaseSearch(this.value, true) - reveals date inputs on click
-        - On or After input: id="DateFiledOnAfter"
-        - On or Before input: id="DateFiledOnBefore"
-        - Case Type "Evictions" option (PLURAL): value="296"
-        - Sort By: id="selectSortBy", option value="casenumber"
-        - Search button: id="SearchSubmit" (input type=submit)
-        """
         try:
             page.locator("#DateFiled").check()
         except Exception as e:
-            self.last_error = (
-                f"search_evictions: Date Filed radio (#DateFiled) not clickable: {e}"
-            )
+            self.last_error = f"search_evictions: Date Filed radio not clickable: {e}"
             raise
-
-        # SwitchCaseSearch handler renders date inputs conditionally
         page.wait_for_timeout(800)
-
         try:
             page.locator("#DateFiledOnAfter").fill(date_from)
             page.locator("#DateFiledOnBefore").fill(date_to)
         except Exception as e:
-            self.last_error = (
-                f"search_evictions: date inputs (#DateFiledOnAfter / #DateFiledOnBefore) "
-                f"not fillable: {e}"
-            )
+            self.last_error = f"search_evictions: date inputs not fillable: {e}"
             raise
-
-        # Case Type: option text is "Evictions" (PLURAL)
         try:
             case_type_select = page.locator(
                 "select:has(option:text-is('Evictions'))"
@@ -165,33 +141,24 @@ class FortBendTXJPScraper:
             case_type_select.select_option(label="Evictions")
         except Exception as e:
             self.last_error = (
-                f"search_evictions: could not select Evictions case type "
-                f"(expected option text 'Evictions' plural): {e}"
+                f"search_evictions: could not select Evictions case type: {e}"
             )
             raise
-
-        # Sort By: id=selectSortBy, value=casenumber
         try:
             page.locator("#selectSortBy").select_option(value="casenumber")
         except Exception:
-            # Non-critical - default sort (Filed Date) is acceptable
             pass
-
         try:
             page.locator("#SearchSubmit").click()
         except Exception as e:
-            self.last_error = (
-                f"search_evictions: Search button (#SearchSubmit) click failed: {e}"
-            )
+            self.last_error = f"search_evictions: Search button click failed: {e}"
             raise
-
         try:
             page.wait_for_load_state("networkidle", timeout=30000)
             page.wait_for_selector("table", timeout=15000)
         except Exception as e:
             self.last_error = f"search_evictions: results table did not load: {e}"
             raise
-
         return page
 
     def parse_results(self, page) -> list:
@@ -221,14 +188,18 @@ class FortBendTXJPScraper:
                 "a[href*='CaseDetail'], a[href*='Case.aspx'], a[href*='Case ']"
             )
             if link:
-                row_data["_case_detail_url"] = self._normalize_url(link.get_attribute("href"))
+                row_data["_case_detail_url"] = self._normalize_url(
+                    link.get_attribute("href")
+                )
             rows_out.append(row_data)
         return rows_out
 
     def filter_evictions(self, rows: list) -> list:
         filtered = []
         for row in rows:
-            case_type = self._extract_field(row, ("type", "case type", "cause of action"))
+            case_type = self._extract_field(
+                row, ("type", "case type", "cause of action")
+            )
             if any(kw in case_type.lower() for kw in EVICTION_KEYWORDS):
                 filtered.append(row)
         return filtered
@@ -251,6 +222,41 @@ class FortBendTXJPScraper:
         if href.startswith("/"):
             return PORTAL_BASE + href
         return f"{PORTAL_BASE}/PublicAccess/" + href
+
+    @staticmethod
+    def parse_case_number(case_number: str) -> dict:
+        """
+        Parse Fort Bend JP case number to extract metadata.
+
+        Format: YY-J<CASE_TYPE_CODE><PRECINCT><COURT_NUM>-NNNNN
+        Example: '26-JEV11-02324'
+          - year: '26'
+          - case_type_code: 'EV' (Eviction)
+          - precinct: '1'
+          - court_num: '1'
+          - sequence: '02324'
+
+        Returns dict with year/case_type_code/precinct/court_num/sequence
+        keys (empty strings if pattern doesn't match).
+        """
+        result = {
+            "year": "",
+            "case_type_code": "",
+            "precinct": "",
+            "court_num": "",
+            "sequence": "",
+        }
+        if not case_number:
+            return result
+        m = CASE_NUMBER_RE.match(case_number.strip())
+        if not m:
+            return result
+        result["year"] = m.group(1)
+        result["case_type_code"] = m.group(2)
+        result["precinct"] = m.group(3)
+        result["court_num"] = m.group(4)
+        result["sequence"] = m.group(5)
+        return result
 
     @staticmethod
     def parse_partial_address(raw: str) -> dict:
@@ -280,8 +286,21 @@ class FortBendTXJPScraper:
         return ""
 
     def parse_case_detail(self, page, case_detail_url: str) -> dict:
-        page.goto(case_detail_url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_load_state("networkidle", timeout=15000)
+        """
+        Visit case detail (CaseDetail.aspx) page, extract structured data
+        plus the URL of the Original Petition EVENT page (CPR.aspx).
+
+        IMPORTANT: petition_event_url is the CPR.aspx page, NOT the PDF
+        itself. The PDF(s) live one level deeper at ViewDocumentFragment.aspx
+        and must be discovered via fetch_event_document_urls().
+        """
+        try:
+            page.goto(case_detail_url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception as e:
+            self.last_error = f"parse_case_detail: case page load failed: {e}"
+            return {"source_url": case_detail_url, "petition_event_url": ""}
+
         detail = {
             "source_url": page.url,
             "case_number": "",
@@ -293,30 +312,44 @@ class FortBendTXJPScraper:
             "defendant_city": "",
             "defendant_state": "",
             "defendant_zip": "",
-            "petition_url": "",
+            "petition_event_url": "",
         }
+
         try:
             body_text = page.inner_text("body")
         except Exception as e:
-            self.last_error = f"Failed to read body text: {e}"
+            self.last_error = f"parse_case_detail: body text read failed: {e}"
             return detail
+
         detail["case_number"] = self._grab_after_label(
             body_text, [r"Case (?:Number|No\.?|#)\s*:?\s*([^\n]+)"]
         )
-        detail["court"] = self._grab_after_label(body_text, [r"\bCourt\s*:?\s*([^\n]+)"])
+        detail["court"] = self._grab_after_label(
+            body_text, [r"\bCourt\s*:?\s*([^\n]+)"]
+        )
         detail["filed_date"] = self._grab_after_label(
-            body_text, [r"Date Filed\s*:?\s*([^\n]+)", r"File Date\s*:?\s*([^\n]+)"]
+            body_text,
+            [r"Date Filed\s*:?\s*([^\n]+)", r"File Date\s*:?\s*([^\n]+)"],
         )
         detail["cause_of_action"] = self._grab_after_label(
-            body_text, [r"Cause of Action\s*:?\s*([^\n]+)", r"Case Type\s*:?\s*([^\n]+)"]
+            body_text,
+            [r"Cause of Action\s*:?\s*([^\n]+)", r"Case Type\s*:?\s*([^\n]+)"],
         )
+
         plaintiff_match = re.search(
-            r"Plaintiff\s*:?\s*([^\n]+(?:\n[^\n]+){0,2})", body_text, re.IGNORECASE
+            r"Plaintiff\s*:?\s*([^\n]+(?:\n[^\n]+){0,2})",
+            body_text,
+            re.IGNORECASE,
         )
         if plaintiff_match:
-            detail["plaintiff_name"] = plaintiff_match.group(1).strip().split("\n")[0]
+            detail["plaintiff_name"] = (
+                plaintiff_match.group(1).strip().split("\n")[0]
+            )
+
         defendant_match = re.search(
-            r"Defendant\s*:?\s*([^\n]+(?:\n[^\n]+){0,4})", body_text, re.IGNORECASE
+            r"Defendant\s*:?\s*([^\n]+(?:\n[^\n]+){0,4})",
+            body_text,
+            re.IGNORECASE,
         )
         if defendant_match:
             block = defendant_match.group(1).strip()
@@ -329,25 +362,68 @@ class FortBendTXJPScraper:
                     detail["defendant_city"] = parsed["city"]
                     detail["defendant_state"] = parsed["state"]
                     detail["defendant_zip"] = parsed["zip"]
+
+        # Original Petition link points to CPR.aspx event page (NOT a PDF)
+        # Example: <a href="CPR.aspx?CaseID=2699909&EventID=36268804&CaseCategoryKeys=CV">
         petition_link = page.query_selector(
-            "a:has-text('Original Petition'), a[href*='ViewDocumentFragment']"
+            "a[href*='CPR.aspx']:has-text('Original Petition'), "
+            "a:has-text('Original Petition')"
         )
         if petition_link:
-            href = petition_link.get_attribute("href")
-            detail["petition_url"] = self._normalize_url(href)
+            detail["petition_event_url"] = self._normalize_url(
+                petition_link.get_attribute("href")
+            )
+
         return detail
 
-    def fetch_petition_pdf(self, page, petition_url: str) -> bytes:
-        if not petition_url:
+    def fetch_event_document_urls(self, page, event_url: str) -> list:
+        """
+        Visit CPR.aspx event page, return list of absolute
+        ViewDocumentFragment.aspx URLs (one per attached document).
+
+        Fort Bend Original Petition events typically include multiple
+        attached documents (petition, lease, exhibits). All contain useful
+        data; we fetch every one and extract text from the combined
+        contents.
+
+        Returns empty list if event_url is missing or no documents found.
+        """
+        if not event_url:
+            return []
+        try:
+            page.goto(event_url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception as e:
+            self.last_error = f"fetch_event_document_urls: event page load failed: {e}"
+            return []
+        doc_links = page.query_selector_all("a[href*='ViewDocumentFragment.aspx']")
+        urls = []
+        for link in doc_links:
+            href = link.get_attribute("href")
+            if href:
+                urls.append(self._normalize_url(href))
+        return urls
+
+    def fetch_petition_pdf(self, page, document_url: str) -> bytes:
+        """
+        Fetch a single document PDF via shared Playwright session cookies.
+
+        SecurityToken in the URL is likely cookie-bound so we use
+        page.context.request which carries the session cookies, not a
+        cold httpx.get().
+        """
+        if not document_url:
             return b""
         try:
-            response = page.context.request.get(petition_url, timeout=30000)
+            response = page.context.request.get(document_url, timeout=30000)
             if not response.ok:
-                self.last_error = f"Petition fetch HTTP {response.status} for {petition_url}"
+                self.last_error = (
+                    f"fetch_petition_pdf: HTTP {response.status} for {document_url}"
+                )
                 return b""
             return response.body()
         except Exception as e:
-            self.last_error = f"Petition fetch error: {e}"
+            self.last_error = f"fetch_petition_pdf: error: {e}"
             return b""
 
     @staticmethod
@@ -356,7 +432,7 @@ class FortBendTXJPScraper:
             return ""
         try:
             with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-                parts = [page.extract_text() or "" for page in pdf.pages]
+                parts = [pg.extract_text() or "" for pg in pdf.pages]
             return "\n".join(parts)
         except Exception:
             return ""
@@ -382,32 +458,51 @@ class FortBendTXJPScraper:
         result["zip"] = best.group(4)
         return result
 
+    def extract_address_from_event(self, page, event_url: str) -> dict:
+        """
+        Two-stage extraction: visit CPR.aspx event page, list all
+        documents (petition + lease + any exhibits), fetch each as PDF,
+        extract text from all of them combined, then parse defendant
+        address from combined text.
+
+        Combined-text approach intentionally redundant: both petition
+        and lease per TX Rule 510.3 contain defendant's address, so if
+        one document fails to extract (scanned image, broken PDF), the
+        other usually still works.
+        """
+        doc_urls = self.fetch_event_document_urls(page, event_url)
+        if not doc_urls:
+            return {"street": "", "city": "", "state": "", "zip": "", "raw": ""}
+        combined_text_parts = []
+        for url in doc_urls:
+            pdf_bytes = self.fetch_petition_pdf(page, url)
+            if pdf_bytes:
+                text = self.extract_petition_text(pdf_bytes)
+                if text:
+                    combined_text_parts.append(text)
+        if not combined_text_parts:
+            return {"street": "", "city": "", "state": "", "zip": "", "raw": ""}
+        combined = "\n".join(combined_text_parts)
+        return self.parse_petition_address(combined)
+
     def normalize_filing(self, case_detail: dict, petition_address: dict = None) -> dict:
-        """
-        Convert raw case detail + petition address into the standard Filing schema.
-
-        Fort Bend specifics: judicial_officer / precinct / hearing_date /
-        judgment_amount are typically empty (single pooled location, no
-        per-judge dropdown, eviction filing doesn't capture hearing or
-        disposition data in case detail).
-
-        Street address comes from petition_address (PDF parse) when available;
-        falls back to empty street with city/state/zip from case_detail's
-        partial-address layer.
-        """
         petition_address = petition_address or {}
         street = petition_address.get("street", "")
         city = petition_address.get("city") or case_detail.get("defendant_city", "")
         state = petition_address.get("state") or case_detail.get("defendant_state", "")
         zip_code = petition_address.get("zip") or case_detail.get("defendant_zip", "")
+
+        case_number = (case_detail.get("case_number") or "").strip()
+        case_meta = self.parse_case_number(case_number)
+
         return {
             "state": STATE,
             "county": COUNTY,
             "notice_type": NOTICE_TYPE,
-            "case_number": (case_detail.get("case_number") or "").strip(),
+            "case_number": case_number,
             "court": (case_detail.get("court") or "").strip(),
             "judicial_officer": "",
-            "precinct": "",
+            "precinct": case_meta.get("precinct", ""),
             "filed_date": (case_detail.get("filed_date") or "").strip(),
             "hearing_date": "",
             "cause_of_action": (case_detail.get("cause_of_action") or "").strip(),
@@ -423,7 +518,6 @@ class FortBendTXJPScraper:
 
     @staticmethod
     def dedupe_by_case_number(filings: list) -> list:
-        """Remove duplicate filings by case_number, keep first occurrence."""
         seen = set()
         unique = []
         for f in filings:
@@ -437,27 +531,6 @@ class FortBendTXJPScraper:
     def scrape_all(
         self, date_from: str, date_to: str, fetch_petitions: bool = True
     ) -> dict:
-        """
-        Full scrape orchestrator for a date range.
-
-        Args:
-            date_from, date_to: MM/DD/YYYY (inclusive) date range bounds
-            fetch_petitions: if True, fetch Original Petition PDF for each case
-                and extract street address. Set False for fast preview (no
-                addresses) - useful for selector verification on Railway.
-
-        Returns:
-            {
-                "ok": bool,
-                "filings": [Filing dicts],
-                "filings_count": int,
-                "address_hit_count": int,
-                "address_hit_rate": float (percentage 0-100),
-                "raw_row_count": int,
-                "eviction_row_count": int,
-                "errors": [str],
-            }
-        """
         filings = []
         errors = []
         raw_count = 0
@@ -468,7 +541,6 @@ class FortBendTXJPScraper:
             try:
                 self.navigate_to_civil_search(page)
                 self.search_evictions(page, date_from, date_to)
-
                 rows = self.parse_results(page)
                 raw_count = len(rows)
                 eviction_rows = self.filter_evictions(rows)
@@ -481,7 +553,6 @@ class FortBendTXJPScraper:
                             f"No case URL for row: {row.get('Case Number', '?')}"
                         )
                         continue
-
                     try:
                         case_detail = self.parse_case_detail(page, case_url)
                     except Exception as e:
@@ -489,18 +560,14 @@ class FortBendTXJPScraper:
                         continue
 
                     petition_address = None
-                    if fetch_petitions and case_detail.get("petition_url"):
+                    if fetch_petitions and case_detail.get("petition_event_url"):
                         try:
-                            pdf_bytes = self.fetch_petition_pdf(
-                                page, case_detail["petition_url"]
+                            petition_address = self.extract_address_from_event(
+                                page, case_detail["petition_event_url"]
                             )
-                            if pdf_bytes:
-                                text = self.extract_petition_text(pdf_bytes)
-                                if text:
-                                    petition_address = self.parse_petition_address(text)
                         except Exception as e:
                             errors.append(
-                                "Petition extraction failed for "
+                                "extract_address_from_event failed for "
                                 f"{case_detail.get('case_number', '?')}: {e}"
                             )
 
@@ -538,7 +605,6 @@ class FortBendTXJPScraper:
         }
 
     def session_probe(self, date_from: str = None, date_to: str = None):
-        """End-to-end navigation probe for Railway preview testing."""
         with sync_playwright() as p:
             browser, context, page = self._launch(p)
             try:
@@ -558,17 +624,17 @@ class FortBendTXJPScraper:
                     if eviction_rows:
                         first = eviction_rows[0]
                         if first.get("_case_detail_url"):
-                            sample = self.parse_case_detail(page, first["_case_detail_url"])
-                            result["sample_detail"] = {k: v for k, v in sample.items() if v}
-                            if sample.get("petition_url"):
-                                pdf_bytes = self.fetch_petition_pdf(page, sample["petition_url"])
-                                result["petition_pdf_bytes"] = len(pdf_bytes)
-                                if pdf_bytes:
-                                    text = self.extract_petition_text(pdf_bytes)
-                                    result["petition_text_chars"] = len(text)
-                                    if text:
-                                        addr = self.parse_petition_address(text)
-                                        result["petition_address"] = addr
+                            sample = self.parse_case_detail(
+                                page, first["_case_detail_url"]
+                            )
+                            result["sample_detail"] = {
+                                k: v for k, v in sample.items() if v
+                            }
+                            if sample.get("petition_event_url"):
+                                addr = self.extract_address_from_event(
+                                    page, sample["petition_event_url"]
+                                )
+                                result["petition_address"] = addr
                 return result
             except Exception as e:
                 return {"ok": False, "error": str(e), "url": page.url}
@@ -581,7 +647,7 @@ if __name__ == "__main__":
     import json
     scraper = FortBendTXJPScraper()
     if len(sys.argv) > 1 and sys.argv[1] == "probe":
-        print("Running session probe...")
+        print("Running session probe against tylerpaw.fortbendcountytx.gov...")
         print(scraper.session_probe())
     elif len(sys.argv) > 1 and sys.argv[1] == "search":
         from datetime import datetime, timedelta
