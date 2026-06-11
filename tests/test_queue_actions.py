@@ -90,6 +90,8 @@ async def test_rent_cases_track_updates_vantage_filings(monkeypatch):
         assert filing.case_number == "CN1"
         return 1850.0
 
+    monkeypatch.setattr("services.rent_estimate_service.is_enabled", lambda: True)
+    monkeypatch.setenv("RENTOMETER_API_KEY", "test-key")
     monkeypatch.setattr("services.rent_estimate_service.estimate_rent", fake_estimate)
 
     payload = await rent_cases_track(sb, ["CN1"], track="vantage", cap=50)
@@ -97,6 +99,67 @@ async def test_rent_cases_track_updates_vantage_filings(monkeypatch):
     assert payload["summary"] == {"rent_found": 1}
     assert payload["results"][0]["rent"] == 1850.0
     assert sb.updates == [("filings", "CN1", {"estimated_rent": 1850.0})]
+
+
+@pytest.mark.asyncio
+async def test_rent_cases_track_reports_disabled_rent_precheck(monkeypatch):
+    sb = FakeSupabase({
+        "filings": {
+            "CN1": {
+                "case_number": "CN1",
+                "tenant_name": "Alex Tenant",
+                "landlord_name": "Owner",
+                "property_address": "100 Main St, Houston, TX 77002",
+                "filing_date": "2026-06-09",
+                "court_date": "2026-06-30",
+                "state": "TX",
+                "county": "Harris",
+                "notice_type": "Eviction",
+                "source_url": "",
+                "estimated_rent": None,
+                "property_type": "residential",
+            }
+        }
+    })
+
+    monkeypatch.setattr("services.rent_estimate_service.is_enabled", lambda: False)
+
+    payload = await rent_cases_track(sb, ["CN1"], track="vantage", cap=50)
+
+    assert payload["summary"] == {"rent_disabled": 1}
+    assert payload["results"][0]["status"] == "rent_disabled"
+    assert sb.updates == []
+
+
+@pytest.mark.asyncio
+async def test_rent_cases_track_reports_missing_rentometer_key(monkeypatch):
+    sb = FakeSupabase({
+        "filings": {
+            "CN1": {
+                "case_number": "CN1",
+                "tenant_name": "Alex Tenant",
+                "landlord_name": "Owner",
+                "property_address": "100 Main St, Houston, TX 77002",
+                "filing_date": "2026-06-09",
+                "court_date": "2026-06-30",
+                "state": "TX",
+                "county": "Harris",
+                "notice_type": "Eviction",
+                "source_url": "",
+                "estimated_rent": None,
+                "property_type": "residential",
+            }
+        }
+    })
+
+    monkeypatch.setattr("services.rent_estimate_service.is_enabled", lambda: True)
+    monkeypatch.delenv("RENTOMETER_API_KEY", raising=False)
+
+    payload = await rent_cases_track(sb, ["CN1"], track="vantage", cap=50)
+
+    assert payload["summary"] == {"rent_key_missing": 1}
+    assert payload["results"][0]["status"] == "rent_key_missing"
+    assert sb.updates == []
 
 
 @pytest.mark.asyncio
@@ -119,6 +182,8 @@ async def test_rent_cases_track_updates_ists_judgments(monkeypatch):
         assert filing.tenant_name == "Jamie Tenant"
         return 1650.0
 
+    monkeypatch.setattr("services.rent_estimate_service.is_enabled", lambda: True)
+    monkeypatch.setenv("RENTOMETER_API_KEY", "test-key")
     monkeypatch.setattr("services.rent_estimate_service.estimate_rent", fake_estimate)
 
     payload = await rent_cases_track(sb, ["ISTS1"], track="ists", cap=50)
