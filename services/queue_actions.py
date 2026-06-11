@@ -7,6 +7,7 @@ dashboard action.
 from __future__ import annotations
 
 import asyncio
+import os
 from collections import Counter
 from datetime import date, datetime, timezone
 
@@ -83,6 +84,19 @@ def _fetch_one(sb, table: str, case_number: str, select: str) -> dict | None:
     return rows[0] if rows else None
 
 
+def _rent_preflight_status() -> str | None:
+    from services import rent_estimate_service
+
+    if not rent_estimate_service.is_enabled():
+        return "rent_disabled"
+    provider = os.getenv("RENT_PRECHECK_PROVIDER", "rentometer").strip().lower()
+    if provider != "rentometer":
+        return "rent_provider_unsupported"
+    if not os.getenv("RENTOMETER_API_KEY", "").strip():
+        return "rent_key_missing"
+    return None
+
+
 def _update_dnc_status(sb, table: str, case_number: str, phone: str, track: str | None = None) -> str:
     from services import dnc_service
 
@@ -116,6 +130,9 @@ async def rent_case(sb, case_number: str, *, track: str) -> dict:
         return {"case_number": case_number, "status": "already_has_rent", "rent": row.get("estimated_rent")}
     if not row.get("property_address"):
         return {"case_number": case_number, "status": "missing_address"}
+    unavailable = _rent_preflight_status()
+    if unavailable:
+        return {"case_number": case_number, "status": unavailable}
 
     filing = _filing_from_ists(row) if track == "ists" else _filing_from_vantage(row)
     rent = await rent_estimate_service.estimate_rent(filing)
