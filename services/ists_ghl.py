@@ -69,7 +69,9 @@ def _split_name(full_name: str) -> tuple[str, str]:
                   flags=re.IGNORECASE).strip()
     if "," in name:
         last, _, first = name.partition(",")
-        return first.strip().split()[0].title(), last.strip().title()
+        first_parts = first.strip().split()
+        first_name = first_parts[0].title() if first_parts else ""
+        return first_name, last.strip().title()
     parts = name.split()
     return (parts[0].title(), " ".join(parts[1:]).title()) if len(parts) >= 2 else (name.title(), "")
 
