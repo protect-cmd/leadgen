@@ -31,6 +31,8 @@ _NG_FIELD_IDS: dict[str, str] = {
     "landlord_name": "Cm4j8iTfZSQFO9J1mIIO",
     "property_type": "I5fYKFVRDTxu6aEV6HGK",
     "monthly_rent_amount": "hZrcXEi77N01DvVinZI8",
+    "language_preference": "591w3eFRhlI01UxhTDPC",
+    "notice_type": "rTxfkG6HdOjOyHwj7ArW",
 }
 
 
@@ -227,6 +229,9 @@ async def create_contact(
         _add("property_type", "Commercial")
     if contact.estimated_rent:
         _add("monthly_rent_amount", contact.estimated_rent)
+    _add("notice_type", filing.notice_type)
+    _add("language_preference",
+         "Spanish" if contact.language_hint == "spanish_likely" else "English")
 
     upsert_payload: dict = {
         "locationId": location_id,

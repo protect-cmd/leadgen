@@ -73,6 +73,7 @@ async def fire_case(sb, case_number: str) -> dict:
         property_type_hint=f.get("property_type"))
     ec = EnrichedContact(filing=filing, track="ng", phone=lc["phone"],
                          language_hint=lc.get("language_hint"),
+                         estimated_rent=f.get("estimated_rent"),
                          property_type=f.get("property_type") or "residential",
                          searchbug_status="phone_found")
 

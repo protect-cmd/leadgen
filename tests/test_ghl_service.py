@@ -208,6 +208,9 @@ async def test_create_contact_pushes_custom_fields_by_id_for_ng_track(monkeypatc
         "court_date": "ID_COURT_DATE",
         "tenant_name": "ID_TENANT_NAME",
         "landlord_name": "ID_LANDLORD_NAME",
+        "monthly_rent_amount": "ID_RENT",
+        "notice_type": "ID_NOTICE",
+        "language_preference": "ID_LANG",
     })
     monkeypatch.setenv("GHL_API_KEY", "test-key")
     monkeypatch.setenv("GHL_NG_LOCATION_ID", "loc-ng")
@@ -236,6 +239,9 @@ async def test_create_contact_pushes_custom_fields_by_id_for_ng_track(monkeypatc
     assert by_id["ID_COURT_DATE"] == "2026-05-10"
     assert by_id["ID_TENANT_NAME"] == "Jane Tenant"
     assert by_id["ID_LANDLORD_NAME"] == "Grant Owner"
+    assert by_id["ID_RENT"] == 1800              # estimated_rent now reaches GHL
+    assert by_id["ID_NOTICE"] == "Eviction"
+    assert by_id["ID_LANG"] == "English"         # language_hint None -> English
 
 
 @pytest.mark.asyncio

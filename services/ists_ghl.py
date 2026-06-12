@@ -33,9 +33,16 @@ _STAGE_ID = os.environ.get("GHL_ISTS_NEW_FILING_STAGE_ID", "")
 _FIELD_IDS = {
     "language_preference": "0iHEXmTTmFr8Y3iY7DYy",
     "situation":           "S1MyRKxpOG5zm9wfJORz",
-    "court_date":          "rJsXFkeaGWNW6xnvgcvO",
     "state":               "vYUeApmue3hYduk5il2p",
     "county":              "wUqEZ4qF87iDUaG3HU3g",
+    "monthly_rent":        "IWVfhGaNhNQH6SgSKmyg",
+    "case_number":         "7e2zEqvMMlBkWQ236MUv",
+    "landlord_name":       "ABdYeR7bSROZSeiRaKbV",
+    "judgment_against":    "e0LSWBMhwySf5c5cMO7W",
+    "judgment_date":       "G40s6yqdG6KicdQOu0Hg",
+    "judgment_day":        "dvNmvdMUY4SCZ8f7rddr",
+    "judgment_month":      "9yM9kclUu0GTdlIAd61S",
+    "judgment_year":       "hH9RMTL5xAWI9UnV87Qd",
 }
 
 _client: Client = create_client(
@@ -98,15 +105,29 @@ async def push_contact(rec: dict, dry_run: bool = False) -> str | None:
     lang = rec.get("language_hint") or "english_likely"
     lang_value = "Spanish" if lang == "spanish_likely" else "English"
 
-    custom_fields = [
-        {"id": _FIELD_IDS["language_preference"], "field_value": lang_value},
-        {"id": _FIELD_IDS["situation"], "field_value": "Judgment entered — Window 1"},
-        {"id": _FIELD_IDS["state"], "field_value": rec.get("state") or "TX"},
-        {"id": _FIELD_IDS["county"], "field_value": rec.get("county") or "Harris"},
-    ]
-    if rec.get("judgment_date"):
-        custom_fields.append({"id": _FIELD_IDS["court_date"],
-                               "field_value": str(rec["judgment_date"])})
+    custom_fields: list[dict] = []
+
+    def _add(slug: str, value) -> None:
+        if value not in (None, ""):
+            custom_fields.append({"id": _FIELD_IDS[slug], "field_value": value})
+
+    _add("language_preference", lang_value)
+    _add("situation", "Judgment entered — Window 1")
+    _add("state", rec.get("state") or "TX")
+    _add("county", rec.get("county") or "Harris")
+    _add("case_number", rec.get("case_number"))
+    _add("landlord_name", rec.get("plaintiff_name"))
+    _add("judgment_against", rec.get("judgment_against"))
+    if rec.get("estimated_rent"):
+        _add("monthly_rent", str(int(round(float(rec["estimated_rent"])))))
+    jd = rec.get("judgment_date")
+    if jd:
+        _add("judgment_date", str(jd))           # dedicated Judgment Date field (was mis-routed to Court Date)
+        parts = str(jd).split("-")
+        if len(parts) == 3:
+            _add("judgment_year", parts[0])
+            _add("judgment_month", parts[1])
+            _add("judgment_day", parts[2])
 
     payload = {
         "locationId": _LOCATION_ID,
@@ -180,7 +201,7 @@ async def push_batch(limit: int = 50, dry_run: bool = False) -> dict:
         return (
             _client.table(_TABLE)
             .select("case_number,defendant_name,property_address,phone,language_hint,"
-                    "judgment_date,judgment_against,plaintiff_name,state,county")
+                    "judgment_date,judgment_against,plaintiff_name,estimated_rent,state,county")
             .not_.is_("phone", "null")
             .is_("ghl_contact_id", "null")
             .limit(limit)
