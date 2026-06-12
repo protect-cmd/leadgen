@@ -18,6 +18,18 @@ from services.dedup_service import (
 )
 
 
+def _empty_chain():
+    c = MagicMock()
+    c.select.return_value.or_.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
+    return c
+
+
+def _route(contact, filing, ists=None):
+    chains = {"lead_contacts": contact, "filings": filing,
+              "ists_judgments": ists if ists is not None else _empty_chain()}
+    return lambda name: chains[name]
+
+
 def test_sanitize_search_query_strips_filter_breakers():
     assert _sanitize_search_query("ma,ria%g") == "mariag"
     assert _sanitize_search_query("  trim  ") == "trim"
@@ -48,7 +60,7 @@ async def test_search_leads_strips_unsafe_chars_before_query():
     contact_chain.select.return_value.or_.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
     filing_chain = MagicMock()
     filing_chain.select.return_value.or_.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
-    client.table.side_effect = lambda name: contact_chain if name == "lead_contacts" else filing_chain
+    client.table.side_effect = _route(contact_chain, filing_chain)
     with patch("services.dedup_service._client", client):
         await search_leads("ma,ria%")
     # The .or_() call gets a filter string; ensure no raw comma/% from input
@@ -83,7 +95,7 @@ async def test_search_leads_merges_and_dedupes_by_case_number():
     contact_chain.select.return_value.or_.return_value.limit.return_value.execute.return_value = MagicMock(data=contact_rows)
     filing_chain = MagicMock()
     filing_chain.select.return_value.or_.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=filing_rows)
-    client.table.side_effect = lambda name: contact_chain if name == "lead_contacts" else filing_chain
+    client.table.side_effect = _route(contact_chain, filing_chain)
     with patch("services.dedup_service._client", client):
         result = await search_leads("maria")
     case_numbers = [r["case_number"] for r in result]
@@ -110,7 +122,7 @@ async def test_search_leads_sorts_by_filing_date_desc():
     contact_chain.select.return_value.or_.return_value.limit.return_value.execute.return_value = MagicMock(data=contact_rows)
     filing_chain = MagicMock()
     filing_chain.select.return_value.or_.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=filing_rows)
-    client.table.side_effect = lambda name: contact_chain if name == "lead_contacts" else filing_chain
+    client.table.side_effect = _route(contact_chain, filing_chain)
     with patch("services.dedup_service._client", client):
         result = await search_leads("maria")
     assert [r["case_number"] for r in result] == ["NEW", "OLD"]
@@ -131,10 +143,41 @@ async def test_search_leads_respects_limit():
     contact_chain.select.return_value.or_.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
     filing_chain = MagicMock()
     filing_chain.select.return_value.or_.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=filing_rows)
-    client.table.side_effect = lambda name: contact_chain if name == "lead_contacts" else filing_chain
+    client.table.side_effect = _route(contact_chain, filing_chain)
     with patch("services.dedup_service._client", client):
         result = await search_leads("xx", limit=10)
     assert len(result) == 10
+
+
+@pytest.mark.asyncio
+async def test_search_leads_includes_ists_judgments_by_phone():
+    """An ISTS judgment lead (no lead_contacts/filings row) is findable by phone
+    and surfaces with track='ists' and defendant mapped to tenant_name."""
+    ists_rows = [{
+        "case_number": "264100196540", "defendant_name": "Silvio Gamez",
+        "property_address": "20525 Ella Blvd Apt 1306, Spring, TX 77388",
+        "phone": "3463710233", "dnc_status": "callable",
+        "bland_call_id": "b49872ca", "ghl_contact_id": "emgyUF23",
+        "judgment_date": "2026-06-02", "plaintiff_name": "Ella REH LLC",
+        "state": "TX", "county": "Harris", "language_hint": None,
+    }]
+    client = MagicMock()
+    contact_chain = _empty_chain()
+    filing_chain = MagicMock()
+    filing_chain.select.return_value.or_.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
+    ists_chain = MagicMock()
+    ists_chain.select.return_value.or_.return_value.limit.return_value.execute.return_value = MagicMock(data=ists_rows)
+    client.table.side_effect = _route(contact_chain, filing_chain, ists_chain)
+    with patch("services.dedup_service._client", client):
+        result = await search_leads("3463710233")
+    assert len(result) == 1
+    row = result[0]
+    assert row["case_number"] == "264100196540"
+    assert row["track"] == "ists"
+    assert row["tenant_name"] == "Silvio Gamez"
+    assert row["phone"] == "3463710233"
+    assert row["bland_status"] == "triggered"
+    assert row["landlord_name"] == "Ella REH LLC"
 
 
 @pytest.mark.asyncio

@@ -114,7 +114,7 @@ async def push_contact(rec: dict, dry_run: bool = False) -> str | None:
         "lastName": last,
         "phone": rec["phone"],
         "address1": rec.get("property_address", ""),
-        "tags": ["ISTS", "W1"],
+        "tags": ["ISTS", "W1", "ists_new_lead"],
         "source": "ISTS Harris Judgment",
         "customFields": custom_fields,
     }

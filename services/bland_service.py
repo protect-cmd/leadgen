@@ -126,6 +126,13 @@ async def trigger_voicemail(contact: EnrichedContact) -> str:
         raise RuntimeError("DNC blocked - cannot trigger voicemail")
 
     filing = contact.filing
+
+    # TCPA calling-hours backstop (lead-local). fire_case gates earlier with a
+    # clean status; this also covers the EC/approve callers that dial directly.
+    from services.call_window import in_call_window, OutsideCallWindow
+    if not in_call_window(filing.state):
+        raise OutsideCallWindow(f"outside calling window for {filing.state}")
+
     is_ec = contact.track == "ec"
 
     is_spanish = _is_spanish_likely(contact)

@@ -57,6 +57,13 @@ async def fire_case(sb, case_number: str) -> dict:
     if not f:
         return {"case_number": case_number, "status": "no_filing"}
     f = f[0]
+
+    # TCPA calling-hours gate (lead-local). Skip without staging GHL so the lead
+    # stays in the To-Fire queue and is retried when the window opens.
+    from services.call_window import in_call_window
+    if not in_call_window(f.get("state")):
+        return {"case_number": case_number, "status": "outside_window"}
+
     filing = Filing(
         case_number=f["case_number"], tenant_name=f.get("tenant_name") or "",
         property_address=f.get("property_address") or "", landlord_name=f.get("landlord_name") or "",
