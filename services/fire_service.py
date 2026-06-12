@@ -8,6 +8,7 @@ Per-lead, fault-isolated — one failure never blocks the rest.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date
 
 from models.contact import EnrichedContact
@@ -21,6 +22,17 @@ _FILING_COLS = ("case_number,tenant_name,property_address,landlord_name,filing_d
 
 def _d(v):
     return date.fromisoformat(v) if isinstance(v, str) and v else (v or date.today())
+
+
+def _bland_cap_ok() -> bool:
+    """True if today's Bland dials are under BLAND_DAILY_CAP (default 100)."""
+    from services.enrichment_cache import get_cache
+    return get_cache().check_daily_cap(int(os.getenv("BLAND_DAILY_CAP", "100")), kind="bland")
+
+
+def _bland_cap_increment() -> None:
+    from services.enrichment_cache import get_cache
+    get_cache().increment_daily_count(kind="bland")
 
 
 async def fire_case(sb, case_number: str) -> dict:
@@ -90,9 +102,14 @@ async def fire_case(sb, case_number: str) -> dict:
         except Exception as e:
             return {"case_number": case_number, "status": "ghl_failed", "error": repr(e)[:120]}
 
+    # Daily Bland ceiling: stage to GHL (done above) but don't dial once capped.
+    if not _bland_cap_ok():
+        return {"case_number": case_number, "status": "daily_cap", "ghl_id": ghl_id}
+
     # 2) dial Bland
     try:
         call_id = await bland_service.trigger_voicemail(ec)
+        _bland_cap_increment()
         await set_bland_status(case_number, "ng", "triggered", call_id=call_id)
         return {"case_number": case_number, "status": "fired", "ghl_id": ghl_id, "call_id": call_id}
     except Exception as e:
@@ -140,6 +157,10 @@ async def ists_fire_case(sb, case_number: str) -> dict:
         except Exception as e:
             return {"case_number": case_number, "status": "ghl_failed", "error": repr(e)[:120]}
 
+    # Daily Bland ceiling: GHL push (above) still happens; only the dial is gated.
+    if not _bland_cap_ok():
+        return {"case_number": case_number, "status": "daily_cap", "ghl_id": ghl_id}
+
     try:
         call_id = await ists_bland.trigger_call(rec)
     except Exception as e:
@@ -148,6 +169,7 @@ async def ists_fire_case(sb, case_number: str) -> dict:
         return {"case_number": case_number, "status": "dnc_skip"}
     if call_id in (None, "outside_window"):
         return {"case_number": case_number, "status": call_id or "failed"}
+    _bland_cap_increment()
     sb.table("ists_judgments").update(
         {"bland_call_id": call_id, "bland_triggered_at": now}
     ).eq("case_number", case_number).execute()

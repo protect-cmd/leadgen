@@ -36,12 +36,32 @@ class EnrichmentCache:
                 """)
                 con.execute("DROP TABLE searchbug_cache")
                 con.execute("ALTER TABLE searchbug_cache_v2 RENAME TO searchbug_cache")
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS daily_cap (
-                    date  TEXT PRIMARY KEY,
-                    count INTEGER NOT NULL DEFAULT 0
+            cap_cols = {row[1] for row in con.execute("PRAGMA table_info(daily_cap)")}
+            if not cap_cols:
+                con.execute("""
+                    CREATE TABLE daily_cap (
+                        date  TEXT NOT NULL,
+                        kind  TEXT NOT NULL DEFAULT 'searchbug',
+                        count INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY (date, kind)
+                    )
+                """)
+            elif "kind" not in cap_cols:
+                # migrate the old (date PRIMARY KEY) table to (date, kind)
+                con.execute("ALTER TABLE daily_cap RENAME TO daily_cap_v1")
+                con.execute("""
+                    CREATE TABLE daily_cap (
+                        date  TEXT NOT NULL,
+                        kind  TEXT NOT NULL DEFAULT 'searchbug',
+                        count INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY (date, kind)
+                    )
+                """)
+                con.execute(
+                    "INSERT INTO daily_cap (date, kind, count) "
+                    "SELECT date, 'searchbug', count FROM daily_cap_v1"
                 )
-            """)
+                con.execute("DROP TABLE daily_cap_v1")
             con.execute("""
                 CREATE TABLE IF NOT EXISTS alert_dedupe (
                     key  TEXT NOT NULL,
@@ -131,23 +151,22 @@ class EnrichmentCache:
                 (*k, phone, address, time.time()),
             )
 
-    def check_daily_cap(self, cap: int) -> bool:
-        """Return True if under the daily cap (OK to proceed), False if exceeded."""
+    def check_daily_cap(self, cap: int, kind: str = "searchbug") -> bool:
+        """True if under the daily cap for `kind` (OK to proceed)."""
         today = date.today().isoformat()
         with sqlite3.connect(self._db_path) as con:
             row = con.execute(
-                "SELECT count FROM daily_cap WHERE date=?", (today,)
+                "SELECT count FROM daily_cap WHERE date=? AND kind=?", (today, kind)
             ).fetchone()
-        count = row[0] if row else 0
-        return count < cap
+        return (row[0] if row else 0) < cap
 
-    def increment_daily_count(self) -> None:
+    def increment_daily_count(self, kind: str = "searchbug") -> None:
         today = date.today().isoformat()
         with sqlite3.connect(self._db_path) as con:
             con.execute(
-                "INSERT INTO daily_cap (date, count) VALUES (?, 1) "
-                "ON CONFLICT(date) DO UPDATE SET count = count + 1",
-                (today,),
+                "INSERT INTO daily_cap (date, kind, count) VALUES (?, ?, 1) "
+                "ON CONFLICT(date, kind) DO UPDATE SET count = count + 1",
+                (today, kind),
             )
 
     def claim_alert_once_today(self, key: str) -> bool:
