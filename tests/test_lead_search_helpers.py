@@ -178,6 +178,7 @@ async def test_search_leads_includes_ists_judgments_by_phone():
     assert row["phone"] == "3463710233"
     assert row["bland_status"] == "triggered"
     assert row["landlord_name"] == "Ella REH LLC"
+    assert row["judgment_date"] == "2026-06-02"
 
 
 @pytest.mark.asyncio
