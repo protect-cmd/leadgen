@@ -21,7 +21,8 @@ COURT_TIMEZONE = "America/New_York"
 NOTICE_TYPE = "Eviction"
 
 BASE_URL = "https://eservices.elyriamunicourt.org"
-ENTRY_URL = f"{BASE_URL}/eservices/casesearch"
+PORTAL_URL = f"{BASE_URL}/eservices/api/portal/PUBLIC"
+SEARCH_PAGE_URL = f"{BASE_URL}/eservices/search.page"
 SEARCH_RESULTS_URL = f"{BASE_URL}/eservices/searchresults.page"
 
 # Courtesy delay range (seconds) between detail-page fetches.
@@ -36,36 +37,6 @@ _OCCUPANT_SUFFIXES = re.compile(
 
 def _strip_occupant_suffix(name: str) -> str:
     return _OCCUPANT_SUFFIXES.sub("", name).strip()
-
-
-def _parse_hidden_field(html: str) -> tuple[str, str] | None:
-    """
-    Extract the Wicket hidden field name and value from the search form.
-
-    CourtView uses a Wicket framework field like:
-        <input type="hidden" name="id5_hf_0" value="" />
-    The field name varies per session. Returns (name, value) or None.
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    form = soup.find("form")
-    if not form:
-        return None
-    hidden = form.find("input", {"type": "hidden"})
-    if hidden and hidden.get("name"):
-        return (hidden["name"], hidden.get("value", ""))
-    return None
-
-
-def _parse_form_action(html: str) -> str | None:
-    """Extract the form action URL from the search form HTML."""
-    soup = BeautifulSoup(html, "html.parser")
-    form = soup.find("form")
-    if form and form.get("action"):
-        action = form["action"]
-        if action.startswith("http"):
-            return action
-        return BASE_URL + action
-    return None
 
 
 def _parse_case_rows(html: str) -> list[dict]:
@@ -101,8 +72,12 @@ def _parse_case_rows(html: str) -> list[dict]:
             continue
 
         href = link["href"]
-        # Make absolute if relative
-        if not href.startswith("http"):
+        # Make absolute — Wicket result links come back as relative ?x=... tokens
+        if href.startswith("http"):
+            pass
+        elif href.startswith("?"):
+            href = SEARCH_RESULTS_URL + href
+        else:
             href = BASE_URL + "/eservices/" + href.lstrip("/")
 
         rows.append({
@@ -184,32 +159,39 @@ def _fetch_defendant_address(session: requests.Session, detail_url: str) -> str 
     text = soup.get_text("\n")
     lines = [ln.strip() for ln in text.splitlines()]
 
-    # Find the first "- Defendant" section, then look for "Address" followed by
-    # two non-empty lines (street, city/state/zip).
+    # CourtView detail page splits addresses across 5 separate lines:
+    #   Street
+    #   City
+    #   ,
+    #   ST
+    #   XXXXX
+    # Find the first "- Defendant" section, then collect the address parts.
     in_defendant = False
     for i, line in enumerate(lines):
         if line == "- Defendant":
             in_defendant = True
         if in_defendant and line.upper() == "ADDRESS":
-            # Collect the next two non-empty lines
-            addr_lines = []
-            for j in range(i + 1, min(i + 10, len(lines))):
-                if lines[j]:
-                    addr_lines.append(lines[j])
-                if len(addr_lines) == 2:
+            # Collect non-empty lines until we reach the zip code or a section break.
+            parts = []
+            _section_breaks = {"Alias", "Party Attorney", "Events", "Docket", "Financial"}
+            for j in range(i + 1, min(i + 40, len(lines))):
+                part = lines[j].strip()
+                if not part:
+                    continue
+                if part in _section_breaks or part.startswith("- "):
                     break
-            if len(addr_lines) == 2:
-                street = addr_lines[0]
-                # Normalize extra whitespace in city/state/zip line
-                # e.g. "ELYRIA ,   OH   44035" → "ELYRIA , OH 44035"
-                city_line = re.sub(r"\s+", " ", addr_lines[1])
-                m = re.match(r"^(.+?)\s*,\s*([A-Z]{2})\s+(\d{5})", city_line)
-                if m:
-                    city, state_abbr, zip_code = m.group(1).strip(), m.group(2), m.group(3)
+                if part == ",":
+                    continue  # skip standalone comma separator
+                parts.append(part)
+                if re.match(r"^\d{5}", part):
+                    break  # zip reached — done
+            # Expect: [street, city, state_abbr, zip_code]
+            if len(parts) >= 4:
+                street, city, state_abbr, zip_code = parts[0], parts[1], parts[2], parts[3]
+                if re.match(r"^[A-Z]{2}$", state_abbr) and re.match(r"^\d{5}", zip_code):
                     return f"{street}, {city}, {state_abbr} {zip_code}"
-                # Fallback: return raw two lines joined
-                return f"{street}, {city_line}"
-            # Found "Address" label but not enough lines — stop looking
+            if len(parts) >= 2:
+                return f"{parts[0]}, {' '.join(parts[1:])}"
             break
 
     log.warning("Lorain: no defendant address found at %s", detail_url)
@@ -220,12 +202,21 @@ class ElyriaMunicipalScraper:
     """
     Scraper for Elyria Municipal Court (Lorain County OH) eviction filings.
 
-    Portal: https://eservices.elyriamunicourt.org/eservices/ (CourtView / equivant)
+    Portal: https://eservices.elyriamunicourt.org/eservices/ (CourtView v1.55 / equivant)
 
-    Two-step flow:
-        1. GET /eservices/casesearch → establish session, parse form action + Wicket hidden field
-           POST form with date range + caseCd=CVG → redirects to searchresults.page
-        2. GET searchresults.page?x=<token> per case → extract first defendant address
+    The court's SPA wraps a legacy Apache Wicket Java app. The SPA itself is
+    client-rendered (useless for scraping), but Wicket pages are still live
+    behind an auth cookie. Session flow:
+
+        1. GET /eservices/api/portal/PUBLIC  → sets CVESVC_TOKEN JWT + JSESSIONID
+        2. GET /eservices/search.page        → Wicket browser-detection page (4 KB)
+                                               contains <a href="?x=TOKEN">this link</a>
+        3. GET search.page?x=TOKEN           → Name search form (search.page.3)
+        4. Find "Case Type" tab → GET its ?x=... link → Case Type form (search.page.3.1)
+           Extract exact caseCd value for "Eviction (CVG)" from the <select> element
+           (padded to 30 chars server-side; sending bare "CVG" defaults to CVF)
+        5. POST caseCd + date range          → searchresults.page (296+ records)
+        6. GET searchresults.page?x=... per case → extract first defendant address
     """
 
     def __init__(self, lookback_days: int = 2):
@@ -250,7 +241,7 @@ class ElyriaMunicipalScraper:
         fetch_errors: list[str] = []
 
         try:
-            results_html = self._search(begin, end)
+            rows = self._search(begin, end)
         except Exception as exc:
             msg = f"Lorain: search failed for {begin.isoformat()}–{end.isoformat()}: {exc}"
             fetch_errors.append(msg)
@@ -258,7 +249,6 @@ class ElyriaMunicipalScraper:
             self.last_error = msg
             return []
 
-        rows = _parse_case_rows(results_html)
         cases = _group_by_case(rows)
 
         log.debug("Lorain: %d unique cases from results page", len(cases))
@@ -305,44 +295,122 @@ class ElyriaMunicipalScraper:
         log.info("Lorain OH: %d eviction filings found", len(filings))
         return filings
 
-    def _search(self, begin: date, end: date) -> str:
+    def _search(self, begin: date, end: date) -> list[dict]:
         """
-        Load the CourtView search form, then POST the CVG date-range query.
-        Returns the HTML of the search results page.
+        Execute the 5-step CourtView session flow, POST the CVG date-range query,
+        then paginate through all result pages via the Wicket '>' nav link.
+
+        Returns a flat list of row dicts from _parse_case_rows() across all pages.
+        The portal caps results at 200 records; each page shows ~25 rows.
         """
-        # Step 1: GET entry URL — establishes session cookie, returns form HTML
-        r = self.session.get(ENTRY_URL, timeout=15, allow_redirects=True)
-        r.raise_for_status()
-
-        form_html = r.text
-        form_action = _parse_form_action(form_html)
-        hidden = _parse_hidden_field(form_html)
-
-        if not form_action:
-            raise RuntimeError("Lorain: could not find form action in search page")
-        if not hidden:
-            raise RuntimeError("Lorain: could not find Wicket hidden field in search form")
-
-        hidden_name, hidden_value = hidden
-
-        # Step 2: POST the search form
         begin_str = begin.strftime("%m/%d/%Y")
         end_str = end.strftime("%m/%d/%Y")
 
+        # Step 1: GET portal/PUBLIC — sets CVESVC_TOKEN JWT + JSESSIONID
+        r = self.session.get(PORTAL_URL, timeout=15)
+        r.raise_for_status()
+        if "CVESVC_TOKEN" not in self.session.cookies:
+            raise RuntimeError("Lorain: CVESVC_TOKEN not set after portal/PUBLIC")
+
+        # Step 2: GET search.page — Wicket browser-detection page
+        time.sleep(0.4)
+        r = self.session.get(SEARCH_PAGE_URL, timeout=15, allow_redirects=True)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        fallback = soup.find("a", href=lambda h: h and h.startswith("?x="))
+        if not fallback:
+            raise RuntimeError(
+                f"Lorain: no fallback ?x= link in browser-detection page "
+                f"(got {len(r.text)} bytes, url={r.url})"
+            )
+        fallback_url = SEARCH_PAGE_URL + fallback["href"]
+
+        # Step 3: Follow fallback → Name search form (search.page.3)
+        time.sleep(0.4)
+        r = self.session.get(fallback_url, timeout=15, allow_redirects=True)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        case_type_link = next(
+            (a["href"] for a in soup.find_all("a", href=True)
+             if a.get_text(strip=True) == "Case Type"),
+            None,
+        )
+        if not case_type_link:
+            raise RuntimeError("Lorain: could not find 'Case Type' tab link in Name search form")
+        case_type_url = r.url.split("?")[0] + case_type_link
+
+        # Step 4: GET Case Type search form (search.page.3.1)
+        time.sleep(0.4)
+        r = self.session.get(case_type_url, timeout=15, allow_redirects=True)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        form = soup.find("form")
+        if not form:
+            raise RuntimeError("Lorain: no form on Case Type search page")
+
+        # Extract form action (may be relative)
+        form_action = form.get("action", "")
+        if not form_action.startswith("http"):
+            form_action = r.url.split("?")[0] + form_action
+
+        # Extract Wicket hidden field (name varies per session, e.g. id72_hf_0)
+        hidden = form.find("input", {"type": "hidden"})
+        if not hidden or not hidden.get("name"):
+            raise RuntimeError("Lorain: no Wicket hidden field in Case Type form")
+        hidden_name = hidden["name"]
+        hidden_value = hidden.get("value", "")
+
+        # Extract the exact caseCd value for "Eviction (CVG)" — padded to 30 chars
+        # Sending bare 'CVG' causes the server to default to the first option (CVF).
+        caseCd_select = form.find("select", {"name": "caseCd"})
+        cvg_option = caseCd_select.find("option", string=re.compile(r"Eviction")) if caseCd_select else None
+        cvg_value = cvg_option["value"] if cvg_option else "CVG"
+        if not cvg_option:
+            log.warning("Lorain: could not find Eviction option in caseCd select; using 'CVG'")
+
+        # Step 5: POST Case Type form with date range → first results page
         post_data = {
             hidden_name: hidden_value,
             "fileDateRange:dateInputBegin": begin_str,
             "fileDateRange:dateInputEnd": end_str,
-            "caseCd": "CVG",
+            "caseCd": cvg_value,
             "submitLink": "Search",
         }
-
+        time.sleep(0.5)
         r = self.session.post(
             form_action,
             data=post_data,
-            headers={"Referer": ENTRY_URL},
+            headers={"Referer": r.url},
             timeout=30,
             allow_redirects=True,
         )
         r.raise_for_status()
-        return r.text
+
+        # Paginate through all result pages via Wicket '>' nav link.
+        # The portal caps at 200 records; each page shows ~25 party rows.
+        all_rows: list[dict] = []
+        page_num = 1
+        html = r.text
+
+        while True:
+            rows = _parse_case_rows(html)
+            all_rows.extend(rows)
+            log.debug("Lorain: page %d → %d rows (running total: %d)", page_num, len(rows), len(all_rows))
+
+            soup = BeautifulSoup(html, "html.parser")
+            next_href = next(
+                (a["href"] for a in soup.find_all("a", href=True)
+                 if a.get_text(strip=True) == ">"),
+                None,
+            )
+            if not next_href:
+                break
+
+            time.sleep(0.4)
+            r = self.session.get(SEARCH_RESULTS_URL + next_href, timeout=15, allow_redirects=True)
+            r.raise_for_status()
+            html = r.text
+            page_num += 1
+
+        log.info("Lorain: %d party rows across %d page(s)", len(all_rows), page_num)
+        return all_rows
