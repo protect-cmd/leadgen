@@ -159,7 +159,7 @@ async def test_search_leads_includes_ists_judgments_by_phone():
         "phone": "3463710233", "dnc_status": "callable",
         "bland_call_id": "b49872ca", "ghl_contact_id": "emgyUF23",
         "judgment_date": "2026-06-02", "plaintiff_name": "Ella REH LLC",
-        "state": "TX", "county": "Harris", "language_hint": None,
+        "estimated_rent": 1676, "state": "TX", "county": "Harris", "language_hint": None,
     }]
     client = MagicMock()
     contact_chain = _empty_chain()
@@ -179,6 +179,7 @@ async def test_search_leads_includes_ists_judgments_by_phone():
     assert row["bland_status"] == "triggered"
     assert row["landlord_name"] == "Ella REH LLC"
     assert row["judgment_date"] == "2026-06-02"
+    assert row["estimated_rent"] == 1676
 
 
 @pytest.mark.asyncio

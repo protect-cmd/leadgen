@@ -111,6 +111,28 @@
     }
     .detail .phone-large:hover { color: var(--accent); }
     .detail .addr-large { font-size: 14px; margin-top: 4px; }
+    .detail .detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .detail .detail-head h2 { font-size: 18px; }
+    .detail .track-badge { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+      padding: 2px 8px; border-radius: 20px; white-space: nowrap; }
+    .detail .track-badge.ists { background: rgba(140,120,255,0.18); color: #c4b5fd; }
+    .detail .track-badge.ng { background: rgba(108,176,255,0.16); color: var(--accent); }
+    .dcard { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .dcard td { padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: top; line-height: 1.4; }
+    .dcard tr:last-child td { border-bottom: 0; }
+    .dcard .dk { color: var(--text-dim); font-weight: 600; white-space: nowrap; width: 130px;
+      background: var(--bg-elev); }
+    .dcard .dv { color: var(--text); word-break: break-word; }
+    .dcard .dv.mono { font-family: ui-monospace, monospace; }
+    .dcard .dv.copyable { cursor: pointer; }
+    .dcard .dv.copyable:hover { color: var(--accent); }
+    .dcard .pill { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 20px; }
+    .dcard .pill.callable { background: rgba(110,231,183,0.15); color: var(--green); }
+    .dcard .pill.dnc { background: rgba(255,120,120,0.16); color: #ff9a9a; }
+    .copy-btn { margin-top: 12px; width: 100%; padding: 10px 14px; background: var(--accent); color: #08111f;
+      border: none; border-radius: 7px; font-weight: 700; font-size: 13px; cursor: pointer; }
+    .copy-btn:hover { filter: brightness(1.08); }
+    .copy-btn.copied { background: var(--green); }
     .detail hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
     .detail .kv { display: flex; gap: 12px; font-size: 12px; margin: 4px 0; }
     .detail .kv .k { color: var(--text-dim); min-width: 90px; }
@@ -269,17 +291,57 @@ function relativeTime(iso) {
   return `${Math.round(diff/86400000)}d ago`;
 }
 
+// Track-aware field list for the detail card + the copy block. Empty values dropped.
+function leadFields(row) {
+  const isIsts = row.track === 'ists';
+  const rentStr = row.estimated_rent ? '$' + Math.round(row.estimated_rent).toLocaleString() : '';
+  const loc = (row.state || row.county) ? `${row.state || ''}/${row.county || ''}` : '';
+  const f = [
+    { k: 'Name', v: row.tenant_name || row.contact_name || '(unknown)' },
+    { k: 'Phone', v: fmtPhone(row.phone) || '', mono: true, copy: row.phone || '' },
+    { k: 'Address', v: row.property_address || '' },
+    { k: 'Case', v: row.case_number || '', mono: true, copy: row.case_number || '' },
+  ];
+  if (isIsts) f.push({ k: 'Judgment date', v: row.judgment_date || '' });
+  else { f.push({ k: 'Filed', v: row.filing_date || '' }); f.push({ k: 'Court date', v: row.court_date || '' }); }
+  f.push({ k: 'County', v: loc });
+  f.push({ k: isIsts ? 'Landlord/plaintiff' : 'Landlord', v: row.landlord_name || '' });
+  if (rentStr) f.push({ k: 'Rent est.', v: rentStr });
+  if (row.dnc_status) f.push({ k: 'DNC', v: row.dnc_status, pill: row.dnc_status });
+  return f.filter(x => x.v);
+}
+
+function leadCopyText(row) {
+  return leadFields(row).map(x => `${x.k}: ${x.v}`).join('\n');
+}
+
+function renderCard(row) {
+  const cells = leadFields(row).map(x => {
+    let vCell;
+    if (x.pill) {
+      vCell = `<span class="pill ${x.pill === 'callable' ? 'callable' : 'dnc'}">${escapeHtml(x.v)}</span>`;
+    } else if (x.copy) {
+      vCell = `<span class="dv ${x.mono ? 'mono' : ''} copyable" data-copy="${escapeHtml(String(x.copy))}" title="click to copy">${escapeHtml(x.v)}</span>`;
+    } else {
+      vCell = `<span class="dv ${x.mono ? 'mono' : ''}">${escapeHtml(x.v)}</span>`;
+    }
+    return `<tr><td class="dk">${escapeHtml(x.k)}</td><td>${vCell}</td></tr>`;
+  }).join('');
+  return `<table class="dcard">${cells}</table>`;
+}
+
 async function renderDetail(row) {
   selectedCase = { case_number: row.case_number, track: row.track || 'ng' };
   detailEl.classList.remove('empty');
   const stage = row.bland_status || row.lead_bucket || '—';
   const lastCalled = relativeTime(row.last_called_at);
   detailEl.innerHTML = `
-    <h2>${escapeHtml(row.tenant_name || row.contact_name || '(unknown)')}</h2>
-    <div class="sub">${escapeHtml(row.state || '')}/${escapeHtml(row.county || '')} · ${escapeHtml(row.case_number || '')}</div>
-    <div class="sub">${row.track === 'ists' ? 'Judgment ' + (row.judgment_date || '—') : 'Filed ' + (row.filing_date || '—') + ' · Court ' + (row.court_date || '—')}</div>
-    <div class="phone-large" id="phone-large" title="click to copy">${fmtPhone(row.phone) || '—'}</div>
-    <div class="addr-large">${escapeHtml(row.property_address || '')}</div>
+    <div class="detail-head">
+      <h2>${escapeHtml(row.tenant_name || row.contact_name || '(unknown)')}</h2>
+      <span class="track-badge ${row.track === 'ists' ? 'ists' : 'ng'}">${row.track === 'ists' ? 'ISTS · judgment' : 'Vantage'}</span>
+    </div>
+    ${renderCard(row)}
+    <button id="btn-copy" class="copy-btn">Copy details</button>
     <hr>
     <div class="kv"><span class="k">Stage</span><span>${escapeHtml(String(stage))}</span></div>
     <div class="kv"><span class="k">Last called</span><span id="last-called">${lastCalled}</span></div>
@@ -295,11 +357,18 @@ async function renderDetail(row) {
     <div class="notes" id="notes"><div class="meta">Notes</div></div>
   `;
 
-  document.getElementById('phone-large').addEventListener('click', () => {
-    const phone = row.phone || '';
-    if (phone) {
-      navigator.clipboard.writeText(phone).then(() => showToast('Copied'));
-    }
+  document.getElementById('btn-copy').addEventListener('click', () => {
+    navigator.clipboard.writeText(leadCopyText(row)).then(() => {
+      const b = document.getElementById('btn-copy');
+      b.textContent = '✓ Copied'; b.classList.add('copied');
+      showToast('Details copied');
+      setTimeout(() => { b.textContent = 'Copy details'; b.classList.remove('copied'); }, 1500);
+    });
+  });
+  detailEl.querySelectorAll('.dv.copyable').forEach(el => {
+    el.addEventListener('click', () => {
+      navigator.clipboard.writeText(el.dataset.copy).then(() => showToast('Copied'));
+    });
   });
   document.getElementById('btn-call').addEventListener('click', markCalled);
   document.getElementById('btn-note').addEventListener('click', () => {
