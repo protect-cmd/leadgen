@@ -4,17 +4,17 @@ from datetime import date
 
 from scrapers.ohio.barberton import (
     BarbertonMunicipalScraper,
-    _fetch_defendant_address,
+    _fetch_case_detail,
     _get_csrf_token,
-    _parse_address_cell,
     _parse_search_results,
     _strip_occupant_suffix,
 )
 
 
 # ---------------------------------------------------------------------------
-# HTML fixtures — modelled on real CaseLook (Henschen) HTML structure.
-# Confirmed case data: CVG2601199, Brown Rebecca, 87 Helen Street, Barberton OH 44203
+# HTML fixtures — modelled on real CaseLook (Henschen & Associates) HTML.
+# Portal uses Bootstrap card layout, not tables.
+# Confirmed structure from Barberton Municipal Court (COURT_ID 7721).
 # ---------------------------------------------------------------------------
 
 SAMPLE_SEARCH_HTML = """
@@ -22,89 +22,117 @@ SAMPLE_SEARCH_HTML = """
 <form>
   <input type="hidden" name="_token" value="test-csrf-token-abc123">
 </form>
-<table class="table table-striped table-hover">
-  <thead>
-    <tr>
-      <th>Case Number</th>
-      <th>Plaintiff</th>
-      <th>Defendant</th>
-      <th>Filed Date</th>
-      <th>Cause of Action</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><a href="/record/1001/tok111">CVG2601199</a></td>
-      <td>M&amp;C MHP LLC</td>
-      <td>Brown, Rebecca</td>
-      <td>05/01/2026</td>
-      <td>EVICTION</td>
-    </tr>
-    <tr>
-      <td><a href="/record/1002/tok222">CVG2601200</a></td>
-      <td>WALNUT HILL PROPERTIES</td>
-      <td>Walker, Robert et al</td>
-      <td>05/01/2026</td>
-      <td>EVICTION</td>
-    </tr>
-    <tr>
-      <td><a href="/record/1003/tok333">CVI2600500</a></td>
-      <td>ACME CORP</td>
-      <td>Jones, Dave</td>
-      <td>05/01/2026</td>
-      <td>CIVIL INJURY</td>
-    </tr>
-  </tbody>
-</table>
+
+<div class="card card--results-case">
+  <div class="card-header">
+    <div class="row">
+      <div class="col-8"><h4>1 CVG2601199</h4></div>
+      <div class="col-4">
+        <a href="https://caselook.barbertonclerkofcourt.com/record/7721/tok111"
+           title="Case information"><i class="fas fa-info-circle"></i></a>
+      </div>
+    </div>
+  </div>
+  <div class="card-body">
+    <label>Concerning:</label> Brown, Rebecca et al
+    <label>Filed:</label> 05/01/2026
+  </div>
+</div>
+
+<div class="card card--results-case">
+  <div class="card-header">
+    <div class="row">
+      <div class="col-8"><h4>2 CVG2601200</h4></div>
+      <div class="col-4">
+        <a href="https://caselook.barbertonclerkofcourt.com/record/7721/tok222"
+           title="Case information"><i class="fas fa-info-circle"></i></a>
+      </div>
+    </div>
+  </div>
+  <div class="card-body">
+    <label>Concerning:</label> Walker, Robert et al
+    <label>Filed:</label> 05/01/2026
+  </div>
+</div>
+
+<!-- Non-CVG case — should be filtered out -->
+<div class="card card--results-case">
+  <div class="card-header">
+    <div class="row">
+      <div class="col-8"><h4>3 CVI2600500</h4></div>
+      <div class="col-4">
+        <a href="https://caselook.barbertonclerkofcourt.com/record/7721/tok333"
+           title="Case information"><i class="fas fa-info-circle"></i></a>
+      </div>
+    </div>
+  </div>
+  <div class="card-body">
+    <label>Concerning:</label> Jones, Dave
+  </div>
+</div>
+
 </body></html>
 """
 
+# Detail page HTML mirrors real portal: card--parties-MV cards, label-next-sibling pattern.
+# Note the deliberate "City/Sate/ZIP:" typo — that's what the real portal returns.
 SAMPLE_DETAIL_HTML = """
 <html><body>
-<form>
-  <input type="hidden" name="_token" value="test-csrf-token-detail">
-</form>
-<h2>Case CVG2601199</h2>
-<p>File Date: 05/01/2026</p>
-<table class="table">
-  <thead>
-    <tr><th>Type</th><th>Name</th><th>Address</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Plaintiff</td>
-      <td>M&amp;C MHP LLC</td>
-      <td>5854 Cleveland Road<br/>Wooster, OH 44691</td>
-    </tr>
-    <tr>
-      <td>Defendant</td>
-      <td>Brown, Rebecca</td>
-      <td>87 Helen Street<br/>Barberton, OH 44203</td>
-    </tr>
-  </tbody>
-</table>
+<div class="card card--parties-MV">
+  <div class="card-header"><h4>Plaintiff</h4></div>
+  <div class="card-body">
+    <label>Plaintiff 1:</label> M&amp;C MHP LLC
+    <label>Address:</label> 5854 Cleveland Road
+    <label>City/State/ZIP:</label> Wooster, OH 44691
+  </div>
+</div>
+<div class="card card--parties-MV">
+  <div class="card-header"><h4>Defendants</h4></div>
+  <div class="card-body">
+    <label>Defendant 1:</label> Brown, Rebecca
+    <label>Address:</label> 87 Helen Street
+    <label>City/Sate/ZIP:</label> Barberton, OH 44203
+  </div>
+</div>
+</body></html>
+"""
+
+# Variant: portal typo handled — "City/Sate/ZIP:" (6 chars between City and ZIP).
+SAMPLE_DETAIL_HTML_PORTAL_TYPO = """
+<html><body>
+<div class="card card--parties-MV">
+  <div class="card-header"><h4>Plaintiff</h4></div>
+  <div class="card-body">
+    <label>Plaintiff 1:</label> Summit Rental Properties, Llc
+    <label>Address:</label> PO Box 1
+    <label>City/Sate/ZIP:</label> Barberton, Oh 44203
+  </div>
+</div>
+<div class="card card--parties-MV">
+  <div class="card-header"><h4>Defendants</h4></div>
+  <div class="card-body">
+    <label>Defendant 1:</label> Tenant Name
+    <label>Address:</label> 583 W. Lake Avenue, #3
+    <label>City/Sate/ZIP:</label> Barberton, Oh 44203
+  </div>
+</div>
 </body></html>
 """
 
 SAMPLE_DETAIL_HTML_NO_ADDRESS = """
 <html><body>
-<table class="table">
-  <thead>
-    <tr><th>Type</th><th>Name</th><th>Address</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Plaintiff</td>
-      <td>SOME LANDLORD LLC</td>
-      <td></td>
-    </tr>
-    <tr>
-      <td>Defendant</td>
-      <td>Doe, Jane</td>
-      <td></td>
-    </tr>
-  </tbody>
-</table>
+<div class="card card--parties-MV">
+  <div class="card-header"><h4>Plaintiff</h4></div>
+  <div class="card-body">
+    <label>Plaintiff 1:</label> Some Landlord LLC
+  </div>
+</div>
+<div class="card card--parties-MV">
+  <div class="card-header"><h4>Defendants</h4></div>
+  <div class="card-body">
+    <label>Defendant 1:</label> Doe, Jane
+  </div>
+</div>
 </body></html>
 """
 
@@ -159,102 +187,54 @@ def test_get_csrf_token_extracts_from_sample_search_html():
 
 
 # ---------------------------------------------------------------------------
-# _parse_address_cell
-# ---------------------------------------------------------------------------
-
-class TestParseAddressCell:
-    def test_standard_two_line_address(self):
-        from bs4 import BeautifulSoup
-        html = "<td>87 Helen Street<br/>Barberton, OH 44203</td>"
-        td = BeautifulSoup(html, "html.parser").find("td")
-        assert _parse_address_cell(td) == "87 Helen Street, Barberton, OH 44203"
-
-    def test_address_with_apartment(self):
-        from bs4 import BeautifulSoup
-        html = "<td>123 Main St Apt 4<br/>Barberton, OH 44203</td>"
-        td = BeautifulSoup(html, "html.parser").find("td")
-        assert _parse_address_cell(td) == "123 Main St Apt 4, Barberton, OH 44203"
-
-    def test_nine_digit_zip_truncated(self):
-        from bs4 import BeautifulSoup
-        html = "<td>200 Oak Ave<br/>Barberton, OH 442030001</td>"
-        td = BeautifulSoup(html, "html.parser").find("td")
-        result = _parse_address_cell(td)
-        assert "44203" in result
-        assert "442030001" not in result
-
-    def test_empty_cell_returns_empty(self):
-        from bs4 import BeautifulSoup
-        html = "<td></td>"
-        td = BeautifulSoup(html, "html.parser").find("td")
-        assert _parse_address_cell(td) == ""
-
-
-# ---------------------------------------------------------------------------
 # _parse_search_results
 # ---------------------------------------------------------------------------
 
 def test_parse_search_results_returns_only_cvg_cases():
-    filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
-    )
-    # CVI case should be filtered out
+    filings = _parse_search_results(SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE)
     assert len(filings) == 2
     assert all(f.case_number.startswith("CVG") for f in filings)
 
 
 def test_parse_search_results_maps_case_number():
-    filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
-    )
+    filings = _parse_search_results(SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE)
     assert filings[0].case_number == "CVG2601199"
     assert filings[1].case_number == "CVG2601200"
 
 
-def test_parse_search_results_maps_landlord_and_tenant():
-    filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
-    )
-    assert filings[0].landlord_name == "M&C MHP LLC"
-    assert filings[0].tenant_name == "Brown, Rebecca"
-
-
 def test_parse_search_results_strips_occupant_suffix_from_tenant():
-    filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
-    )
+    filings = _parse_search_results(SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE)
+    assert filings[0].tenant_name == "Brown, Rebecca"
     assert filings[1].tenant_name == "Walker, Robert"
 
 
+def test_parse_search_results_landlord_is_unknown_placeholder():
+    # Landlord is not available in search results; upgraded later via _fetch_case_detail.
+    filings = _parse_search_results(SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE)
+    assert filings[0].landlord_name == "Unknown"
+
+
+def test_parse_search_results_address_is_unknown_placeholder():
+    filings = _parse_search_results(SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE)
+    assert filings[0].property_address == "Unknown"
+
+
 def test_parse_search_results_sets_filing_date_to_search_date():
-    filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
-    )
+    filings = _parse_search_results(SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE)
     assert filings[0].filing_date == SEARCH_DATE
 
 
 def test_parse_search_results_sets_county_state_notice_type():
-    filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
-    )
+    filings = _parse_search_results(SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE)
     assert filings[0].state == "OH"
     assert filings[0].county == "Summit"
     assert filings[0].notice_type == "Eviction"
 
 
-def test_parse_search_results_placeholder_address():
-    filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
-    )
-    # All stubs get "Unknown" placeholder — upgraded later by _fetch_defendant_address
-    assert filings[0].property_address == "Unknown"
-
-
-def test_parse_search_results_source_url_points_to_record():
-    filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
-    )
-    assert "/record/1001/tok111" in filings[0].source_url
+def test_parse_search_results_source_url_is_absolute():
+    filings = _parse_search_results(SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE)
+    assert filings[0].source_url.startswith("https://")
+    assert "tok111" in filings[0].source_url
 
 
 def test_parse_search_results_returns_empty_for_blank_page():
@@ -266,63 +246,60 @@ def test_parse_search_results_returns_empty_for_blank_page():
 
 
 def test_parse_search_results_placeholder_tenant_falls_back_to_unknown(monkeypatch):
-    """When clean_tenant_name returns '' (placeholder/junk name), fall back to 'Unknown'
-    rather than tenant_raw — prevents re-injecting occupant suffixes into the pipeline.
-    Mirrors the fix applied to Montgomery (PR #10 follow-up)."""
+    """When clean_tenant_name returns '' (junk name), fall back to 'Unknown'."""
     import scrapers.ohio.barberton as mod
     monkeypatch.setattr(mod, "clean_tenant_name", lambda _: "")
 
-    filings = _parse_search_results(
-        SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE
-    )
+    filings = _parse_search_results(SAMPLE_SEARCH_HTML, search_date=SEARCH_DATE)
     assert len(filings) > 0
     assert all(f.tenant_name == "Unknown" for f in filings)
 
 
 # ---------------------------------------------------------------------------
-# _fetch_defendant_address
+# _fetch_case_detail
 # ---------------------------------------------------------------------------
 
-class TestFetchDefendantAddress:
-    def test_returns_defendant_address_from_table(self):
+class TestFetchCaseDetail:
+    def _mock_session(self, html: str, status: int = 200):
         from unittest.mock import MagicMock
-        mock_session = MagicMock()
         mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = SAMPLE_DETAIL_HTML
-        mock_session.get.return_value = mock_resp
-
-        result = _fetch_defendant_address(mock_session, "https://example.com/record/1001/tok111")
-        assert result == "87 Helen Street, Barberton, OH 44203"
-
-    def test_returns_none_when_address_cell_empty(self):
-        from unittest.mock import MagicMock
+        mock_resp.status_code = status
+        mock_resp.text = html
         mock_session = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = SAMPLE_DETAIL_HTML_NO_ADDRESS
         mock_session.get.return_value = mock_resp
+        return mock_session
 
-        result = _fetch_defendant_address(mock_session, "https://example.com/record/1002/tok222")
-        assert result is None
+    def test_returns_address_and_landlord(self):
+        session = self._mock_session(SAMPLE_DETAIL_HTML)
+        address, landlord = _fetch_case_detail(session, "https://example.com/record/7721/tok111")
+        assert address == "87 Helen Street, Barberton, OH 44203"
+        assert landlord == "M&C MHP LLC"
+
+    def test_handles_portal_typo_city_sate_zip(self):
+        """City/Sate/ZIP: (typo) must match — regex is City.*ZIP."""
+        session = self._mock_session(SAMPLE_DETAIL_HTML_PORTAL_TYPO)
+        address, landlord = _fetch_case_detail(session, "https://example.com/record/7721/tok999")
+        assert address == "583 W. Lake Avenue, #3, Barberton, Oh 44203"
+        assert landlord == "Summit Rental Properties, Llc"
+
+    def test_returns_none_when_address_labels_absent(self):
+        session = self._mock_session(SAMPLE_DETAIL_HTML_NO_ADDRESS)
+        address, landlord = _fetch_case_detail(session, "https://example.com/record/7721/tok000")
+        assert address is None
 
     def test_returns_none_on_http_error(self):
-        from unittest.mock import MagicMock
-        mock_session = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 404
-        mock_session.get.return_value = mock_resp
-
-        result = _fetch_defendant_address(mock_session, "https://example.com/record/9999/bad")
-        assert result is None
+        session = self._mock_session("", status=404)
+        address, landlord = _fetch_case_detail(session, "https://example.com/record/7721/bad")
+        assert address is None
+        assert landlord is None
 
     def test_returns_none_on_exception(self):
         from unittest.mock import MagicMock
         mock_session = MagicMock()
         mock_session.get.side_effect = Exception("connection timeout")
-
-        result = _fetch_defendant_address(mock_session, "https://example.com/record/1001/tok111")
-        assert result is None
+        address, landlord = _fetch_case_detail(mock_session, "https://example.com/record/7721/err")
+        assert address is None
+        assert landlord is None
 
 
 # ---------------------------------------------------------------------------
@@ -331,11 +308,7 @@ class TestFetchDefendantAddress:
 
 def test_scraper_records_last_error_when_session_fails(monkeypatch):
     scraper = BarbertonMunicipalScraper(lookback_days=2)
-
-    def fail_ensure_session():
-        return False
-
-    monkeypatch.setattr(scraper, "_ensure_session", fail_ensure_session)
+    monkeypatch.setattr(scraper, "_ensure_session", lambda: False)
 
     filings = scraper.scrape()
 
@@ -345,14 +318,13 @@ def test_scraper_records_last_error_when_session_fails(monkeypatch):
 
 def test_scraper_records_last_error_when_search_fails(monkeypatch):
     scraper = BarbertonMunicipalScraper(lookback_days=0)
-
     monkeypatch.setattr(scraper, "_ensure_session", lambda: True)
     scraper._session_ready = True
 
-    def fail_post_search(_date):
+    def fail_get_search(_date):
         raise ConnectionResetError("connection reset")
 
-    monkeypatch.setattr(scraper, "_post_search", fail_post_search)
+    monkeypatch.setattr(scraper, "_get_search", fail_get_search)
 
     filings = scraper.scrape()
 
@@ -362,19 +334,13 @@ def test_scraper_records_last_error_when_search_fails(monkeypatch):
 
 def test_scraper_dedupes_same_case_across_dates(monkeypatch):
     scraper = BarbertonMunicipalScraper(lookback_days=2)
-
     monkeypatch.setattr(scraper, "_ensure_session", lambda: True)
     scraper._session_ready = True
 
-    def fake_post_search(_date):
-        return SAMPLE_SEARCH_HTML
-
-    def fake_fetch_address(_session, _url):
-        return None
-
-    monkeypatch.setattr(scraper, "_post_search", fake_post_search)
+    monkeypatch.setattr(scraper, "_get_search", lambda _d: SAMPLE_SEARCH_HTML)
     monkeypatch.setattr(
-        "scrapers.ohio.barberton._fetch_defendant_address", fake_fetch_address
+        "scrapers.ohio.barberton._fetch_case_detail",
+        lambda _session, _url: (None, None),
     )
 
     filings = scraper.scrape()
@@ -383,37 +349,37 @@ def test_scraper_dedupes_same_case_across_dates(monkeypatch):
     assert len(case_numbers) == len(set(case_numbers)), "Duplicate case numbers found"
 
 
-def test_scraper_upgrades_placeholder_address_when_detail_succeeds(monkeypatch):
+def test_scraper_upgrades_address_and_landlord_when_detail_succeeds(monkeypatch):
     scraper = BarbertonMunicipalScraper(lookback_days=0)
-
     monkeypatch.setattr(scraper, "_ensure_session", lambda: True)
     scraper._session_ready = True
 
-    monkeypatch.setattr(scraper, "_post_search", lambda _d: SAMPLE_SEARCH_HTML)
+    monkeypatch.setattr(scraper, "_get_search", lambda _d: SAMPLE_SEARCH_HTML)
     monkeypatch.setattr(
-        "scrapers.ohio.barberton._fetch_defendant_address",
-        lambda _session, _url: "87 Helen Street, Barberton, OH 44203",
+        "scrapers.ohio.barberton._fetch_case_detail",
+        lambda _session, _url: ("87 Helen Street, Barberton, OH 44203", "M&C MHP LLC"),
     )
 
     filings = scraper.scrape()
 
     assert len(filings) > 0
     assert filings[0].property_address == "87 Helen Street, Barberton, OH 44203"
+    assert filings[0].landlord_name == "M&C MHP LLC"
 
 
-def test_scraper_uses_unknown_fallback_when_detail_returns_none(monkeypatch):
+def test_scraper_keeps_unknown_placeholders_when_detail_returns_none(monkeypatch):
     scraper = BarbertonMunicipalScraper(lookback_days=0)
-
     monkeypatch.setattr(scraper, "_ensure_session", lambda: True)
     scraper._session_ready = True
 
-    monkeypatch.setattr(scraper, "_post_search", lambda _d: SAMPLE_SEARCH_HTML)
+    monkeypatch.setattr(scraper, "_get_search", lambda _d: SAMPLE_SEARCH_HTML)
     monkeypatch.setattr(
-        "scrapers.ohio.barberton._fetch_defendant_address",
-        lambda _session, _url: None,
+        "scrapers.ohio.barberton._fetch_case_detail",
+        lambda _session, _url: (None, None),
     )
 
     filings = scraper.scrape()
 
     assert len(filings) > 0
     assert filings[0].property_address == "Unknown"
+    assert filings[0].landlord_name == "Unknown"
