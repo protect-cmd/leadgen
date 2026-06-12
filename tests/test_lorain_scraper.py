@@ -8,8 +8,6 @@ from scrapers.ohio.lorain import (
     _group_by_case,
     _parse_case_rows,
     _parse_filing_date,
-    _parse_form_action,
-    _parse_hidden_field,
     _strip_occupant_suffix,
 )
 
@@ -18,26 +16,6 @@ from scrapers.ohio.lorain import (
 # HTML fixtures — modelled on real CourtView (equivant) HTML structure.
 # Confirmed case data: 2022CVG01367, JONES JODIE, 240 4TH ST APT A304, Elyria OH 44035
 # ---------------------------------------------------------------------------
-
-SAMPLE_FORM_HTML = """
-<html><body>
-<form action="/eservices/searchresults.page" method="post">
-  <input type="hidden" name="id5_hf_0" value="" />
-  <input name="fileDateRange:dateInputBegin" type="text" value="" />
-  <input name="fileDateRange:dateInputEnd" type="text" value="" />
-  <select name="caseCd"><option value="CVG">Eviction</option></select>
-  <input type="submit" name="submitLink" value="Search" />
-</form>
-</body></html>
-"""
-
-SAMPLE_FORM_HTML_ABSOLUTE_ACTION = """
-<html><body>
-<form action="https://eservices.elyriamunicourt.org/eservices/searchresults.page" method="post">
-  <input type="hidden" name="id7_hf_0" value="somevalue" />
-</form>
-</body></html>
-"""
 
 # Results table: two cases, each with two party rows (Plaintiff + Defendant)
 # cells: [blank, blank, case#+link, case_type, file_date, initiating_action, party_name, party_type]
@@ -94,8 +72,9 @@ SAMPLE_RESULTS_HTML_EMPTY = """
 </body></html>
 """
 
-# Case detail page with plaintiff first, then defendant
-# Matches the real CourtView text structure confirmed in the portal probe.
+# Case detail page with plaintiff first, then defendant.
+# CourtView splits address across 5 separate lines: street / city / , / state / zip.
+# Confirmed structure from real portal probe.
 SAMPLE_DETAIL_HTML = """
 <html><body>
 <div class="party-info">
@@ -107,7 +86,10 @@ Disposition
 Disp Date
 Address
 4730 SIERRA LANE
-COCONUT CREEK ,   FL   33073
+COCONUT CREEK
+,
+FL
+33073
 Alias
 Party Attorney
 
@@ -117,7 +99,10 @@ Disposition
 Disp Date
 Address
 240 4TH ST APT A304
-ELYRIA ,   OH   44035
+ELYRIA
+,
+OH
+44035
 Alias
 Party Attorney
 </div>
@@ -162,46 +147,6 @@ def test_strip_occupant_suffix_removes_and_all_other_occupants():
 
 def test_strip_occupant_suffix_leaves_plain_names_unchanged():
     assert _strip_occupant_suffix("JONES, JODIE") == "JONES, JODIE"
-
-
-# ---------------------------------------------------------------------------
-# _parse_hidden_field
-# ---------------------------------------------------------------------------
-
-def test_parse_hidden_field_extracts_name_and_value():
-    name, value = _parse_hidden_field(SAMPLE_FORM_HTML)
-    assert name == "id5_hf_0"
-    assert value == ""
-
-
-def test_parse_hidden_field_extracts_non_empty_value():
-    name, value = _parse_hidden_field(SAMPLE_FORM_HTML_ABSOLUTE_ACTION)
-    assert name == "id7_hf_0"
-    assert value == "somevalue"
-
-
-def test_parse_hidden_field_returns_none_for_no_form():
-    result = _parse_hidden_field("<html><body><p>No form here</p></body></html>")
-    assert result is None
-
-
-# ---------------------------------------------------------------------------
-# _parse_form_action
-# ---------------------------------------------------------------------------
-
-def test_parse_form_action_relative_url():
-    action = _parse_form_action(SAMPLE_FORM_HTML)
-    assert action == "https://eservices.elyriamunicourt.org/eservices/searchresults.page"
-
-
-def test_parse_form_action_absolute_url_returned_as_is():
-    action = _parse_form_action(SAMPLE_FORM_HTML_ABSOLUTE_ACTION)
-    assert action == "https://eservices.elyriamunicourt.org/eservices/searchresults.page"
-
-
-def test_parse_form_action_returns_none_for_no_form():
-    result = _parse_form_action("<html><body><p>no form</p></body></html>")
-    assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -266,12 +211,11 @@ def test_group_by_case_picks_defendant_as_tenant():
     assert cases["2026CVG00101"]["tenant_raw"] == "JONES, JODIE"
 
 
-def test_group_by_case_strips_occupant_suffix_in_tenant():
+def test_group_by_case_keeps_raw_tenant_name():
     rows = _parse_case_rows(SAMPLE_RESULTS_HTML)
     cases = _group_by_case(rows)
-    # tenant_raw stores the raw name; suffix stripped in scrape() when building Filing
-    assert "SMITH, JOHN" in cases["2026CVG00102"]["tenant_raw"] or \
-           "et al" in cases["2026CVG00102"]["tenant_raw"]
+    # tenant_raw keeps the raw name; _strip_occupant_suffix is called in scrape()
+    assert cases["2026CVG00102"]["tenant_raw"] == "SMITH, JOHN et al"
 
 
 # ---------------------------------------------------------------------------
@@ -309,8 +253,8 @@ class TestFetchDefendantAddress:
         )
         assert result == "240 4TH ST APT A304, ELYRIA, OH 44035"
 
-    def test_normalizes_extra_whitespace_in_city_line(self):
-        """City/state/zip like 'ELYRIA ,   OH   44035' must be normalized."""
+    def test_no_double_spaces_in_result(self):
+        """Address must not contain multiple consecutive spaces."""
         from unittest.mock import MagicMock
         mock_session = MagicMock()
         mock_resp = MagicMock()
@@ -319,7 +263,7 @@ class TestFetchDefendantAddress:
         mock_session.get.return_value = mock_resp
 
         result = _fetch_defendant_address(mock_session, "https://example.com/x=tok")
-        # Must not contain multiple consecutive spaces
+        assert result is not None
         assert "  " not in result
 
     def test_skips_plaintiff_address_and_returns_defendant(self):
@@ -388,7 +332,7 @@ def test_scraper_records_last_error_when_search_fails(monkeypatch):
 def test_scraper_no_error_when_search_succeeds_with_filings(monkeypatch):
     scraper = ElyriaMunicipalScraper(lookback_days=0)
 
-    monkeypatch.setattr(scraper, "_search", lambda _b, _e: SAMPLE_RESULTS_HTML)
+    monkeypatch.setattr(scraper, "_search", lambda _b, _e: _parse_case_rows(SAMPLE_RESULTS_HTML))
     monkeypatch.setattr(
         "scrapers.ohio.lorain._fetch_defendant_address",
         lambda _session, _url: "240 4TH ST APT A304, ELYRIA, OH 44035",
@@ -404,7 +348,7 @@ def test_scraper_dedupes_cases_from_results(monkeypatch):
     """Results page already groups by case — no duplicate case numbers."""
     scraper = ElyriaMunicipalScraper(lookback_days=0)
 
-    monkeypatch.setattr(scraper, "_search", lambda _b, _e: SAMPLE_RESULTS_HTML)
+    monkeypatch.setattr(scraper, "_search", lambda _b, _e: _parse_case_rows(SAMPLE_RESULTS_HTML))
     monkeypatch.setattr(
         "scrapers.ohio.lorain._fetch_defendant_address",
         lambda _session, _url: None,
@@ -419,7 +363,7 @@ def test_scraper_dedupes_cases_from_results(monkeypatch):
 def test_scraper_upgrades_placeholder_when_detail_succeeds(monkeypatch):
     scraper = ElyriaMunicipalScraper(lookback_days=0)
 
-    monkeypatch.setattr(scraper, "_search", lambda _b, _e: SAMPLE_RESULTS_HTML)
+    monkeypatch.setattr(scraper, "_search", lambda _b, _e: _parse_case_rows(SAMPLE_RESULTS_HTML))
     monkeypatch.setattr(
         "scrapers.ohio.lorain._fetch_defendant_address",
         lambda _session, _url: "240 4TH ST APT A304, ELYRIA, OH 44035",
@@ -434,7 +378,7 @@ def test_scraper_upgrades_placeholder_when_detail_succeeds(monkeypatch):
 def test_scraper_keeps_unknown_when_detail_returns_none(monkeypatch):
     scraper = ElyriaMunicipalScraper(lookback_days=0)
 
-    monkeypatch.setattr(scraper, "_search", lambda _b, _e: SAMPLE_RESULTS_HTML)
+    monkeypatch.setattr(scraper, "_search", lambda _b, _e: _parse_case_rows(SAMPLE_RESULTS_HTML))
     monkeypatch.setattr(
         "scrapers.ohio.lorain._fetch_defendant_address",
         lambda _session, _url: None,
@@ -449,7 +393,7 @@ def test_scraper_keeps_unknown_when_detail_returns_none(monkeypatch):
 def test_scraper_strips_occupant_suffix_from_tenant(monkeypatch):
     scraper = ElyriaMunicipalScraper(lookback_days=0)
 
-    monkeypatch.setattr(scraper, "_search", lambda _b, _e: SAMPLE_RESULTS_HTML)
+    monkeypatch.setattr(scraper, "_search", lambda _b, _e: _parse_case_rows(SAMPLE_RESULTS_HTML))
     monkeypatch.setattr(
         "scrapers.ohio.lorain._fetch_defendant_address",
         lambda _session, _url: None,
@@ -465,7 +409,7 @@ def test_scraper_strips_occupant_suffix_from_tenant(monkeypatch):
 def test_scraper_sets_correct_county_state_notice_type(monkeypatch):
     scraper = ElyriaMunicipalScraper(lookback_days=0)
 
-    monkeypatch.setattr(scraper, "_search", lambda _b, _e: SAMPLE_RESULTS_HTML)
+    monkeypatch.setattr(scraper, "_search", lambda _b, _e: _parse_case_rows(SAMPLE_RESULTS_HTML))
     monkeypatch.setattr(
         "scrapers.ohio.lorain._fetch_defendant_address",
         lambda _session, _url: None,
@@ -485,7 +429,7 @@ def test_scraper_placeholder_tenant_falls_back_to_unknown(monkeypatch):
     monkeypatch.setattr(mod, "clean_tenant_name", lambda _: "")
 
     scraper = ElyriaMunicipalScraper(lookback_days=0)
-    monkeypatch.setattr(scraper, "_search", lambda _b, _e: SAMPLE_RESULTS_HTML)
+    monkeypatch.setattr(scraper, "_search", lambda _b, _e: _parse_case_rows(SAMPLE_RESULTS_HTML))
     monkeypatch.setattr(
         "scrapers.ohio.lorain._fetch_defendant_address",
         lambda _session, _url: None,
