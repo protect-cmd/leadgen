@@ -246,6 +246,7 @@ def _ists_search_row(r: dict) -> dict:
         "ghl_contact_id": r.get("ghl_contact_id"),
         "bland_status": "triggered" if r.get("bland_call_id") else None,
         "landlord_name": r.get("plaintiff_name"),
+        "estimated_rent": r.get("estimated_rent"),
         "filing_date": r.get("judgment_date"),   # drives result sort (shared key)
         "judgment_date": r.get("judgment_date"), # shown explicitly in the UI for ISTS
         "court_date": None,
@@ -330,7 +331,7 @@ async def search_leads(q: str, limit: int = 20) -> list[dict]:
             _client.table("lead_contacts")
             .select(
                 "case_number,track,contact_name,phone,email,property_type,"
-                "estimated_rent,secondary_address,language_hint,"
+                "estimated_rent,secondary_address,language_hint,dnc_status,"
                 "searchbug_status,last_called_at,ghl_contact_id,bland_status,"
                 "filings(filing_date,court_date,tenant_name,property_address,"
                 "landlord_name,state,county,notice_type,source_url,lead_bucket)"
@@ -354,7 +355,7 @@ async def search_leads(q: str, limit: int = 20) -> list[dict]:
                 "filing_date,court_date,state,county,notice_type,source_url,"
                 "lead_bucket,"
                 "lead_contacts(track,contact_name,phone,email,property_type,"
-                "estimated_rent,secondary_address,searchbug_status,"
+                "estimated_rent,secondary_address,searchbug_status,dnc_status,"
                 "last_called_at,ghl_contact_id,bland_status)"
             )
             .or_(filing_or)
@@ -377,7 +378,7 @@ async def search_leads(q: str, limit: int = 20) -> list[dict]:
             .select(
                 "case_number,defendant_name,property_address,phone,dnc_status,"
                 "bland_call_id,ghl_contact_id,judgment_date,plaintiff_name,"
-                "state,county,language_hint"
+                "estimated_rent,state,county,language_hint"
             )
             .or_(",".join(ists_filters))
             .limit(limit)
