@@ -232,11 +232,36 @@ def _sanitize_search_query(q: str | None) -> str:
     return _UNSAFE_CHARS_RE.sub("", q).strip()
 
 
+def _ists_search_row(r: dict) -> dict:
+    """Map an ists_judgments row into the common search-result shape so ISTS
+    leads render in the same UI (track='ists', defendant -> tenant_name)."""
+    return {
+        "case_number": r.get("case_number"),
+        "track": "ists",
+        "tenant_name": r.get("defendant_name"),
+        "contact_name": r.get("defendant_name"),
+        "property_address": r.get("property_address"),
+        "phone": r.get("phone"),
+        "dnc_status": r.get("dnc_status"),
+        "ghl_contact_id": r.get("ghl_contact_id"),
+        "bland_status": "triggered" if r.get("bland_call_id") else None,
+        "landlord_name": r.get("plaintiff_name"),
+        "filing_date": r.get("judgment_date"),   # drives sort + "Filed" display
+        "court_date": None,
+        "state": r.get("state"),
+        "county": r.get("county"),
+        "notice_type": "Judgment",
+        "language_hint": r.get("language_hint"),
+    }
+
+
 def _merge_search_rows(
-    contact_rows: list[dict], filing_rows: list[dict], limit: int
+    contact_rows: list[dict], filing_rows: list[dict],
+    ists_rows: list[dict], limit: int
 ) -> list[dict]:
-    """Flatten contact_rows + filing_rows into one sorted list, deduped by
-    case_number. Each output row has the union of contact + filing fields."""
+    """Flatten contact + filing + ISTS-judgment matches into one sorted list,
+    deduped by case_number. Vantage rows win a case_number collision; ISTS rows
+    fill in the judgment-only leads (no lead_contacts/filings row)."""
     by_case: dict[str, dict] = {}
 
     # Lead-contact-side rows: contact fields top-level, filing fields nested
@@ -264,17 +289,24 @@ def _merge_search_rows(
         if case_no and case_no not in by_case:
             by_case[case_no] = merged
 
+    # ISTS judgments — judgment-only leads (not in lead_contacts/filings)
+    for r in ists_rows:
+        case_no = r.get("case_number")
+        if case_no and case_no not in by_case:
+            by_case[case_no] = _ists_search_row(r)
+
     out = list(by_case.values())
     out.sort(key=lambda r: r.get("filing_date") or "", reverse=True)
     return out[:limit]
 
 
 async def search_leads(q: str, limit: int = 20) -> list[dict]:
-    """Unified search across lead_contacts + filings.
+    """Unified search across lead_contacts + filings + ists_judgments.
 
-    Matches substring on name (contact_name + tenant_name), phone (digits
-    of q), case_number, and property_address. Merges results by
-    case_number, sorts by filing_date DESC, returns up to `limit` rows.
+    Matches substring on name (contact_name + tenant_name + defendant_name),
+    phone (digits of q), case_number, and property_address. Merges results by
+    case_number, sorts by filing_date DESC, returns up to `limit` rows. ISTS
+    judgment leads surface with track='ists' so callbacks can be looked up.
 
     Returns [] for queries under 2 characters.
     """
@@ -332,7 +364,28 @@ async def search_leads(q: str, limit: int = 20) -> list[dict]:
             or []
         )
 
-        return _merge_search_rows(contact_rows, filing_rows, limit)
+        ists_filters = [
+            f"defendant_name.ilike.%{safe_q}%",
+            f"case_number.ilike.%{safe_q}%",
+            f"property_address.ilike.%{safe_q}%",
+        ]
+        if digits_q:
+            ists_filters.append(f"phone.ilike.%{digits_q}%")
+        ists_rows = (
+            _client.table("ists_judgments")
+            .select(
+                "case_number,defendant_name,property_address,phone,dnc_status,"
+                "bland_call_id,ghl_contact_id,judgment_date,plaintiff_name,"
+                "state,county,language_hint"
+            )
+            .or_(",".join(ists_filters))
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+
+        return _merge_search_rows(contact_rows, filing_rows, ists_rows, limit)
 
     return await asyncio.to_thread(_query)
 
