@@ -246,7 +246,8 @@ def _ists_search_row(r: dict) -> dict:
         "ghl_contact_id": r.get("ghl_contact_id"),
         "bland_status": "triggered" if r.get("bland_call_id") else None,
         "landlord_name": r.get("plaintiff_name"),
-        "filing_date": r.get("judgment_date"),   # drives sort + "Filed" display
+        "filing_date": r.get("judgment_date"),   # drives result sort (shared key)
+        "judgment_date": r.get("judgment_date"), # shown explicitly in the UI for ISTS
         "court_date": None,
         "state": r.get("state"),
         "county": r.get("county"),

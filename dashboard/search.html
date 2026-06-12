@@ -231,7 +231,7 @@ function renderResults(rows) {
       <div>
         <div class="name">${escapeHtml(row.tenant_name || row.contact_name || '(unknown)')}</div>
         <div class="addr">${escapeHtml(row.property_address || '—')}</div>
-        <div class="meta-line">${escapeHtml(row.case_number || '')} · court ${row.court_date || '—'}</div>
+        <div class="meta-line">${escapeHtml(row.case_number || '')} · ${row.track === 'ists' ? 'judgment ' + (row.judgment_date || '—') : 'court ' + (row.court_date || '—')}</div>
       </div>
       <div class="right">
         <div class="phone">${fmtPhone(row.phone) || '—'}</div>
@@ -277,7 +277,7 @@ async function renderDetail(row) {
   detailEl.innerHTML = `
     <h2>${escapeHtml(row.tenant_name || row.contact_name || '(unknown)')}</h2>
     <div class="sub">${escapeHtml(row.state || '')}/${escapeHtml(row.county || '')} · ${escapeHtml(row.case_number || '')}</div>
-    <div class="sub">Filed ${row.filing_date || '—'} · Court ${row.court_date || '—'}</div>
+    <div class="sub">${row.track === 'ists' ? 'Judgment ' + (row.judgment_date || '—') : 'Filed ' + (row.filing_date || '—') + ' · Court ' + (row.court_date || '—')}</div>
     <div class="phone-large" id="phone-large" title="click to copy">${fmtPhone(row.phone) || '—'}</div>
     <div class="addr-large">${escapeHtml(row.property_address || '')}</div>
     <hr>
