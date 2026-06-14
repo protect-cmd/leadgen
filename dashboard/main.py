@@ -67,6 +67,7 @@ app = FastAPI(title="Grant Ellis Group Lead Queue", lifespan=lifespan)
 _HTML = Path(__file__).parent / "index.html"
 _SEARCH_HTML = Path(__file__).parent / "search.html"
 _LISTS_HTML = Path(__file__).parent / "lists.html"
+_OPS_HTML = Path(__file__).parent / "ops.html"
 _DNC_DIR = os.getenv("DNC_DIR", r"C:\Users\Zeann\Downloads\DNC Scrub")
 _QUEUE_SORT_KEYS = {
     "score": "score",
@@ -179,6 +180,21 @@ async def dashboard_queue():
 async def dashboard_lists():
     """Scored work lists: To Enrich / To Fire, with select-first-N + CSV export."""
     return FileResponse(_LISTS_HTML)
+
+
+@app.get("/ops", response_class=FileResponse, dependencies=[Depends(require_queue)])
+async def dashboard_ops():
+    """Operations dashboard: scrape health, per-track funnel, spend, 7-day trend."""
+    return FileResponse(_OPS_HTML)
+
+
+@app.get("/api/ops", dependencies=[Depends(require_queue)])
+async def api_ops():
+    """All ops-dashboard aggregations in one payload (per-section fault-isolated)."""
+    from services.dedup_service import _client as sb
+    from services.enrichment_cache import get_cache
+    from services import ops_stats
+    return JSONResponse(ops_stats.get_ops_stats(sb, get_cache()))
 
 
 @app.get("/api/queue/{which}", dependencies=[Depends(require_queue)])

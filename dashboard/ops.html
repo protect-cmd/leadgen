@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ops Dashboard</title>
+<style>
+  :root{ --bg:#0f1419; --panel:#171e26; --line:#263241; --txt:#e6edf3; --mut:#8b98a5;
+         --accent:#3b82f6; --g:#16a34a; --y:#ca8a04; --r:#dc2626; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--txt); }
+  header{ padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:18px; }
+  h1{ font-size:16px; margin:0; font-weight:600; }
+  a.nav{ color:var(--mut); text-decoration:none; font-weight:600; padding:4px 8px; border-radius:6px; }
+  a.nav:hover{ color:var(--txt); }
+  .sub{ color:var(--mut); font-size:12px; }
+  .asof{ margin-left:auto; color:var(--mut); font-size:12px; }
+  .wrap{ padding:16px 20px 48px; display:grid; gap:16px; }
+  .card{ background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .card h2{ margin:0 0 10px; font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); font-weight:700; }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media(max-width:860px){ .grid2{ grid-template-columns:1fr; } }
+  /* health */
+  .flag{ display:flex; align-items:center; gap:8px; padding:5px 0; }
+  .dot{ width:9px; height:9px; border-radius:50%; flex:none; }
+  .dot.ok{ background:var(--g); } .dot.warn{ background:var(--y); } .dot.red{ background:var(--r); }
+  /* spend strip */
+  .strip{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+  .metric{ border:1px solid var(--line); border-radius:8px; padding:10px 12px; background:#101821; }
+  .metric .lbl{ color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+  .metric .val{ font-size:22px; font-weight:700; color:#fff; margin-top:2px; }
+  .metric .val small{ font-size:13px; color:var(--mut); font-weight:600; }
+  .metric.warn .val{ color:#facc15; } .metric.red .val{ color:#f87171; }
+  /* tables */
+  table{ width:100%; border-collapse:collapse; }
+  th,td{ text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th{ color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+  td.num{ text-align:right; font-variant-numeric:tabular-nums; }
+  td.miss{ color:#f87171; }
+  .spark{ font-family:ui-monospace,Menlo,Consolas,monospace; letter-spacing:1px; color:#7dd3fc; }
+  /* funnel */
+  .stage{ display:grid; grid-template-columns:1fr auto auto; gap:10px; align-items:center; padding:5px 0; border-bottom:1px solid var(--line); }
+  .stage .name{ color:var(--txt); }
+  .stage .cnt{ font-weight:700; font-variant-numeric:tabular-nums; }
+  .stage .pct{ color:var(--mut); font-size:12px; min-width:48px; text-align:right; }
+  .pct.drop{ color:#f87171; }
+  .outcomes{ display:flex; gap:18px; margin-top:10px; }
+  .outcome{ flex:1; border:1px solid var(--line); border-radius:8px; padding:8px 10px; background:#101821; }
+  .outcome .lbl{ color:var(--mut); font-size:11px; text-transform:uppercase; }
+  .outcome .val{ font-size:20px; font-weight:700; color:#fff; }
+  .track-h{ font-size:13px; font-weight:700; margin-bottom:6px; color:#cbd5e1; }
+  .loading{ padding:40px; text-align:center; color:var(--mut); }
+  .err{ color:#f87171; font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ops Dashboard</h1>
+  <a class="nav" href="/">Search</a>
+  <a class="nav" href="/lists">Lists</a>
+  <a class="nav" href="/ops" style="color:#fff">Ops</a>
+  <span class="asof" id="asof"></span>
+</header>
+
+<div class="wrap" id="wrap">
+  <div class="loading" id="loading">Loading…</div>
+</div>
+
+<script>
+const BLOCKS = "▁▂▃▄▅▆▇█";
+
+function esc(s){ return String(s==null?"":s).replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+function num(n){ return n==null ? "—" : Number(n).toLocaleString(); }
+
+function healthCard(h){
+  const flags = (h.flags||[]).map(f =>
+    `<div class="flag"><span class="dot ${esc(f.level)}"></span><span>${esc(f.msg)}</span></div>`
+  ).join("") || `<div class="flag"><span class="dot ok"></span>All systems nominal</div>`;
+  return `<div class="card"><h2>Health</h2>${flags}</div>`;
+}
+
+function spendCard(s){
+  const m = (lbl, val, sub, cls="") =>
+    `<div class="metric ${cls}"><div class="lbl">${lbl}</div><div class="val">${val}${sub?` <small>${sub}</small>`:""}</div></div>`;
+  const blandCls = (s.bland_cap && s.bland_today >= s.bland_cap) ? "red" : (s.bland_cap && s.bland_today >= s.bland_cap*0.8 ? "warn" : "");
+  const sbCls = (s.searchbug_cap && s.searchbug_today >= s.searchbug_cap) ? "red" : "";
+  const cred = s.rentometer_credits;
+  const credCls = (cred!=null && cred < 50) ? "warn" : "";
+  return `<div class="card"><h2>Spend today</h2><div class="strip">
+    ${m("Bland dials", num(s.bland_today), `/ ${num(s.bland_cap)} cap`, blandCls)}
+    ${m("SearchBug lookups", num(s.searchbug_today), `/ ${num(s.searchbug_cap)} cap`, sbCls)}
+    ${m("Rentometer credits", cred==null?"—":num(cred), s.rentometer_as_of?("as of "+esc(s.rentometer_as_of).slice(0,10)):"", credCls)}
+  </div></div>`;
+}
+
+function scrapesCard(sc){
+  const rows = (sc.rows||[]).map(r => `<tr>
+    <td>${esc(r.county)}</td>
+    <td class="${r.missing?"miss":"num"}">${r.missing?"no run today":num(r.received)}</td>
+    <td class="num">${r.missing?"—":num(r.new)}</td>
+    <td class="num">${r.missing?"—":num(r.dupes)}</td>
+    <td>${r.last_run||"—"}</td>
+    <td class="spark">${esc(r.spark7)}</td>
+  </tr>`).join("");
+  return `<div class="card"><h2>Scrapes — today + 7-day</h2><table>
+    <thead><tr><th>County</th><th class="num">Received</th><th class="num">New</th><th class="num">Dupes</th><th>Last run</th><th>7-day</th></tr></thead>
+    <tbody>${rows||`<tr><td colspan="6" class="sub">No run_metrics.</td></tr>`}</tbody></table></div>`;
+}
+
+function funnelCol(name, t){
+  const stages = (t.stages||[]).map(s => {
+    const drop = (s.pct!=null && s.pct < 100) ? "drop" : "";
+    const pct = s.pct==null ? "" : `<span class="pct ${drop}">${s.pct}%</span>`;
+    return `<div class="stage"><span class="name">${esc(s.label)}</span><span class="cnt">${num(s.count)}</span>${pct||'<span class="pct"></span>'}</div>`;
+  }).join("");
+  const o = t.outcomes||{};
+  const outcomes = `<div class="outcomes">
+    <div class="outcome"><div class="lbl">Fired (Bland)</div><div class="val">${num(o.fired)}</div></div>
+    <div class="outcome"><div class="lbl">Staged (GHL)</div><div class="val">${num(o.staged)}</div></div>
+  </div>`;
+  return `<div><div class="track-h">${esc(name)}</div>${stages}${outcomes}</div>`;
+}
+
+function funnelCard(f){
+  return `<div class="card"><h2>Funnel — in-window leads (% = retained from prior stage)</h2>
+    <div class="grid2">${funnelCol("Vantage · 21-day", f.vantage||{})}${funnelCol("ISTS · 14-day", f.ists||{})}</div></div>`;
+}
+
+function trendCard(tr){
+  const days = (tr.days||[]).map(d=>d.slice(5)).join("  ");
+  const line = (lbl, vals) => `<div class="stage"><span class="name">${lbl}</span><span class="spark">${spark(vals)}</span><span class="pct">${num((vals||[]).reduce((a,b)=>a+b,0))}</span></div>`;
+  return `<div class="card"><h2>7-day trend</h2>
+    ${line("Filings scraped", tr.filings)}
+    ${line("Phones found", tr.phones)}
+    ${line("Fired (Bland)", tr.fired)}
+    <div class="sub" style="margin-top:8px">${days}</div></div>`;
+}
+
+function spark(values){
+  if(!values || !values.length) return "";
+  const lo = Math.min(...values), hi = Math.max(...values);
+  if(hi===lo) return BLOCKS[Math.floor(BLOCKS.length/2)].repeat(values.length);
+  const span = hi-lo;
+  return values.map(v=>BLOCKS[Math.floor((v-lo)/span*(BLOCKS.length-1))]).join("");
+}
+
+function section(title, data, builder){
+  if(data && data.error) return `<div class="card"><h2>${title}</h2><div class="err">section failed: ${esc(data.error)}</div></div>`;
+  try{ return builder(data||{}); }
+  catch(e){ return `<div class="card"><h2>${title}</h2><div class="err">render error: ${esc(e)}</div></div>`; }
+}
+
+async function load(){
+  const res = await fetch("/api/ops");
+  const wrap = document.getElementById("wrap");
+  if(!res.ok){ wrap.innerHTML = `<div class="card err">Load failed: HTTP ${res.status}</div>`; return; }
+  const d = await res.json();
+  document.getElementById("asof").textContent = d.as_of ? ("as of "+d.as_of.replace("T"," ").slice(0,16)+" UTC") : "";
+  wrap.innerHTML = [
+    section("Health", d.health, healthCard),
+    section("Spend today", d.spend, spendCard),
+    section("Scrapes", d.scrapes, scrapesCard),
+    section("Funnel", d.funnel, funnelCard),
+    section("7-day trend", d.trend, trendCard),
+  ].join("");
+}
+
+load();
+</script>
+</body>
+</html>
