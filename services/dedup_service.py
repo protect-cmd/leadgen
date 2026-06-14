@@ -668,6 +668,12 @@ async def set_bland_status(case_number: str, track: str, status: str, call_id: s
         if call_id:
             payload[col_call_id] = call_id
             lead_payload["bland_call_id"] = call_id
+            # Per-fire timestamp for the ops dashboard's fired/day trend. Guard on
+            # column discovery: _execute_optional_lead_contact_write suppresses the
+            # WHOLE write on error, so sending an unknown column would silently drop
+            # bland_call_id too (breaking fire idempotency) until migration 021 lands.
+            if "bland_triggered_at" in _lead_contact_known_columns():
+                lead_payload["bland_triggered_at"] = datetime.now(timezone.utc).isoformat()
         _execute_optional_lead_contact_write(
             _client.table("lead_contacts").update(lead_payload).eq(
                 "case_number",

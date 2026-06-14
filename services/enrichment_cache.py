@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 
 _TTL_SECONDS = 30 * 86400  # 30 days
 
@@ -67,6 +67,13 @@ class EnrichmentCache:
                     key  TEXT NOT NULL,
                     date TEXT NOT NULL,
                     PRIMARY KEY (key, date)
+                )
+            """)
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS ops_kv (
+                    key        TEXT PRIMARY KEY,
+                    value      TEXT,
+                    updated_at TEXT NOT NULL
                 )
             """)
             con.execute("""
@@ -168,6 +175,35 @@ class EnrichmentCache:
                 "ON CONFLICT(date, kind) DO UPDATE SET count = count + 1",
                 (today, kind),
             )
+
+    def daily_count(self, kind: str = "searchbug") -> int:
+        """Today's counter value for `kind` (0 if none). Used by the ops dashboard
+        spend strip; check_daily_cap stays the boolean gate."""
+        today = date.today().isoformat()
+        with sqlite3.connect(self._db_path) as con:
+            row = con.execute(
+                "SELECT count FROM daily_cap WHERE date=? AND kind=?", (today, kind)
+            ).fetchone()
+        return row[0] if row else 0
+
+    def set_ops_value(self, key: str, value: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(self._db_path) as con:
+            con.execute(
+                "INSERT INTO ops_kv (key, value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                (key, value, now),
+            )
+
+    def get_ops_value(self, key: str) -> str | None:
+        with sqlite3.connect(self._db_path) as con:
+            row = con.execute("SELECT value FROM ops_kv WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def get_ops_value_with_ts(self, key: str) -> tuple[str | None, str | None]:
+        with sqlite3.connect(self._db_path) as con:
+            row = con.execute("SELECT value, updated_at FROM ops_kv WHERE key=?", (key,)).fetchone()
+        return (row[0], row[1]) if row else (None, None)
 
     def claim_alert_once_today(self, key: str) -> bool:
         """Atomically claim an alert key for today. Returns True if the caller
