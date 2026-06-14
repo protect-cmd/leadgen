@@ -2,8 +2,30 @@ from scripts.backfill_rent import (
     _apply_extracted_date_filter,
     _order_scored_backfill_rows,
     _prepare_ists_backfill_rows,
+    _select_vantage,
     rentometer_median,
 )
+
+
+def test_select_vantage_uses_yield_targeting_and_drops_tail():
+    yields = {"HI": {"median": 2000.0, "pct": 0.9, "n": 10}}
+    priority = {"PRI"}
+    rows = [
+        {"case_number": "hi", "property_zip": "HI"},
+        {"case_number": "pri", "property_zip": "PRI"},
+        {"case_number": "tail", "property_zip": "ZZZ"},  # unproven, not priority
+    ]
+    out = [r["case_number"] for r in _select_vantage(rows, yields, priority, cap=10)]
+    assert out[0] == "hi"          # proven ZIP ranks first
+    assert "pri" in out            # priority-only kept (2nd tier)
+    assert "tail" not in out       # tail dropped — no Rentometer spend on unproven ZIPs
+
+
+def test_select_vantage_all_zips_keeps_everything():
+    rows = [{"case_number": "tail", "property_zip": "ZZZ",
+             "priority_rank": None, "filing_date": "2026-06-10"}]
+    out = [r["case_number"] for r in _select_vantage(rows, {}, set(), cap=10, all_zips=True)]
+    assert out == ["tail"]         # escape hatch bypasses the tail-drop
 
 
 def test_order_scored_backfill_rows_priority_first_then_fresh_and_cap():
