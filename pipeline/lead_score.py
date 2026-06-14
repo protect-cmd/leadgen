@@ -10,11 +10,13 @@ from datetime import date
 
 from services.name_utils import clean_tenant_name, is_common_surname, parse_name
 
-_W_RENT = 50
-_W_MATCH = 30
-_W_FRESH = 20
-_RENT_FLOOR = 800.0
-_RENT_CAP = 3500.0
+# Weight profiles (rent/match/fresh must sum to 100) + rent floor/cap per track.
+_PROFILES = {
+    "vantage": dict(w_rent=50, w_match=30, w_fresh=20, rent_floor=800.0, rent_cap=3500.0),
+    # ISTS: judgments don't time-decay like pre-court filings and cluster near the
+    # rent floor, so drop freshness (-> rent+match) and lower the floor for spread.
+    "ists":    dict(w_rent=60, w_match=40, w_fresh=0,  rent_floor=1200.0, rent_cap=3500.0),
+}
 _COMMON_SURNAME_FACTOR = 0.55
 
 
@@ -29,25 +31,30 @@ def score_lead(
     lead_date: date | None,
     today: date,
     fresh_window_days: int = 21,
+    profile: str = "vantage",
 ) -> int:
-    """Return a 0-100 lead score.
+    """Return a 0-100 lead score using the named weight profile.
 
     rent is a market rent estimate; None contributes 0 rent points. lead_date is
     filing_date for Vantage and judgment_date for ISTS.
     """
+    p = _PROFILES[profile]
+
     rent_pts = 0.0
     if rent:
-        rent_pts = _W_RENT * _clamp((float(rent) - _RENT_FLOOR) / (_RENT_CAP - _RENT_FLOOR))
+        rent_pts = p["w_rent"] * _clamp(
+            (float(rent) - p["rent_floor"]) / (p["rent_cap"] - p["rent_floor"])
+        )
 
     first, last = parse_name(clean_tenant_name(tenant_name or ""))
     common = bool(last and is_common_surname(last))
-    match_pts = _W_MATCH * (_COMMON_SURNAME_FACTOR if common else 1.0)
+    match_pts = p["w_match"] * (_COMMON_SURNAME_FACTOR if common else 1.0)
 
-    if lead_date is None:
+    if lead_date is None or not p["w_fresh"]:
         fresh_pts = 0.0
     else:
         age = (today - lead_date).days
-        fresh_pts = _W_FRESH * _clamp((fresh_window_days - age) / fresh_window_days)
+        fresh_pts = p["w_fresh"] * _clamp((fresh_window_days - age) / fresh_window_days)
 
     return max(0, min(100, round(rent_pts + match_pts + fresh_pts)))
 
