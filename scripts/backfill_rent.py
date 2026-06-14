@@ -76,6 +76,13 @@ def rentometer_median(address: str, bedrooms: int = 2):
             context=_CTX,
         )
         d = json.loads(resp.read())
+        credits = d.get("credits_remaining")
+        if credits is not None:
+            try:
+                from services.enrichment_cache import get_cache
+                get_cache().set_ops_value("rentometer_credits", str(int(credits)))
+            except Exception:
+                pass  # never let bookkeeping break a rent lookup
         return None if d.get("error") else d.get("median")
     except HTTPError as exc:
         if exc.code in {401, 402, 403}:
