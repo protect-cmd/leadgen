@@ -93,15 +93,16 @@ def funnel(sb, *, today: date | None = None) -> dict:
     callable_ = [r for r in phoned if r.get("dnc_status") == "callable"]
     fired = [r for r in lc_ge if r.get("bland_call_id")]
     staged = [r for r in lc_ge if r.get("ghl_contact_id")]
-    vantage = with_pct([
-        {"label": "Scraped", "count": len(fil)},
-        {"label": "Enrichable", "count": len(enrich)},
-        {"label": "Rent >= $1600", "count": len(ge1600)},
-        {"label": "Phone found", "count": len(phoned)},
-        {"label": "Callable", "count": len(callable_)},
-        {"label": "Fired", "count": len(fired)},
-        {"label": "Staged to GHL", "count": len(staged)},
-    ])
+    vantage = {
+        "stages": with_pct([
+            {"label": "Scraped", "count": len(fil)},
+            {"label": "Enrichable", "count": len(enrich)},
+            {"label": "Rent >= $1600", "count": len(ge1600)},
+            {"label": "Phone found", "count": len(phoned)},
+            {"label": "Callable", "count": len(callable_)},
+        ]),
+        "outcomes": {"fired": len(fired), "staged": len(staged)},
+    }
 
     # ISTS
     j = _paginate(sb, "ists_judgments",
@@ -112,15 +113,16 @@ def funnel(sb, *, today: date | None = None) -> dict:
     jcall = [r for r in jphone if r.get("dnc_status") == "callable"]
     jfired = [r for r in jge if r.get("bland_call_id")]
     jstaged = [r for r in jge if r.get("ghl_contact_id")]
-    ists = with_pct([
-        {"label": "Scraped", "count": len(j)},
-        {"label": "Fresh (14d)", "count": len(fresh)},
-        {"label": "Rent >= $1600", "count": len(jge)},
-        {"label": "Phone found", "count": len(jphone)},
-        {"label": "Callable", "count": len(jcall)},
-        {"label": "Fired", "count": len(jfired)},
-        {"label": "Staged to GHL", "count": len(jstaged)},
-    ])
+    ists = {
+        "stages": with_pct([
+            {"label": "Scraped", "count": len(j)},
+            {"label": "Fresh (14d)", "count": len(fresh)},
+            {"label": "Rent >= $1600", "count": len(jge)},
+            {"label": "Phone found", "count": len(jphone)},
+            {"label": "Callable", "count": len(jcall)},
+        ]),
+        "outcomes": {"fired": len(jfired), "staged": len(jstaged)},
+    }
     return {"vantage": vantage, "ists": ists}
 
 

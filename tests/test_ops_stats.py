@@ -89,16 +89,16 @@ def test_funnel_counts_and_pct_drop():
          "bland_call_id": None, "ghl_contact_id": "g2"},
     ]
     sb = FakeSB({"filings": filings, "lead_contacts": lead_contacts, "ists_judgments": []})
-    f = ops.funnel(sb, today=today)["vantage"]
-    by = {s["label"]: s["count"] for s in f}
+    v = ops.funnel(sb, today=today)["vantage"]
+    by = {s["label"]: s["count"] for s in v["stages"]}
     assert by["Scraped"] == 4
     assert by["Enrichable"] == 3
     assert by["Rent >= $1600"] == 2
     assert by["Phone found"] == 2
     assert by["Callable"] == 1
-    assert by["Fired"] == 1
-    assert by["Staged to GHL"] == 2
-    assert next(s for s in f if s["label"] == "Enrichable")["pct"] == 75
+    assert "Fired" not in by and "Staged to GHL" not in by   # outcomes, not stages
+    assert v["outcomes"] == {"fired": 1, "staged": 2}
+    assert next(s for s in v["stages"] if s["label"] == "Enrichable")["pct"] == 75
 
 
 # --------------------------------------------------------------------------- #
