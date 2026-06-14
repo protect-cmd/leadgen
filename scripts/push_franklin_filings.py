@@ -47,6 +47,20 @@ async def push_filings_to_supabase(
     )
 
 
+async def _emit_run_metrics(summary: PushSummary) -> None:
+    """Write a run_metrics row so the raw-push job is visible to monitoring
+    (it bypasses the runner, which is why Franklin showed 0 metrics rows)."""
+    from datetime import datetime, timezone
+    from services import dedup_service
+    await dedup_service.write_run_metrics({
+        "run_at": datetime.now(timezone.utc).isoformat(),
+        "state": "OH",
+        "county": "Franklin",
+        "filings_received": summary.received,
+        "duplicates_skipped": summary.duplicates,
+    })
+
+
 def format_summary(summary: PushSummary) -> list[str]:
     return [
         "Franklin Supabase filing push",
@@ -93,6 +107,7 @@ async def main_async(argv: list[str] | None = None) -> int:
     )
     for line in format_summary(summary):
         print(line)
+    await _emit_run_metrics(summary)
     if args.notify:
         from services import notification_service
 
