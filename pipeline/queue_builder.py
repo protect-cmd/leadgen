@@ -14,6 +14,8 @@ from pipeline.lead_score import score_lead
 from pipeline.qualification import extract_property_zip
 from services.name_utils import clean_tenant_name, parse_name
 
+ISTS_WINDOW_DAYS = 14   # single legal-window for ISTS enrich + fire (was a 7/14 split)
+
 
 def _person_key(name: str | None, zip_: str | None) -> str | None:
     """Cross-track identity = normalized first+last + property ZIP. None if unparseable."""
@@ -52,7 +54,8 @@ def _is_fireable_contact(contact: dict) -> bool:
     return contact.get("searchbug_status") not in _REVIEW_SEARCHBUG_STATUSES
 
 
-def _score_and_sort(rows: list[dict], today: date, window: int = 21) -> list[dict]:
+def _score_and_sort(rows: list[dict], today: date, window: int = 21,
+                    profile: str = "vantage") -> list[dict]:
     for r in rows:
         ld = date.fromisoformat(r["filing_date"]) if r.get("filing_date") else None
         r["score"] = score_lead(
@@ -61,6 +64,7 @@ def _score_and_sort(rows: list[dict], today: date, window: int = 21) -> list[dic
             lead_date=ld,
             today=today,
             fresh_window_days=window,
+            profile=profile,
         )
     rows.sort(key=lambda r: (r.get("priority_rank") is None, r.get("priority_rank") or 0,
                              -r["score"], [-ord(c) for c in (r.get("filing_date") or "")]))
@@ -99,7 +103,7 @@ def build_ists_to_enrich(sb, dnc_dir: str, today: date | None = None) -> list[di
     """ISTS To-Enrich: tenant-lost judgments (gated at scrape) not yet enriched,
     within the 7-day legal window. Scored on judgment_date (7-day freshness)."""
     today = today or date.today()
-    fresh = (today - timedelta(days=7)).isoformat()
+    fresh = (today - timedelta(days=ISTS_WINDOW_DAYS)).isoformat()
     pri = _priority_map(sb)
 
     rows, off = [], 0
@@ -121,7 +125,7 @@ def build_ists_to_enrich(sb, dnc_dir: str, today: date | None = None) -> list[di
         z = extract_property_zip(r.get("property_address") or "")
         rank, metro = pri.get(z, (None, None))
         r["priority_rank"], r["priority_metro"] = rank, metro
-    return _score_and_sort(rows, today, window=7)
+    return _score_and_sort(rows, today, window=ISTS_WINDOW_DAYS, profile="ists")
 
 
 def build_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict]:
@@ -188,7 +192,7 @@ def build_ists_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict
     """ISTS To-Fire: judgments enriched (phone) + scrubbed-callable + not-yet-dialed,
     within the dial window. Fires through the ISTS pipeline (ists_ghl + ists_bland)."""
     today = today or date.today()
-    fresh = (today - timedelta(days=14)).isoformat()
+    fresh = (today - timedelta(days=ISTS_WINDOW_DAYS)).isoformat()
     pri = {p["zip"]: (p["queue_rank"], p["metro"])
            for p in (sb.table("priority_zips").select("zip,queue_rank,metro").execute().data or [])}
 
@@ -217,4 +221,4 @@ def build_ists_to_fire(sb, dnc_dir: str, today: date | None = None) -> list[dict
         r["staged"] = bool(r.get("ghl_contact_id"))
         rank, metro = pri.get(extract_property_zip(r.get("property_address") or ""), (None, None))
         r["priority_rank"], r["priority_metro"] = rank, metro
-    return _score_and_sort(rows, today, window=7)
+    return _score_and_sort(rows, today, window=ISTS_WINDOW_DAYS, profile="ists")

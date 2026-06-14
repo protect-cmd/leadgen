@@ -54,3 +54,25 @@ def test_ists_uses_tighter_window():
 def test_score_bounded_0_100():
     assert 0 <= _s(None, name="John Smith", d=date(2025, 1, 1)) <= 100
     assert 0 <= _s(3500) <= 100
+
+
+def test_ists_profile_ignores_freshness():
+    fresh = score_lead(rent=2500, tenant_name="Maria Lopez",
+                       lead_date=date(2026, 6, 11), today=TODAY, profile="ists")
+    stale = score_lead(rent=2500, tenant_name="Maria Lopez",
+                       lead_date=date(2026, 5, 1), today=TODAY, profile="ists")
+    assert fresh == stale          # freshness weight is 0 for ISTS
+
+
+def test_ists_profile_spreads_low_rents_above_floor():
+    low = score_lead(rent=1600, tenant_name="John Q", lead_date=TODAY,
+                     today=TODAY, profile="ists")
+    high = score_lead(rent=2400, tenant_name="John Q", lead_date=TODAY,
+                      today=TODAY, profile="ists")
+    assert 0 < low < high          # $1600 floor still scores; higher rent ranks higher
+
+
+def test_vantage_profile_unchanged_default():
+    # rent 50 (at cap) + match 30 (non-common) + fresh 20 (age 0) = 100
+    assert score_lead(rent=3500, tenant_name="John Q",
+                      lead_date=TODAY, today=TODAY) == 100
