@@ -1,5 +1,5 @@
 # jobs/run_ists_harris.py
-"""Manual ISTS sub-project A run (Harris). NOT wired into daily_scheduler.
+"""ISTS sub-project A run (Harris). Scheduled daily via daily_scheduler.
 
     python -m jobs.run_ists_harris --dry-run   # print + metrics, no DB write
     python -m jobs.run_ists_harris             # also upserts to ists_judgments
@@ -8,8 +8,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import sys
 from collections import Counter
 from datetime import date
+from pathlib import Path
+
+# Allow running as a plain script (python jobs/run_ists_harris.py) under the
+# scheduler, not just `python -m jobs.run_ists_harris`.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scrapers.texas.harris_judgments import HarrisJudgmentScraper
 from services.ists_prior_work import annotate_prior_work

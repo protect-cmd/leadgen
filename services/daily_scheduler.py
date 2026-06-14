@@ -30,7 +30,9 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
     # docs/superpowers/specs/2026-05-29-tarrant-rebuild-design.md
     # ScheduledJob("tarrant", 13, 10, "run_tarrant.py", args=("--pipe",)),
     ScheduledJob("tennessee", 13, 20, "run_tennessee.py"),
-    ScheduledJob("arizona", 13, 40, "run_arizona.py", args=("--pipe", "--notify")),
+    # scrape-only (Phase 5.2): inline enrichment removed — enrichment is now
+    # operator-driven via /lists "Enrich selected".
+    ScheduledJob("arizona", 13, 40, "run_arizona.py", args=("--notify",)),
     # georgia_cobb DESCHEDULED 2026-05-29 - 200 filings / 4% gate pass rate.
     # Underlying cause: Nominatim geocoder (which Cobb's assessor chain
     # depends on for address enrichment) is unreliable. See follow-up:
@@ -48,8 +50,14 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
         14,
         40,
         "run_ohio.py",
-        args=("--lookback-days", "2", "--counties", "hamilton", "--pipe", "--notify"),
+        args=("--lookback-days", "2", "--counties", "hamilton", "--notify"),
     ),
+    # --- post-scrape automation (Phase 1) ---
+    # ISTS judgment scrape first so judgments exist before the chain's rent step.
+    ScheduledJob("ists_harris", 14, 50, "run_ists_harris.py"),
+    # Ordered chain: flag_enrichable -> normalize_court_date -> backfill_rent
+    # (rent OFF unless RENT_BACKFILL_DAILY_CAP is set).
+    ScheduledJob("post_scrape_chain", 15, 10, "../scripts/post_scrape_chain.py"),
 )
 
 
