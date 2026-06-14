@@ -129,6 +129,22 @@ def test_health_flags_dark_scraper(monkeypatch):
     assert "Hamilton" in msgs and "dark" in msgs.lower()
 
 
+def test_trend_survives_missing_bland_triggered_at(monkeypatch):
+    # Pre-migration: lead_contacts.bland_triggered_at doesn't exist -> the fired
+    # query raises, but filings/phones (from run_metrics) must still populate.
+    today = date(2026, 6, 15)
+    monkeypatch.setattr(ops, "_paginate_rm",
+                        lambda sb, gte: [{"run_at": "2026-06-15T13:00:00Z",
+                                          "filings_received": 10, "phones_found": 3}])
+    def _boom(*a, **k):
+        raise RuntimeError("column lead_contacts.bland_triggered_at does not exist")
+    monkeypatch.setattr(ops, "_paginate", _boom)
+    out = ops.trend(FakeSB({}), today=today)
+    assert sum(out["filings"]) == 10        # from run_metrics, unaffected
+    assert sum(out["phones"]) == 3
+    assert out["fired"] == [0, 0, 0, 0, 0, 0, 0]   # degraded to zeros, no crash
+
+
 def test_get_ops_stats_isolates_section_errors(monkeypatch):
     monkeypatch.setattr(ops, "funnel", lambda sb, today=None: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(ops, "scrapes", lambda sb, today=None: {"rows": []})

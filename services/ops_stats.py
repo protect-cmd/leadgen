@@ -206,12 +206,15 @@ def trend(sb, *, today: date | None = None) -> dict:
             filings[d] += r.get("filings_received") or 0
             phones[d] += r.get("phones_found") or 0
     fired = {d: 0 for d in days}
-    for table in ("lead_contacts", "ists_judgments"):
-        for r in _paginate(sb, table, "case_number,bland_triggered_at",
-                           lambda q: q.gte("bland_triggered_at", days[0])):
-            d = (r.get("bland_triggered_at") or "")[:10]
-            if d in fired:
-                fired[d] += 1
+    try:
+        for table in ("lead_contacts", "ists_judgments"):
+            for r in _paginate(sb, table, "case_number,bland_triggered_at",
+                               lambda q: q.gte("bland_triggered_at", days[0])):
+                fd = (r.get("bland_triggered_at") or "")[:10]
+                if fd in fired:
+                    fired[fd] += 1
+    except Exception:
+        pass  # bland_triggered_at absent until migration 021 lands — keep filings/phones
     return {"filings": [filings[d] for d in days], "phones": [phones[d] for d in days],
             "fired": [fired[d] for d in days], "days": days}
 
