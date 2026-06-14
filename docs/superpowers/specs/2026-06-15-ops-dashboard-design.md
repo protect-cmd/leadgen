@@ -34,7 +34,7 @@ Mirrors the existing `/lists` and `/search` pattern:
               "bland_today": 99, "bland_cap": 100,
               "rentometer_credits": 263, "rentometer_as_of": "2026-06-14T..."},
   "funnel":  {"vantage": {...stage counts...}, "ists": {...}},
-  "trend":   {"filings":[...7], "phones":[...7]}
+  "trend":   {"filings":[...7], "phones":[...7], "fired":[...7]}
 }
 ```
 
@@ -76,9 +76,13 @@ Stage counts over the active window (Vantage 21d on `filing_date`; ISTS 14d on `
 | Staged to GHL | `lead_contacts.ghl_contact_id` set | `ists_judgments.ghl_contact_id` set |
 
 ### 5. 7-day trend
-Two sparklines (or a tiny table): **filings/day** and **phones-found/day**, totals across counties, sourced from `run_metrics` (`filings_received`, `phones_found`) which has a `run_at` timestamp per row.
+Three sparklines (or a tiny table): **filings/day**, **phones-found/day**, and **fired/day**, totals across counties/tracks.
+- filings/day, phones/day — from `run_metrics` (`filings_received`, `phones_found`), which has a `run_at` per row.
+- fired/day — union of `lead_contacts.bland_triggered_at` (ng/Vantage, **new column** — see below) + `ists_judgments.bland_triggered_at` (already exists), bucketed by day.
 
-*Note:* a **fired/day** trend is intentionally omitted — `lead_contacts` has no per-fire timestamp (only `bland_call_id` + `bland_status`), so Vantage fires can't be bucketed by day without a schema change. The funnel's cumulative "Fired" count works fine (counts `bland_call_id` present); only the daily trend needs a timestamp. Adding `lead_contacts.bland_triggered_at` is a clean future follow-up if a fired-trend is wanted.
+**New: `lead_contacts.bland_triggered_at`.** `lead_contacts` currently has no per-fire timestamp, so this design adds one (additive, nullable `TIMESTAMPTZ`). It is set in `dedup_service.set_bland_status(...)` whenever a fire dispatches (`call_id` present).
+
+**Pre-migration safety (critical):** `set_bland_status` writes via `_execute_optional_lead_contact_write`, which suppresses the *entire* `lead_contacts` update on any error. So `bland_triggered_at` must NOT be added to the payload blindly — on an environment without the column, the write would fail and silently drop `bland_call_id` too, breaking fire idempotency (leads would look undialed and re-fire). The implementation must gate the field through the existing `_lead_contact_known_columns()` discovery helper: only include `bland_triggered_at` when the column is present. This makes deploy order irrelevant (deploy code → apply migration → the field starts populating).
 
 ## Design decisions
 
@@ -103,6 +107,7 @@ On page load + a manual **Refresh** button. No auto-refresh (the user did not wa
 - Health-flag thresholds (dark scraper, missing-today, chain-not-run, at-cap, DNCScrub unset) → correct chips.
 - Per-section error isolation (a raising query yields `{"error":...}`, others still populate).
 - Spend strip reads the per-kind daily counters + last-known Rentometer value.
+- `set_bland_status` stamps `bland_triggered_at` when the column is known, and **omits it** (still writing `bland_call_id`) when `_lead_contact_known_columns()` doesn't list it — guarding the pre-migration window.
 
 (The HTML is rendered/validated manually via the `/ops` route; no browser unit tests.)
 
@@ -115,7 +120,11 @@ On page load + a manual **Refresh** button. No auto-refresh (the user did not wa
 | `dashboard/main.py` (modify) | `GET /ops` + `GET /api/ops` (auth) |
 | `services/enrichment_cache.py` (modify) | tiny `ops_kv` get/set for last-known Rentometer credits |
 | `scripts/backfill_rent.py` / rent call path (modify) | record `credits_remaining` after Rentometer calls |
+| `migrations/0XX_lead_contacts_bland_triggered_at.sql` (new) | additive nullable `bland_triggered_at TIMESTAMPTZ` for the fired/day trend |
+| `services/dedup_service.py` (modify) | `set_bland_status` stamps `bland_triggered_at` when a fire dispatches |
 | `tests/test_ops_stats.py` (new) | unit tests for aggregation + flags |
+
+**Operator action:** apply `migrations/0XX_lead_contacts_bland_triggered_at.sql` to the live DB (additive nullable column — safe; writes degrade gracefully until applied, so deploy order doesn't matter).
 
 ## Out of scope (YAGNI)
 
