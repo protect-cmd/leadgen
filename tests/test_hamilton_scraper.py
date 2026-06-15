@@ -175,6 +175,12 @@ def test_scraper_records_last_error_when_fetch_fails(monkeypatch):
 
 
 def test_scraper_dedupes_same_case_across_dates(monkeypatch):
+    import scrapers.ohio.hamilton as hamilton_mod
+
+    # Keep the test hermetic + fast: no throttle sleeps, no live party POSTs.
+    monkeypatch.setattr(hamilton_mod, "REQUEST_DELAY_SECONDS", 0)
+    monkeypatch.setattr(hamilton_mod, "_fetch_defendant_address", lambda *a, **k: None)
+
     scraper = HamiltonCountyMunicipalScraper(lookback_days=2)
 
     call_count = 0

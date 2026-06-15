@@ -246,7 +246,7 @@ def test_check_scheduled_scrapers_ok_above_threshold():
 
     def _table_chain(name):
         t = MagicMock()
-        chain = t.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value
+        chain = t.select.return_value.eq.return_value.eq.return_value.gte.return_value.order.return_value.limit.return_value
         chain.execute.return_value = MagicMock(data=rows)
         return t
 
@@ -266,7 +266,7 @@ def test_check_scheduled_scrapers_fail_below_60_pct():
 
     def _table_chain(name):
         t = MagicMock()
-        chain = t.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value
+        chain = t.select.return_value.eq.return_value.eq.return_value.gte.return_value.order.return_value.limit.return_value
         chain.execute.return_value = MagicMock(data=rows)
         return t
 
@@ -276,6 +276,68 @@ def test_check_scheduled_scrapers_fail_below_60_pct():
         results = check_scheduled_scrapers()
     fails = [r for r in results if r.status == "FAIL"]
     assert fails, "expected at least one FAIL"
+
+
+from datetime import datetime as _datetime, timedelta as _timedelta, timezone as _timezone
+
+from scripts.verify_pipeline_health import check_scraper_freshness, _age_days
+
+
+def _freshness_client(scraped_at):
+    """Mock _client whose filings query returns one row with given scraped_at.
+    Pass scraped_at=None to simulate an empty table."""
+    def _table_chain(name):
+        t = MagicMock()
+        chain = t.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value
+        data = [] if scraped_at is None else [{"scraped_at": scraped_at}]
+        chain.execute.return_value = MagicMock(data=data)
+        return t
+
+    client = MagicMock()
+    client.table.side_effect = _table_chain
+    return client
+
+
+def test_age_days_parses_z_suffix():
+    now = _datetime(2026, 6, 13, tzinfo=_timezone.utc)
+    age = _age_days("2026-06-10T00:00:00Z", now)
+    assert age == 3.0
+
+
+def test_age_days_returns_none_on_garbage():
+    assert _age_days("not-a-date", _datetime.now(_timezone.utc)) is None
+
+
+def test_check_scraper_freshness_ok_when_recent():
+    now = _datetime(2026, 6, 13, 12, 0, tzinfo=_timezone.utc)
+    recent = (now - _timedelta(hours=6)).isoformat()
+    with patch("scripts.verify_pipeline_health._supabase_client", return_value=_freshness_client(recent)):
+        results = check_scraper_freshness(now=now)
+    assert results and all(r.status == "OK" for r in results), [(r.name, r.status, r.detail) for r in results]
+
+
+def test_check_scraper_freshness_fail_when_dark():
+    now = _datetime(2026, 6, 13, 12, 0, tzinfo=_timezone.utc)
+    stale = (now - _timedelta(days=27)).isoformat()
+    with patch("scripts.verify_pipeline_health._supabase_client", return_value=_freshness_client(stale)):
+        results = check_scraper_freshness(now=now)
+    assert all(r.status == "FAIL" for r in results)
+    assert all("dark" in r.detail for r in results)
+
+
+def test_check_scraper_freshness_flag_when_recent_miss():
+    now = _datetime(2026, 6, 13, 12, 0, tzinfo=_timezone.utc)
+    missed = (now - _timedelta(days=5)).isoformat()
+    with patch("scripts.verify_pipeline_health._supabase_client", return_value=_freshness_client(missed)):
+        results = check_scraper_freshness(now=now)
+    assert all(r.status == "FLAG" for r in results)
+
+
+def test_check_scraper_freshness_flag_when_no_rows():
+    now = _datetime(2026, 6, 13, 12, 0, tzinfo=_timezone.utc)
+    with patch("scripts.verify_pipeline_health._supabase_client", return_value=_freshness_client(None)):
+        results = check_scraper_freshness(now=now)
+    assert all(r.status == "FLAG" for r in results)
 
 
 import sqlite3
@@ -366,6 +428,8 @@ def test_main_returns_zero_when_all_ok(monkeypatch):
                         lambda: [CheckResult("schema", "x", "OK", "")])
     monkeypatch.setattr("scripts.verify_pipeline_health.check_scheduled_scrapers",
                         lambda: [CheckResult("scrapers", "x", "OK", "")])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_scraper_freshness",
+                        lambda: [CheckResult("scrapers", "x freshness", "OK", "")])
     monkeypatch.setattr("scripts.verify_pipeline_health.check_searchbug_headroom",
                         lambda: [CheckResult("searchbug", "x", "OK", "")])
     monkeypatch.setattr("scripts.verify_pipeline_health.check_ghl_stage_ids",
@@ -380,6 +444,8 @@ def test_main_returns_one_on_any_fail(monkeypatch):
                         lambda: [CheckResult("schema", "x", "OK", "")])
     monkeypatch.setattr("scripts.verify_pipeline_health.check_scheduled_scrapers",
                         lambda: [])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_scraper_freshness",
+                        lambda: [])
     monkeypatch.setattr("scripts.verify_pipeline_health.check_searchbug_headroom",
                         lambda: [])
     monkeypatch.setattr("scripts.verify_pipeline_health.check_ghl_stage_ids",
@@ -393,6 +459,8 @@ def test_main_strict_returns_one_on_flag(monkeypatch):
     monkeypatch.setattr("scripts.verify_pipeline_health.check_schema",
                         lambda: [])
     monkeypatch.setattr("scripts.verify_pipeline_health.check_scheduled_scrapers",
+                        lambda: [])
+    monkeypatch.setattr("scripts.verify_pipeline_health.check_scraper_freshness",
                         lambda: [])
     monkeypatch.setattr("scripts.verify_pipeline_health.check_searchbug_headroom",
                         lambda: [])

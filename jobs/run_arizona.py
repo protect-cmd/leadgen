@@ -82,6 +82,7 @@ async def main(
     lookback_days: int = 2,
     notify: bool = False,
     pipe: bool = False,
+    yes_write_supabase: bool = False,
 ) -> ArizonaRunSummary:
     log.info("Starting Arizona / Maricopa %s", "pipeline run" if pipe else "scraper-only proof")
     scraper = MaricopaJusticeCourtScraper(
@@ -91,15 +92,39 @@ async def main(
     )
     filings = scraper.scrape()
 
+    # Only single-match assessor addresses are eligible downstream (AGENTS.md:
+    # "Only single_match rows should be eligible"). Compute once for both the
+    # raw-insert and the (enriching) pipe paths.
+    single_match_filings = [
+        f for f in filings
+        if scraper.address_matches_by_case.get(f.case_number) is not None
+        and scraper.address_matches_by_case[f.case_number].status == "single_match"
+        and f.property_address not in ("Unknown", "", None)
+    ]
+
+    if yes_write_supabase:
+        # Raw insert (no enrichment/outreach), matching the OH jobs. run_arizona
+        # previously persisted ONLY via --pipe, so the scheduled job (--notify
+        # only) discarded every scrape — Maricopa got near-zero daily volume.
+        from services import dedup_service
+        inserted = duplicates = 0
+        for filing in single_match_filings:
+            if await dedup_service.is_duplicate(filing.case_number):
+                duplicates += 1
+                await dedup_service.backfill_address(
+                    filing.case_number, filing.property_address
+                )
+            else:
+                await dedup_service.insert_filing(filing)
+                inserted += 1
+        log.info(
+            "Arizona Supabase push (single-match raw): %d inserted, %d duplicates",
+            inserted, duplicates,
+        )
+
     if pipe:
         from pipeline import runner as pipeline_runner
 
-        single_match_filings = [
-            f for f in filings
-            if scraper.address_matches_by_case.get(f.case_number) is not None
-            and scraper.address_matches_by_case[f.case_number].status == "single_match"
-            and f.property_address not in ("Unknown", "", None)
-        ]
         log.info(
             "Arizona: passing %d single-match filings to pipeline (%d held)",
             len(single_match_filings),
@@ -144,9 +169,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lookback-days", type=int, default=2)
     parser.add_argument("--notify", action="store_true")
     parser.add_argument(
+        "--yes-write-supabase",
+        action="store_true",
+        help="Raw-insert single-match filings into Supabase (no enrichment/outreach).",
+    )
+    parser.add_argument(
         "--pipe",
         action="store_true",
-        help="Send single-match address filings through the pipeline runner",
+        help="Send single-match address filings through the pipeline runner (enriches).",
     )
     return parser
 
@@ -159,6 +189,7 @@ def cli() -> int:
             lookback_days=args.lookback_days,
             notify=args.notify,
             pipe=args.pipe,
+            yes_write_supabase=args.yes_write_supabase,
         )
     )
     return 0

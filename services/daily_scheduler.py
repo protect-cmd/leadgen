@@ -30,9 +30,12 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
     # docs/superpowers/specs/2026-05-29-tarrant-rebuild-design.md
     # ScheduledJob("tarrant", 13, 10, "run_tarrant.py", args=("--pipe",)),
     ScheduledJob("tennessee", 13, 20, "run_tennessee.py"),
-    # scrape-only (Phase 5.2): inline enrichment removed — enrichment is now
-    # operator-driven via /lists "Enrich selected".
-    ScheduledJob("arizona", 13, 40, "run_arizona.py", args=("--notify",)),
+    # Raw insert of single-match filings (Phase 5.2: inline enrichment removed —
+    # enrichment is operator-driven via /lists "Enrich selected"). run_arizona
+    # persisted ONLY via --pipe, so the prior --notify-only job discarded every
+    # scrape and Maricopa got near-zero daily volume. --yes-write-supabase
+    # persists raw without enriching.
+    ScheduledJob("arizona", 13, 40, "run_arizona.py", args=("--yes-write-supabase", "--notify")),
     # georgia_cobb DESCHEDULED 2026-05-29 - 200 filings / 4% gate pass rate.
     # Underlying cause: Nominatim geocoder (which Cobb's assessor chain
     # depends on for address enrichment) is unreliable. See follow-up:
@@ -45,12 +48,24 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
         "../scripts/push_franklin_filings.py",
         args=("--lookback-days", "2", "--yes-write-supabase", "--notify"),
     ),
+    # Raw Supabase insert (no inline enrichment), matching the Franklin job.
+    # run_ohio only persists with --yes-write-supabase or --pipe; the prior
+    # args had neither, so scraped Hamilton filings were silently discarded.
     ScheduledJob(
         "ohio_hamilton",
         14,
         40,
         "run_ohio.py",
-        args=("--lookback-days", "2", "--counties", "hamilton", "--notify"),
+        args=("--lookback-days", "2", "--counties", "hamilton",
+              "--yes-write-supabase", "--notify"),
+    ),
+    ScheduledJob(
+        "ohio_montgomery",
+        14,
+        45,
+        "run_ohio.py",
+        args=("--lookback-days", "2", "--counties", "montgomery",
+              "--yes-write-supabase", "--notify"),
     ),
     # --- post-scrape automation (Phase 1) ---
     # ISTS judgment scrape first so judgments exist before the chain's rent step.

@@ -56,6 +56,7 @@ def test_summary_scraper_only_mode():
     summary = run_ohio.OhioRunSummary(
         franklin_filings=3,
         hamilton_filings=2,
+        montgomery_filings=0,
         piped=False,
     )
     lines = summary.to_lines()
@@ -73,6 +74,7 @@ def test_summary_pipeline_mode():
     summary = run_ohio.OhioRunSummary(
         franklin_filings=4,
         hamilton_filings=3,
+        montgomery_filings=0,
         piped=True,
     )
     lines = summary.to_lines()
@@ -206,6 +208,7 @@ async def test_both_counties_piped_when_pipe_flag(monkeypatch):
 
     monkeypatch.setattr(run_ohio, "FranklinCountyMunicipalScraper", FakeFranklinScraper)
     monkeypatch.setattr(run_ohio, "HamiltonCountyMunicipalScraper", FakeHamiltonScraper)
+    monkeypatch.setattr(run_ohio, "MontgomeryCountyMunicipalScraper", EmptyScraper)
 
     import pipeline.runner as pipeline_runner
     monkeypatch.setattr(pipeline_runner, "run", fake_pipeline_run)

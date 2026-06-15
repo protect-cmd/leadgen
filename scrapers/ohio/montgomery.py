@@ -51,6 +51,25 @@ def _strip_occupant_suffix(name: str) -> str:
     return _OCCUPANT_RE.sub("", name).strip()
 
 
+# The Dayton portal emits "<street>, <City>, Oh, <zip>" — a lowercase state and
+# a stray comma before the ZIP. pipeline.gate_address rejects that (it needs an
+# uppercase 2-letter state directly followed by the ZIP, e.g. "OH 45404"), so an
+# un-normalized Montgomery address fails the gate and is never enrichable.
+# Rewrite the trailing ", St, zip" to ", ST zip".
+_STATE_ZIP_TAIL_RE = re.compile(r",\s*([A-Za-z]{2}),\s*(\d{5})(?:-\d{4})?\s*$")
+
+
+def _normalize_address(addr: str | None) -> str | None:
+    """Make a parsed Dayton address pass pipeline.gate_address.
+
+    Uppercases the 2-letter state and drops the comma before the ZIP. Leaves
+    already-correct or unrecognized strings (incl. None / "Unknown") untouched.
+    """
+    if not addr:
+        return addr
+    return _STATE_ZIP_TAIL_RE.sub(lambda m: f", {m.group(1).upper()} {m.group(2)}", addr)
+
+
 def _parse_address(page_text: str) -> str | None:
     """Return the eviction property address from a case detail page's text, or None."""
     m = _LOCATON_RE.search(page_text)
@@ -164,7 +183,7 @@ class MontgomeryCountyMunicipalScraper:
                     if detail_html
                     else ""
                 )
-                address = _parse_address(detail_text) or "Unknown"
+                address = _normalize_address(_parse_address(detail_text)) or "Unknown"
                 court_date = _parse_court_date(detail_text)
 
                 tenant_raw = row["defendant_raw"]

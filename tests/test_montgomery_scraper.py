@@ -7,11 +7,13 @@ import pytest
 
 from scrapers.ohio.montgomery import (
     MontgomeryCountyMunicipalScraper,
+    _normalize_address,
     _parse_address,
     _parse_court_date,
     _parse_results_page,
     _strip_occupant_suffix,
 )
+from pipeline import gates
 
 # ---------------------------------------------------------------------------
 # Sample HTML fixtures
@@ -180,6 +182,48 @@ def test_parse_address_handles_corrected_location_spelling():
 def test_parse_address_returns_none_when_no_address():
     addr = _parse_address("Some page with no location info.\nNext Court Date:\n07/01/2026")
     assert addr is None
+
+
+# ---------------------------------------------------------------------------
+# _normalize_address  (gate-passing form)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_address_uppercases_state_and_drops_comma():
+    assert (
+        _normalize_address("534 Oxford Avenue, Dayton, Oh, 45402")
+        == "534 Oxford Avenue, Dayton, OH 45402"
+    )
+
+
+def test_normalize_address_with_apt_and_periods():
+    assert (
+        _normalize_address("301 Troy St., Apt. 7, Dayton, Oh, 45404")
+        == "301 Troy St., Apt. 7, Dayton, OH 45404"
+    )
+
+
+def test_normalize_address_passes_gate_after_fix():
+    raw = "5100 Springfield St., Dayton, Oh, 45431"
+    assert not gates.gate_address(raw)  # fails before normalization
+    assert gates.gate_address(_normalize_address(raw))  # passes after
+
+
+def test_normalize_address_leaves_correct_form_untouched():
+    good = "100 Main St, Dayton, OH 45402"
+    assert _normalize_address(good) == good
+
+
+def test_normalize_address_passthrough_unknown_and_none():
+    assert _normalize_address("Unknown") == "Unknown"
+    assert _normalize_address(None) is None
+
+
+def test_normalize_address_handles_nine_digit_zip():
+    assert (
+        _normalize_address("44 W 4th St., Dayton, Oh, 45402-1234")
+        == "44 W 4th St., Dayton, OH 45402"
+    )
 
 
 # ---------------------------------------------------------------------------

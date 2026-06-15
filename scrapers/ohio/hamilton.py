@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import time
 from datetime import date, timedelta
 
 import requests
@@ -22,6 +24,14 @@ BASE_URL = "https://www.courtclerk.org/data/eviction_schedule.php"
 COURT = "MCV"
 LOCATION = "EVIM"
 CASE_SUMMARY_URL = "https://www.courtclerk.org/data/case_summary.php"
+
+# Self-throttle the per-case party lookups. The address upgrade fires one POST
+# per case (~90/day); shipping it unthrottled (2026-05-16) coincided exactly
+# with this scraper going dark in production for 27 days — consistent with
+# courtclerk.org throttling/blocking a burst of requests from a datacenter IP.
+# A small pause keeps us under the portal's burst threshold. Set
+# HAMILTON_REQUEST_DELAY=0 to disable (e.g. in tests).
+REQUEST_DELAY_SECONDS = float(os.getenv("HAMILTON_REQUEST_DELAY", "0.4"))
 
 _OCCUPANT_SUFFIXES = re.compile(
     r"\s+(et\.?\s*al\.?|and\s+all\s+(?:other\s+)?(?:occupants?|tenants?|persons?|others?))$",
@@ -116,7 +126,12 @@ class HamiltonCountyMunicipalScraper:
                 if filing.case_number in seen_cases:
                     continue
                 seen_cases.add(filing.case_number)
-                # Attempt to upgrade from yellow (city-only) to green (real address)
+                # Attempt to upgrade from yellow (city-only) to green (real
+                # address). Pace the per-case POSTs to avoid a burst that the
+                # portal throttles — a failed upgrade still yields a yellow
+                # filing, so the scraper never goes fully dark over this.
+                if REQUEST_DELAY_SECONDS > 0:
+                    time.sleep(REQUEST_DELAY_SECONDS)
                 defendant_address = _fetch_defendant_address(self.session, filing.case_number)
                 if defendant_address:
                     filing = filing.model_copy(update={"property_address": defendant_address})
