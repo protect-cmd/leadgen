@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 _BLOCKS = "▁▂▃▄▅▆▇█"
 
 # scheduled counties expected to scrape (from services/daily_scheduler.py)
-_EXPECTED_COUNTIES = ("Harris", "Davidson", "Franklin", "Maricopa", "Hamilton")
+_EXPECTED_COUNTIES = ("Harris", "Davidson", "Franklin", "Maricopa", "Hamilton", "Montgomery")
 
 
 # --------------------------------------------------------------------------- #

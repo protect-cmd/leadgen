@@ -65,9 +65,12 @@ def test_scheduler_defines_daily_jobs():
         ("arizona", 13, 40, "run_arizona.py"),
         ("ohio_franklin_raw", 14, 20, "../scripts/push_franklin_filings.py"),
         ("ohio_hamilton", 14, 40, "run_ohio.py"),
+        ("ohio_montgomery", 14, 45, "run_ohio.py"),
+        ("ists_harris", 14, 50, "run_ists_harris.py"),
+        ("post_scrape_chain", 15, 10, "../scripts/post_scrape_chain.py"),
     ]
+    # arizona is scrape-only since Phase 5.2 (enrichment is operator-driven).
     az_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "arizona")
-    assert "--pipe" in az_job.args
     assert "--notify" in az_job.args
 
 
@@ -92,17 +95,35 @@ def test_ohio_franklin_job_is_raw_supabase_only():
     assert "--pipe" not in job.args
 
 
-def test_ohio_hamilton_job_is_scheduled_for_pipeline():
+def test_ohio_hamilton_job_persists_raw_to_supabase():
     from services.daily_scheduler import SCHEDULED_JOBS
 
     job = next(j for j in SCHEDULED_JOBS if j.name == "ohio_hamilton")
+
+    assert job.script_name == "run_ohio.py"
+    # run_ohio only persists with --yes-write-supabase or --pipe; the job must
+    # carry one or scraped filings are discarded. We use raw insert (no enrich).
+    assert job.args == (
+        "--lookback-days",
+        "2",
+        "--counties",
+        "hamilton",
+        "--yes-write-supabase",
+        "--notify",
+    )
+
+
+def test_ohio_montgomery_job_persists_raw_to_supabase():
+    from services.daily_scheduler import SCHEDULED_JOBS
+
+    job = next(j for j in SCHEDULED_JOBS if j.name == "ohio_montgomery")
 
     assert job.script_name == "run_ohio.py"
     assert job.args == (
         "--lookback-days",
         "2",
         "--counties",
-        "hamilton",
-        "--pipe",
+        "montgomery",
+        "--yes-write-supabase",
         "--notify",
     )

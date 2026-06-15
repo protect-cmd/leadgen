@@ -45,12 +45,24 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
         "../scripts/push_franklin_filings.py",
         args=("--lookback-days", "2", "--yes-write-supabase", "--notify"),
     ),
+    # Raw Supabase insert (no inline enrichment), matching the Franklin job.
+    # run_ohio only persists with --yes-write-supabase or --pipe; the prior
+    # args had neither, so scraped Hamilton filings were silently discarded.
     ScheduledJob(
         "ohio_hamilton",
         14,
         40,
         "run_ohio.py",
-        args=("--lookback-days", "2", "--counties", "hamilton", "--notify"),
+        args=("--lookback-days", "2", "--counties", "hamilton",
+              "--yes-write-supabase", "--notify"),
+    ),
+    ScheduledJob(
+        "ohio_montgomery",
+        14,
+        45,
+        "run_ohio.py",
+        args=("--lookback-days", "2", "--counties", "montgomery",
+              "--yes-write-supabase", "--notify"),
     ),
     # --- post-scrape automation (Phase 1) ---
     # ISTS judgment scrape first so judgments exist before the chain's rent step.

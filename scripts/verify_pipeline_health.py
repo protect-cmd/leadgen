@@ -228,6 +228,11 @@ SCHEDULED_JOB_COUNTIES: dict[str, tuple[str, str] | None] = {
     "arizona": ("AZ", "Maricopa"),
     "ohio_franklin_raw": ("OH", "Franklin"),
     "ohio_hamilton": ("OH", "Hamilton"),
+    "ohio_montgomery": ("OH", "Montgomery"),
+    # Non-filings jobs: ISTS writes ists_judgments, the chain is post-scrape
+    # automation. Mapped to None so they're skipped (not flagged as unmapped).
+    "ists_harris": None,
+    "post_scrape_chain": None,
 }
 
 _PASS_RATE_OK = 0.85
@@ -266,14 +271,16 @@ def check_scheduled_scrapers(now: datetime | None = None) -> list[CheckResult]:
     client = _supabase_client()
 
     for job in SCHEDULED_JOBS:
-        loc = SCHEDULED_JOB_COUNTIES.get(job.name)
-        if loc is None:
+        if job.name not in SCHEDULED_JOB_COUNTIES:
             out.append(CheckResult(
                 "scrapers", job.name, "FLAG",
                 "no (state, county) mapping in SCHEDULED_JOB_COUNTIES; can't audit pass rate",
                 fix_hint="add entry to SCHEDULED_JOB_COUNTIES in scripts/verify_pipeline_health.py",
             ))
             continue
+        loc = SCHEDULED_JOB_COUNTIES[job.name]
+        if loc is None:
+            continue  # non-filings job (ISTS, post-scrape chain) — nothing to audit here
         state, county = loc
         try:
             rows = (

@@ -129,6 +129,12 @@ def test_health_flags_dark_scraper(monkeypatch):
     assert "Hamilton" in msgs and "dark" in msgs.lower()
 
 
+def test_montgomery_is_an_expected_scraped_county():
+    # Montgomery (Dayton) is scheduled (daily_scheduler) and must appear on /ops
+    # health + scrapes so it can be flagged dark like the others.
+    assert "Montgomery" in ops._EXPECTED_COUNTIES
+
+
 def test_trend_survives_missing_bland_triggered_at(monkeypatch):
     # Pre-migration: lead_contacts.bland_triggered_at doesn't exist -> the fired
     # query raises, but filings/phones (from run_metrics) must still populate.
