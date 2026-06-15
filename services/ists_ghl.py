@@ -107,6 +107,13 @@ async def push_contact(rec: dict, dry_run: bool = False) -> str | None:
     lang = rec.get("language_hint") or "english_likely"
     lang_value = "Spanish" if lang == "spanish_likely" else "English"
 
+    # Window 1 / Window 2 read from the record (default W1) so W2 follow-up
+    # leads tag correctly once produced. Property type carried as a tag (ISTS
+    # judgments are residential unless the record says otherwise).
+    win = (rec.get("window_tag") or "W1").upper()
+    win_num = "2" if win == "W2" else "1"
+    property_tag = (rec.get("property_type") or "residential").title()
+
     custom_fields: list[dict] = []
 
     def _add(slug: str, value) -> None:
@@ -114,7 +121,7 @@ async def push_contact(rec: dict, dry_run: bool = False) -> str | None:
             custom_fields.append({"id": _FIELD_IDS[slug], "field_value": value})
 
     _add("language_preference", lang_value)
-    _add("situation", "Judgment entered — Window 1")
+    _add("situation", f"Judgment entered — Window {win_num}")
     _add("state", rec.get("state") or "TX")
     _add("county", rec.get("county") or "Harris")
     _add("case_number", rec.get("case_number"))
@@ -137,7 +144,7 @@ async def push_contact(rec: dict, dry_run: bool = False) -> str | None:
         "lastName": last,
         "phone": rec["phone"],
         "address1": rec.get("property_address", ""),
-        "tags": ["ISTS", "W1", "ists_new_lead"],
+        "tags": ["ISTS", win, "ists_new_lead", property_tag],
         "source": "ISTS Harris Judgment",
         "customFields": custom_fields,
     }
@@ -162,7 +169,7 @@ async def push_contact(rec: dict, dry_run: bool = False) -> str | None:
 
         # Note with judgment details
         note = (
-            f"ISTS Window 1 — Judgment Entered\n"
+            f"ISTS Window {win_num} — Judgment Entered\n"
             f"Case: {rec['case_number']}\n"
             f"Judgment Date: {rec.get('judgment_date') or 'N/A'}\n"
             f"Judgment Against: {rec.get('judgment_against') or 'N/A'}\n"
@@ -203,7 +210,7 @@ async def push_batch(limit: int = 50, dry_run: bool = False) -> dict:
         return (
             _client.table(_TABLE)
             .select("case_number,defendant_name,property_address,phone,language_hint,"
-                    "judgment_date,judgment_against,plaintiff_name,estimated_rent,state,county")
+                    "judgment_date,judgment_against,plaintiff_name,estimated_rent,state,county,window_tag")
             .not_.is_("phone", "null")
             .is_("ghl_contact_id", "null")
             .limit(limit)

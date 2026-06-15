@@ -55,3 +55,32 @@ async def test_ists_push_contact_populates_rent_case_landlord_judgment(monkeypat
     assert cf[F["judgment_date"]] == "2026-06-02"   # dedicated field, not Court Date
     assert cf[F["judgment_year"]] == "2026"
     assert cf[F["judgment_month"]] == "06"
+    # lead-type + window + property-type tags (window defaults to W1)
+    tags = captured["payload"]["tags"]
+    assert "ISTS" in tags and "ists_new_lead" in tags
+    assert "W1" in tags
+    assert "Residential" in tags
+    assert cf[F["situation"]] == "Judgment entered — Window 1"
+
+
+@pytest.mark.asyncio
+async def test_ists_push_contact_uses_window_2_when_record_is_w2(monkeypatch):
+    from services import ists_ghl
+
+    captured: dict = {}
+    monkeypatch.setattr(ists_ghl, "_LOCATION_ID", "loc")
+    monkeypatch.setattr(ists_ghl, "_API_KEY", "key")
+    monkeypatch.setattr(ists_ghl.httpx, "AsyncClient", lambda **k: _Client(captured))
+
+    rec = {
+        "case_number": "X1", "defendant_name": "Doe, Jane",
+        "property_address": "1 St, Houston, TX", "phone": "3460000000",
+        "plaintiff_name": "Acme LLC", "judgment_date": "2026-06-02",
+        "state": "TX", "county": "Harris", "window_tag": "W2",
+    }
+    await ists_ghl.push_contact(rec)
+
+    tags = captured["payload"]["tags"]
+    assert "W2" in tags and "W1" not in tags
+    cf = {c["id"]: c["field_value"] for c in captured["payload"]["customFields"]}
+    assert cf[ists_ghl._FIELD_IDS["situation"]] == "Judgment entered — Window 2"

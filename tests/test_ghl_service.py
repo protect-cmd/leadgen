@@ -245,6 +245,49 @@ async def test_create_contact_pushes_custom_fields_by_id_for_ng_track(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_create_contact_adds_lead_type_and_property_type_tags(monkeypatch):
+    """NG (Vantage) contacts carry a 'VDG' lead-type tag and a title-cased
+    property-type tag, so both are present regardless of custom-field config."""
+    captured: dict = {}
+
+    class Response:
+        def __init__(self, status_code, payload=None, text="ok"):
+            self.status_code = status_code
+            self._payload = payload or {}
+            self.text = text
+        def json(self): return self._payload
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, url, params, headers):
+            return Response(200, {"pipelines": [
+                {"id": "pip", "name": "X", "stages": [{"id": "stage-1", "name": "New"}]}
+            ]})
+        async def post(self, url, json, headers):
+            if url.endswith("/contacts/upsert"):
+                captured["upsert"] = json
+                return Response(201, {"contact": {"id": "c-1"}})
+            return Response(201, {})
+
+    monkeypatch.setenv("GHL_API_KEY", "test-key")
+    monkeypatch.setenv("GHL_NG_LOCATION_ID", "loc-ng")
+    monkeypatch.setattr(ghl_service.httpx, "AsyncClient", lambda **kwargs: Client())
+    ghl_service._pipeline_cache.clear()
+
+    contact = _contact()
+    contact.track = "ng"
+    contact.property_type = "commercial"
+
+    await ghl_service.create_contact(contact, ["NG-New-Filing"], "stage-1")
+
+    tags = captured["upsert"]["tags"]
+    assert "NG-New-Filing" in tags          # caller tags preserved
+    assert "VDG" in tags                     # lead-type tag added for ng track
+    assert "Commercial" in tags              # property-type tag, title-cased
+
+
+@pytest.mark.asyncio
 async def test_create_contact_ec_track_skips_custom_fields(monkeypatch):
     """EC track has no field-ID mapping yet (track is disabled). Should
     not crash, just send an empty customFields list."""

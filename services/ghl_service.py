@@ -233,6 +233,17 @@ async def create_contact(
     _add("language_preference",
          "Spanish" if contact.language_hint == "spanish_likely" else "English")
 
+    # Lead-type + property-type carried as tags so they're present on every
+    # contact regardless of custom-field config (no UUID/option setup needed,
+    # works in any subaccount). Vantage (ng) leads get "VDG"; property type is
+    # title-cased ("Residential"/"Commercial").
+    tags = list(tags)
+    if contact.track == "ng" and "VDG" not in tags:
+        tags.append("VDG")
+    property_tag = (contact.property_type or "residential").title()
+    if property_tag not in tags:
+        tags.append(property_tag)
+
     upsert_payload: dict = {
         "locationId": location_id,
         "firstName": first,
