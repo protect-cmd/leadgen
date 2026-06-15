@@ -69,9 +69,12 @@ def test_scheduler_defines_daily_jobs():
         ("ists_harris", 14, 50, "run_ists_harris.py"),
         ("post_scrape_chain", 15, 10, "../scripts/post_scrape_chain.py"),
     ]
-    # arizona is scrape-only since Phase 5.2 (enrichment is operator-driven).
+    # arizona raw-persists since Phase 5.2 (enrichment is operator-driven). It
+    # must carry --yes-write-supabase or run_arizona discards the scrape.
     az_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "arizona")
+    assert "--yes-write-supabase" in az_job.args
     assert "--notify" in az_job.args
+    assert "--pipe" not in az_job.args
 
 
 def test_tarrant_descheduled():

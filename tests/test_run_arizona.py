@@ -136,6 +136,38 @@ async def test_main_defaults_to_two_day_daily_lookback(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_main_yes_write_supabase_raw_inserts_single_match_only(monkeypatch):
+    """The scheduled job uses --yes-write-supabase: it must raw-insert only the
+    single-match filing (no enrichment/outreach, runner not called)."""
+    inserted: list[Filing] = []
+
+    async def fake_is_duplicate(case_number):
+        return False
+
+    async def fake_insert(filing):
+        inserted.append(filing)
+
+    monkeypatch.setattr(run_arizona, "MaricopaJusticeCourtScraper", FakeArizonaScraper)
+
+    from services import dedup_service
+    monkeypatch.setattr(dedup_service, "is_duplicate", fake_is_duplicate)
+    monkeypatch.setattr(dedup_service, "insert_filing", fake_insert)
+
+    def _boom(*a, **k):
+        raise AssertionError("pipeline runner must not be called for raw insert")
+
+    import pipeline.runner as pipeline_runner
+    monkeypatch.setattr(pipeline_runner, "run", _boom)
+
+    summary = await run_arizona.main(
+        max_cases=50, lookback_days=7, notify=False, yes_write_supabase=True
+    )
+
+    assert summary.piped is False
+    assert [f.case_number for f in inserted] == ["CC2026000001"]
+
+
+@pytest.mark.asyncio
 async def test_main_pipe_mode_filters_to_single_match_only(monkeypatch, capsys):
     piped_filings: list[Filing] = []
 
