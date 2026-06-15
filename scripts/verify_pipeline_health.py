@@ -22,7 +22,7 @@ import sqlite3
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -248,9 +248,19 @@ def _compute_pass_rate(rows: list[dict]) -> float:
     return passed / len(rows)
 
 
-def check_scheduled_scrapers() -> list[CheckResult]:
-    """For each scheduled cron job, sample the last 100 filings and compute
-    the gate pass rate (without LLM). Apply gold-standard thresholds."""
+# Only score the *recent* output of a scraper. Without this bound the last-100
+# sample reaches weeks back and scores stale, already-superseded rows: Maricopa
+# read as 40% FAIL purely because old malformed addresses (fixed 2026-05-30)
+# still sat in the window, while every row since passes. Pair this "is current
+# output good?" check with check_scraper_freshness ("is it still producing?").
+PASS_RATE_LOOKBACK_DAYS = 14
+
+
+def check_scheduled_scrapers(now: datetime | None = None) -> list[CheckResult]:
+    """For each scheduled cron job, sample recent filings and compute the gate
+    pass rate (without LLM). Apply gold-standard thresholds."""
+    now = now or datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=PASS_RATE_LOOKBACK_DAYS)).isoformat()
     from services.daily_scheduler import SCHEDULED_JOBS
     out: list[CheckResult] = []
     client = _supabase_client()
@@ -271,6 +281,7 @@ def check_scheduled_scrapers() -> list[CheckResult]:
                 .select("property_address,tenant_name")
                 .eq("state", state)
                 .eq("county", county)
+                .gte("scraped_at", cutoff)
                 .order("scraped_at", desc=True)
                 .limit(100)
                 .execute()
@@ -287,7 +298,8 @@ def check_scheduled_scrapers() -> list[CheckResult]:
         if not rows:
             out.append(CheckResult(
                 "scrapers", f"{state}/{county}", "FLAG",
-                "no filings persisted yet (new scraper, paused source, or first deploy)",
+                f"no filings in the last {PASS_RATE_LOOKBACK_DAYS}d "
+                "(new scraper, paused source, or dark — see freshness check)",
             ))
             continue
 
@@ -307,6 +319,100 @@ def check_scheduled_scrapers() -> list[CheckResult]:
                 "scrapers", name, "FAIL",
                 f"pass rate {pct} below drop-from-schedule threshold ({int(_PASS_RATE_FAIL*100)}%)",
                 fix_hint="fix scraper or remove from services/daily_scheduler.SCHEDULED_JOBS until repaired",
+            ))
+
+    return out
+
+
+# A scheduled scraper that stops persisting new filings is the most damaging
+# silent failure: the pass-rate check above happily scores the *stale* rows as
+# healthy (Hamilton sat at 95% on 27-day-old data while it had been dark since
+# the day its per-case address upgrade shipped). Freshness catches that class.
+# Thresholds account for weekend gaps (courts file Mon-Fri) without masking a
+# scraper that has genuinely died.
+FRESHNESS_FLAG_DAYS = 3
+FRESHNESS_FAIL_DAYS = 7
+
+
+def _age_days(iso_ts: str, now: datetime) -> float | None:
+    """Age in days of an ISO-8601 timestamp, or None if unparseable."""
+    if not iso_ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (now - dt).total_seconds() / 86400.0
+
+
+def check_scraper_freshness(now: datetime | None = None) -> list[CheckResult]:
+    """For each scheduled job, confirm it has persisted a filing recently.
+
+    Pass rate alone cannot detect a scraper that has silently stopped
+    producing — it scores whatever rows exist, however old. This check reads
+    the newest filings.scraped_at per county and flags staleness.
+    """
+    now = now or datetime.now(timezone.utc)
+    from services.daily_scheduler import SCHEDULED_JOBS
+    out: list[CheckResult] = []
+    client = _supabase_client()
+
+    for job in SCHEDULED_JOBS:
+        loc = SCHEDULED_JOB_COUNTIES.get(job.name)
+        if loc is None:
+            continue  # already FLAGged by check_scheduled_scrapers
+        state, county = loc
+        try:
+            rows = (
+                client.table("filings")
+                .select("scraped_at")
+                .eq("state", state)
+                .eq("county", county)
+                .order("scraped_at", desc=True)
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+        except Exception as exc:
+            out.append(CheckResult(
+                "scrapers", f"{state}/{county} freshness", "FLAG",
+                f"Supabase query failed: {exc!r}",
+            ))
+            continue
+
+        name = f"{state}/{county} freshness"
+        if not rows:
+            out.append(CheckResult(
+                "scrapers", name, "FLAG",
+                "no filings persisted yet (new scraper or first deploy)",
+            ))
+            continue
+
+        age = _age_days(rows[0].get("scraped_at") or "", now)
+        if age is None:
+            out.append(CheckResult(
+                "scrapers", name, "FLAG",
+                f"latest scraped_at unparseable: {rows[0].get('scraped_at')!r}",
+            ))
+            continue
+
+        detail = f"newest filing {age:.1f}d old"
+        if age <= FRESHNESS_FLAG_DAYS:
+            out.append(CheckResult("scrapers", name, "OK", detail))
+        elif age <= FRESHNESS_FAIL_DAYS:
+            out.append(CheckResult(
+                "scrapers", name, "FLAG",
+                f"{detail}; no new filings in >{FRESHNESS_FLAG_DAYS}d (possible missed runs)",
+                fix_hint="check Railway scheduler logs for this job",
+            ))
+        else:
+            out.append(CheckResult(
+                "scrapers", name, "FAIL",
+                f"{detail}; scraper appears dark (no new filings in >{FRESHNESS_FAIL_DAYS}d)",
+                fix_hint="scraper has stopped producing — check portal access (IP block?), selectors, and scheduler logs",
             ))
 
     return out
@@ -446,6 +552,7 @@ def main(argv: list[str] | None = None) -> int:
     results.extend(check_env_vars())
     results.extend(check_schema())
     results.extend(check_scheduled_scrapers())
+    results.extend(check_scraper_freshness())
     results.extend(check_searchbug_headroom())
     results.extend(check_ghl_stage_ids())
     print_report(results)
