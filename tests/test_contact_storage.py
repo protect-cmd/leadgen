@@ -110,6 +110,23 @@ def test_ec_enrichment_keeps_legacy_filing_contact_for_grant_dashboard(monkeypat
     assert filing_call["payload"]["email"] == "ec@example.test"
 
 
+def test_enrichment_write_stamps_enriched_at_even_on_no_record(monkeypatch):
+    """enriched_at is stamped on every enrichment write — phone-found OR
+    no-record — so the good_leads_now view (migration 022) suppresses
+    already-attempted leads and we never re-spend SearchBug on a dead lookup."""
+    fake = FakeSupabaseClient()
+    monkeypatch.setattr(dedup_service, "_client", fake)
+
+    no_rec = _contact("ng", None)          # SearchBug returned nothing
+    no_rec.searchbug_status = "no_records"
+    asyncio.run(dedup_service.upsert_contact_enrichment(no_rec))
+
+    lead_call = next(c for c in fake.calls if c["table"] == "lead_contacts")
+    assert lead_call["payload"]["phone"] is None
+    assert lead_call["payload"]["searchbug_status"] == "no_records"
+    assert lead_call["payload"].get("enriched_at")     # attempt recorded
+
+
 def test_status_updates_write_track_specific_contact_and_legacy_columns(monkeypatch):
     fake = FakeSupabaseClient()
     monkeypatch.setattr(dedup_service, "_client", fake)

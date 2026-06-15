@@ -177,6 +177,10 @@ def _lead_contact_payload(contact: EnrichedContact) -> dict:
         "searchbug_status": contact.searchbug_status,
         "searchbug_returned_name": contact.searchbug_returned_name,
         "enrichment_source": "batchdata",
+        # Stamped on every enrichment write — phone-found OR no-record — so the
+        # good_leads_now view (migration 022) suppresses already-attempted leads
+        # and we never re-spend SearchBug on a dead lookup.
+        "enriched_at": now,
         "updated_at": now,
     }
     # Drop fields the schema doesn't have yet (e.g. before migration 013
