@@ -2,14 +2,16 @@
 startCommand = "sh scripts/start_dashboard.sh"
 
 # The dashboard service starts an in-process scheduler on Railway.
-# Current UTC schedule:
+# Current UTC schedule (see services/daily_scheduler.py):
 #   13:00 Texas (Harris)
-#   13:10 Tarrant TX
 #   13:20 Tennessee (Davidson)
 #   13:40 Arizona (Maricopa)
-#   14:00 Cobb GA
 #   14:20 Ohio Franklin (raw push)
-#   14:40 Ohio Hamilton
+#   14:40 Ohio Hamilton (raw push)
+#   14:45 Ohio Montgomery (raw push)
+#   14:50 ISTS Harris judgments
+#   15:10 post-scrape chain (flag_enrichable -> normalize_court_date -> rent)
+# Tarrant + Cobb descheduled 2026-05-29 (see daily_scheduler.py).
 #
 # DNC scrubbing requires the FTC registry at $FTC_DNC_DB_PATH on the
 # /data/dnc Railway volume. See docs/ftc_dnc_railway_setup.md.
