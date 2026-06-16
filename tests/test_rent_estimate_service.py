@@ -132,6 +132,78 @@ async def test_rentometer_drops_invalid_optional_params(monkeypatch):
     assert "building_type" not in captured["params"]
 
 
+@pytest.fixture
+def safmr_csv(tmp_path):
+    path = tmp_path / "hud_safmr.csv"
+    path.write_text(
+        "zip,br0,br1,br2,br3,br4\n"
+        "77005,1530,1610,1920,2390,2840\n"
+        "45208,940,1000,1180,1480,1660\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.asyncio
+async def test_hud_provider_returns_zip_safmr_2br_rent(monkeypatch, safmr_csv):
+    from services import rent_estimate_service
+
+    filing = _filing()
+    filing.property_address = "6100 Main St, Houston, TX 77005"
+
+    monkeypatch.setenv("RENT_PRECHECK_ENABLED", "true")
+    monkeypatch.setenv("RENT_PRECHECK_PROVIDER", "hud")
+    monkeypatch.setenv("HUD_SAFMR_DATA_PATH", str(safmr_csv))
+    monkeypatch.delenv("HUD_SAFMR_BEDROOMS", raising=False)
+    monkeypatch.delenv("RENTOMETER_BEDROOMS", raising=False)
+
+    rent = await rent_estimate_service.estimate_rent(filing)
+
+    assert rent == 1920.0
+
+
+@pytest.mark.asyncio
+async def test_hud_provider_honors_bedrooms(monkeypatch, safmr_csv):
+    from services import rent_estimate_service
+
+    filing = _filing()
+    filing.property_address = "6100 Main St, Houston, TX 77005"
+
+    monkeypatch.setenv("RENT_PRECHECK_ENABLED", "true")
+    monkeypatch.setenv("RENT_PRECHECK_PROVIDER", "safmr")
+    monkeypatch.setenv("HUD_SAFMR_DATA_PATH", str(safmr_csv))
+    monkeypatch.setenv("HUD_SAFMR_BEDROOMS", "3")
+
+    rent = await rent_estimate_service.estimate_rent(filing)
+
+    assert rent == 2390.0
+
+
+@pytest.mark.asyncio
+async def test_hud_provider_fails_open_when_zip_not_in_table(monkeypatch, safmr_csv):
+    from services import rent_estimate_service
+
+    filing = _filing()
+    filing.property_address = "999 Nowhere Rd, Houston, TX 70000"
+
+    monkeypatch.setenv("RENT_PRECHECK_ENABLED", "true")
+    monkeypatch.setenv("RENT_PRECHECK_PROVIDER", "hud")
+    monkeypatch.setenv("HUD_SAFMR_DATA_PATH", str(safmr_csv))
+
+    assert await rent_estimate_service.estimate_rent(filing) is None
+
+
+@pytest.mark.asyncio
+async def test_hud_provider_fails_open_when_data_file_missing(monkeypatch, tmp_path):
+    from services import rent_estimate_service
+
+    monkeypatch.setenv("RENT_PRECHECK_ENABLED", "true")
+    monkeypatch.setenv("RENT_PRECHECK_PROVIDER", "hud")
+    monkeypatch.setenv("HUD_SAFMR_DATA_PATH", str(tmp_path / "missing.csv"))
+
+    assert await rent_estimate_service.estimate_rent(_filing()) is None
+
+
 @pytest.mark.asyncio
 async def test_rent_precheck_fails_open_when_key_missing(monkeypatch):
     from services import rent_estimate_service
