@@ -388,6 +388,7 @@ class ElyriaMunicipalScraper:
 
         # Paginate through all result pages via Wicket '>' nav link.
         # The portal caps at 200 records; each page shows ~25 party rows.
+        _MAX_PAGES = 20  # safety cap; portal caps at 200 records (~8 pages max)
         all_rows: list[dict] = []
         page_num = 1
         html = r.text
@@ -404,6 +405,9 @@ class ElyriaMunicipalScraper:
                 None,
             )
             if not next_href:
+                break
+            if page_num >= _MAX_PAGES:
+                log.warning("Lorain: pagination safety cap (%d pages) reached; stopping early", _MAX_PAGES)
                 break
 
             time.sleep(0.4)
