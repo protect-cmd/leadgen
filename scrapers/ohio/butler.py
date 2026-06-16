@@ -238,11 +238,14 @@ class ButlerCountyAreaCourtScraper:
 
         filings: list[Filing] = []
         seen: set[str] = set()
+        area_errors: list[str] = []
 
         for area_code in AREA_CODES:
             try:
                 area_filings = self._scrape_area(form_k, area_code, start, end, today)
             except Exception as exc:
+                msg = f"Butler {_AREA_LABEL[area_code]}: unexpected error: {exc}"
+                area_errors.append(msg)
                 log.error(
                     "Butler %s: unexpected error: %s",
                     _AREA_LABEL[area_code],
@@ -255,7 +258,7 @@ class ButlerCountyAreaCourtScraper:
                     seen.add(f.case_number)
                     filings.append(f)
 
-        self.last_error = None
+        self.last_error = area_errors[-1] if area_errors and not filings else None
         log.info("Butler OH: %d eviction filings total", len(filings))
         return filings
 
@@ -349,7 +352,7 @@ class ButlerCountyAreaCourtScraper:
         # POST Calendar Search
         payload: dict[str, str] = {
             "": "MU",
-            "searchType": "docketDate",
+            "searchType": "fileDate",
             "k": form_k,
             "searchBMonth": str(start.month),
             "searchBDay": str(start.day),

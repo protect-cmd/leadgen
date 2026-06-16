@@ -590,3 +590,21 @@ def test_scrape_continues_when_one_area_raises(monkeypatch):
     filings = scraper.scrape()
     assert len(call_order) == 3  # all three areas attempted
     assert len(filings) == 2     # area 0911 failed, 0910 and 0912 succeeded
+
+
+def test_scrape_sets_last_error_when_all_areas_fail(monkeypatch):
+    """If every area raises, last_error must be set (not silently swallowed)."""
+    scraper = ButlerCountyAreaCourtScraper()
+    monkeypatch.setattr(scraper, "_ensure_session", lambda: FORM_K)
+
+    def raise_for_all(form_k, area_code, start, end, today):
+        raise RuntimeError(f"area {area_code} blocked")
+
+    monkeypatch.setattr(scraper, "_scrape_area", raise_for_all)
+
+    filings = scraper.scrape()
+
+    assert filings == []
+    assert scraper.last_error is not None
+    assert "blocked" in scraper.last_error
+ "blocked" in scraper.last_error
