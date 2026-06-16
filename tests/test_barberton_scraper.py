@@ -271,35 +271,40 @@ class TestFetchCaseDetail:
 
     def test_returns_address_and_landlord(self):
         session = self._mock_session(SAMPLE_DETAIL_HTML)
-        address, landlord = _fetch_case_detail(session, "https://example.com/record/7721/tok111")
+        address, landlord, tenant = _fetch_case_detail(session, "https://example.com/record/7721/tok111")
         assert address == "87 Helen Street, Barberton, OH 44203"
         assert landlord == "M&C MHP LLC"
+        assert tenant == "Brown, Rebecca"
 
     def test_handles_portal_typo_city_sate_zip(self):
-        """City/Sate/ZIP: (typo) must match — regex is City.*ZIP."""
+        """City/Sate/ZIP: (typo) must match -- regex is City.*ZIP."""
         session = self._mock_session(SAMPLE_DETAIL_HTML_PORTAL_TYPO)
-        address, landlord = _fetch_case_detail(session, "https://example.com/record/7721/tok999")
+        address, landlord, tenant = _fetch_case_detail(session, "https://example.com/record/7721/tok999")
         assert address == "583 W. Lake Avenue, #3, Barberton, Oh 44203"
         assert landlord == "Summit Rental Properties, Llc"
+        assert tenant == "Tenant Name"
 
     def test_returns_none_when_address_labels_absent(self):
         session = self._mock_session(SAMPLE_DETAIL_HTML_NO_ADDRESS)
-        address, landlord = _fetch_case_detail(session, "https://example.com/record/7721/tok000")
+        address, landlord, tenant = _fetch_case_detail(session, "https://example.com/record/7721/tok000")
         assert address is None
+        assert tenant == "Doe, Jane"
 
     def test_returns_none_on_http_error(self):
         session = self._mock_session("", status=404)
-        address, landlord = _fetch_case_detail(session, "https://example.com/record/7721/bad")
+        address, landlord, tenant = _fetch_case_detail(session, "https://example.com/record/7721/bad")
         assert address is None
         assert landlord is None
+        assert tenant is None
 
     def test_returns_none_on_exception(self):
         from unittest.mock import MagicMock
         mock_session = MagicMock()
         mock_session.get.side_effect = Exception("connection timeout")
-        address, landlord = _fetch_case_detail(mock_session, "https://example.com/record/7721/err")
+        address, landlord, tenant = _fetch_case_detail(mock_session, "https://example.com/record/7721/err")
         assert address is None
         assert landlord is None
+        assert tenant is None
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +345,7 @@ def test_scraper_dedupes_same_case_across_dates(monkeypatch):
     monkeypatch.setattr(scraper, "_get_search", lambda _d: SAMPLE_SEARCH_HTML)
     monkeypatch.setattr(
         "scrapers.ohio.barberton._fetch_case_detail",
-        lambda _session, _url: (None, None),
+        lambda _session, _url: (None, None, None),
     )
 
     filings = scraper.scrape()
@@ -357,7 +362,7 @@ def test_scraper_upgrades_address_and_landlord_when_detail_succeeds(monkeypatch)
     monkeypatch.setattr(scraper, "_get_search", lambda _d: SAMPLE_SEARCH_HTML)
     monkeypatch.setattr(
         "scrapers.ohio.barberton._fetch_case_detail",
-        lambda _session, _url: ("87 Helen Street, Barberton, OH 44203", "M&C MHP LLC"),
+        lambda _session, _url: ("87 Helen Street, Barberton, OH 44203", "M&C MHP LLC", None),
     )
 
     filings = scraper.scrape()
@@ -375,7 +380,7 @@ def test_scraper_keeps_unknown_placeholders_when_detail_returns_none(monkeypatch
     monkeypatch.setattr(scraper, "_get_search", lambda _d: SAMPLE_SEARCH_HTML)
     monkeypatch.setattr(
         "scrapers.ohio.barberton._fetch_case_detail",
-        lambda _session, _url: (None, None),
+        lambda _session, _url: (None, None, None),
     )
 
     filings = scraper.scrape()
@@ -383,3 +388,22 @@ def test_scraper_keeps_unknown_placeholders_when_detail_returns_none(monkeypatch
     assert len(filings) > 0
     assert filings[0].property_address == "Unknown"
     assert filings[0].landlord_name == "Unknown"
+
+
+def test_scraper_overrides_tenant_name_from_detail_page(monkeypatch):
+    """Tenant from detail page overrides the 'Concerning:' parse to fix party mis-mapping."""
+    scraper = BarbertonMunicipalScraper(lookback_days=0)
+    monkeypatch.setattr(scraper, "_ensure_session", lambda: True)
+    scraper._session_ready = True
+
+    monkeypatch.setattr(scraper, "_get_search", lambda _d: SAMPLE_SEARCH_HTML)
+    monkeypatch.setattr(
+        "scrapers.ohio.barberton._fetch_case_detail",
+        lambda _session, _url: ("87 Helen Street, Barberton, OH 44203", "M&C MHP LLC", "Smith, John"),
+    )
+
+    filings = scraper.scrape()
+
+    assert len(filings) > 0
+    # Detail page defendant name overrides the 'Concerning:' parse.
+    assert filings[0].tenant_name == "Smith, John"

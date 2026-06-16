@@ -60,29 +60,32 @@ def _label_next_text(label_elem) -> str:
 
 def _fetch_case_detail(
     session: requests.Session, record_url: str
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, str | None]:
     """
-    GET a CaseLook case detail page and return (defendant_address, plaintiff_name).
+    GET a CaseLook case detail page and return (defendant_address, plaintiff_name, defendant_name).
 
     The detail page uses Bootstrap cards with class 'card--parties-MV':
       - One card with <h4>Plaintiff</h4> containing <label>Plaintiff 1:</label>
-      - One card with <h4>Defendants</h4> containing <label>Address:</label>
-        and <label>City/Sate/ZIP:</label> (note typo in portal)
+      - One card with <h4>Defendants</h4> containing <label>Defendant 1:</label>,
+        <label>Address:</label> and <label>City/Sate/ZIP:</label> (note typo in portal)
 
-    Returns (address, landlord) — either may be None if not found.
+    Returns (address, landlord, tenant) — any may be None if not found.
+    Using the detail page for tenant avoids the 'Concerning:' mis-mapping seen in
+    some search result cards where the label picks up the plaintiff name instead.
     """
     try:
         r = session.get(record_url, timeout=15)
         if r.status_code != 200:
             log.warning("Barberton: case detail HTTP %s for %s", r.status_code, record_url)
-            return None, None
+            return None, None, None
     except Exception as exc:
         log.warning("Barberton: case detail fetch failed for %s: %s", record_url, exc)
-        return None, None
+        return None, None, None
 
     soup = BeautifulSoup(r.text, "html.parser")
     address: str | None = None
     landlord: str | None = None
+    tenant: str | None = None
 
     for card in soup.find_all("div", class_="card--parties-MV"):
         header = card.find("h4")
@@ -104,12 +107,12 @@ def _fetch_case_detail(
             city_lbl = None
             for lbl in body.find_all("label"):
                 t = lbl.get_text(strip=True)
-                if t == "Address:":
+                if re.match(r"Defendant\s*1", t, re.I) and not tenant:
+                    tenant = _label_next_text(lbl) or None
+                elif t == "Address:":
                     addr_lbl = lbl
                 elif re.match(r"City.*ZIP", t, re.I):
                     city_lbl = lbl
-                if addr_lbl and city_lbl:
-                    break
             if addr_lbl and city_lbl:
                 street = _label_next_text(addr_lbl)
                 city_state_zip = _label_next_text(city_lbl)
@@ -120,7 +123,7 @@ def _fetch_case_detail(
 
     if not address:
         log.warning("Barberton: no defendant address found at %s", record_url)
-    return address, landlord
+    return address, landlord, tenant
 
 
 def _parse_search_results(
@@ -311,12 +314,20 @@ class BarbertonMunicipalScraper:
 
                 time.sleep(random.uniform(_DELAY_MIN, _DELAY_MAX))
 
-                address, landlord = _fetch_case_detail(self.session, filing.source_url)
+                address, landlord, tenant_from_detail = _fetch_case_detail(self.session, filing.source_url)
                 updates: dict = {}
                 if address:
                     updates["property_address"] = address
                 if landlord:
                     updates["landlord_name"] = landlord
+                if tenant_from_detail:
+                    # Prefer the detail page defendant name over the 'Concerning:' search
+                    # result parse, which can mis-map to the plaintiff on some cards.
+                    tenant_clean = clean_tenant_name(
+                        _strip_occupant_suffix(tenant_from_detail) or ""
+                    ) or None
+                    if tenant_clean:
+                        updates["tenant_name"] = tenant_clean
                 if updates:
                     filing = filing.model_copy(update=updates)
 
