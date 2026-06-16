@@ -68,8 +68,12 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
               "--yes-write-supabase", "--notify"),
     ),
     # --- post-scrape automation (Phase 1) ---
-    # ISTS judgment scrape first so judgments exist before the chain's rent step.
+    # ISTS judgment scrapes first so judgments exist before the chain's rent step.
     ScheduledJob("ists_harris", 14, 50, "run_ists_harris.py"),
+    # Franklin OH tenant-lost judgments (FCMC eviction CSV). Real upsert to
+    # ists_judgments (no --dry-run); plain requests, no browser. See
+    # docs/superpowers/specs/2026-06-16-ists-franklin-judgment-leads-design.md
+    ScheduledJob("ists_franklin", 14, 55, "run_ists_franklin.py"),
     # Ordered chain: flag_enrichable -> normalize_court_date -> backfill_rent
     # (rent OFF unless RENT_BACKFILL_DAILY_CAP is set).
     ScheduledJob("post_scrape_chain", 15, 10, "../scripts/post_scrape_chain.py"),
