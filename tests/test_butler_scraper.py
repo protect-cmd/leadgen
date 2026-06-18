@@ -607,4 +607,3 @@ def test_scrape_sets_last_error_when_all_areas_fail(monkeypatch):
     assert filings == []
     assert scraper.last_error is not None
     assert "blocked" in scraper.last_error
- "blocked" in scraper.last_error
