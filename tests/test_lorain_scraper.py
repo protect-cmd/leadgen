@@ -439,3 +439,74 @@ def test_scraper_placeholder_tenant_falls_back_to_unknown(monkeypatch):
 
     assert len(filings) > 0
     assert all(f.tenant_name == "Unknown" for f in filings)
+
+
+# ---------------------------------------------------------------------------
+# _search — home.page session flow
+# ---------------------------------------------------------------------------
+
+def test_search_raises_when_jsessionid_missing(monkeypatch):
+    """_search must raise if home.page does not set JSESSIONID."""
+    from unittest.mock import MagicMock, patch
+
+    scraper = ElyriaMunicipalScraper(lookback_days=2)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = "<html><body><a href='search.page?x=tok'>Case Search</a></body></html>"
+    mock_resp.raise_for_status = lambda: None
+
+    with patch.object(scraper.session, "get", return_value=mock_resp):
+        import pytest
+        with pytest.raises(RuntimeError, match="JSESSIONID"):
+            scraper._search(date(2026, 1, 1), date(2026, 1, 7))
+
+
+def test_search_raises_when_no_search_link_on_home_page(monkeypatch):
+    """_search must raise if home.page has no link to the search form."""
+    from unittest.mock import MagicMock, patch
+
+    scraper = ElyriaMunicipalScraper(lookback_days=2)
+    scraper.session.cookies.set("JSESSIONID", "fake123")
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = "<html><body><p>Welcome</p></body></html>"
+    mock_resp.url = "https://eservices.elyriamunicourt.org/eservices/home.page"
+    mock_resp.raise_for_status = lambda: None
+
+    with patch.object(scraper.session, "get", return_value=mock_resp):
+        import pytest
+        with pytest.raises(RuntimeError, match="no link to search form"):
+            scraper._search(date(2026, 1, 1), date(2026, 1, 7))
+p.raise_for_status = lambda: None
+
+    with patch.object(scraper.session, "get", return_value=mock_resp):
+        # Session has no JSESSIONID cookie → should raise
+        import pytest
+        with pytest.raises(RuntimeError, match="JSESSIONID"):
+            scraper._search(date(2026, 1, 1), date(2026, 1, 7))
+
+
+def test_search_raises_when_no_search_link_on_home_page(monkeypatch):
+    """_search must raise if home.page has no link to search form."""
+    from unittest.mock import MagicMock, patch
+    from http.cookiejar import CookieJar
+    import requests
+
+    scraper = ElyriaMunicipalScraper(lookback_days=2)
+
+    # Inject JSESSIONID into the session so the cookie check passes
+    scraper.session.cookies.set("JSESSIONID", "fake123")
+
+    blank_html = "<html><body><p>Welcome</p></body></html>"
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = blank_html
+    mock_resp.url = "https://eservices.elyriamunicourt.org/eservices/home.page"
+    mock_resp.raise_for_status = lambda: None
+
+    with patch.object(scraper.session, "get", return_value=mock_resp):
+        import pytest
+        with pytest.raises(RuntimeError, match="no link to search form"):
+            scraper._search(date(2026, 1, 1), date(2026, 1, 7))

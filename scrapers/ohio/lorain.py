@@ -21,8 +21,7 @@ COURT_TIMEZONE = "America/New_York"
 NOTICE_TYPE = "Eviction"
 
 BASE_URL = "https://eservices.elyriamunicourt.org"
-PORTAL_URL = f"{BASE_URL}/eservices/api/portal/PUBLIC"
-SEARCH_PAGE_URL = f"{BASE_URL}/eservices/search.page"
+HOME_PAGE_URL = f"{BASE_URL}/eservices/home.page"
 SEARCH_RESULTS_URL = f"{BASE_URL}/eservices/searchresults.page"
 
 # Courtesy delay range (seconds) between detail-page fetches.
@@ -204,19 +203,22 @@ class ElyriaMunicipalScraper:
 
     Portal: https://eservices.elyriamunicourt.org/eservices/ (CourtView v1.55 / equivant)
 
-    The court's SPA wraps a legacy Apache Wicket Java app. The SPA itself is
-    client-rendered (useless for scraping), but Wicket pages are still live
-    behind an auth cookie. Session flow:
+    This is a stateful CourtView/equivant Java (Apache Wicket) app.
+    home.page is the required entry point — it issues the JSESSIONID and the
+    initial x= page token that every subsequent Wicket URL must carry.
+    Skipping home.page and going directly to a deeper page returns a formless
+    stub because Wicket has no server-side state for the request.
 
-        1. GET /eservices/api/portal/PUBLIC  → sets CVESVC_TOKEN JWT + JSESSIONID
-        2. GET /eservices/search.page        → Wicket browser-detection page (4 KB)
-                                               contains <a href="?x=TOKEN">this link</a>
-        3. GET search.page?x=TOKEN           → Name search form (search.page.3)
-        4. Find "Case Type" tab → GET its ?x=... link → Case Type form (search.page.3.1)
-           Extract exact caseCd value for "Eviction (CVG)" from the <select> element
-           (padded to 30 chars server-side; sending bare "CVG" defaults to CVF)
-        5. POST caseCd + date range          → searchresults.page (296+ records)
-        6. GET searchresults.page?x=... per case → extract first defendant address
+    Session flow:
+        1. GET /eservices/home.page          → sets JSESSIONID; page contains
+                                               nav link to search.page?x=TOKEN
+        2. Follow search.page?x=TOKEN        → Name search form with tabs
+        3. Find "Case Type" tab → GET its ?x=... link → Case Type form
+           Extract exact caseCd value for "Eviction (CVG)" from the <select>
+           (padded to 30 chars server-side; bare "CVG" defaults to CVF)
+        4. POST caseCd + date range          → searchresults.page
+        5. Paginate via ">" nav link         → collect all party rows
+        6. GET searchresults.page?x=... per case → defendant address
     """
 
     def __init__(self, lookback_days: int = 2):
@@ -297,7 +299,7 @@ class ElyriaMunicipalScraper:
 
     def _search(self, begin: date, end: date) -> list[dict]:
         """
-        Execute the 5-step CourtView session flow, POST the CVG date-range query,
+        Execute the CourtView session flow, POST the CVG date-range query,
         then paginate through all result pages via the Wicket '>' nav link.
 
         Returns a flat list of row dicts from _parse_case_rows() across all pages.
@@ -306,47 +308,69 @@ class ElyriaMunicipalScraper:
         begin_str = begin.strftime("%m/%d/%Y")
         end_str = end.strftime("%m/%d/%Y")
 
-        # Step 1: GET portal/PUBLIC — sets CVESVC_TOKEN JWT + JSESSIONID
-        r = self.session.get(PORTAL_URL, timeout=15)
+        # Step 1: GET home.page — establishes JSESSIONID and the initial Wicket
+        # x= page token.  Without this, any deeper page returns a formless stub
+        # because Wicket has no server-side state for the request.
+        r = self.session.get(HOME_PAGE_URL, timeout=15, allow_redirects=True)
         r.raise_for_status()
-        if "CVESVC_TOKEN" not in self.session.cookies:
-            raise RuntimeError("Lorain: CVESVC_TOKEN not set after portal/PUBLIC")
-
-        # Step 2: GET search.page — Wicket browser-detection page
-        time.sleep(0.4)
-        r = self.session.get(SEARCH_PAGE_URL, timeout=15, allow_redirects=True)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-        fallback = soup.find("a", href=lambda h: h and h.startswith("?x="))
-        if not fallback:
+        if not self.session.cookies.get("JSESSIONID"):
             raise RuntimeError(
-                f"Lorain: no fallback ?x= link in browser-detection page "
-                f"(got {len(r.text)} bytes, url={r.url})"
+                f"Lorain: JSESSIONID not set after home.page (url={r.url})"
             )
-        fallback_url = SEARCH_PAGE_URL + fallback["href"]
-
-        # Step 3: Follow fallback → Name search form (search.page.3)
-        time.sleep(0.4)
-        r = self.session.get(fallback_url, timeout=15, allow_redirects=True)
-        r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
+
+        # Step 2: Navigate to the Case Search / Name search form.
+        # home.page contains a nav link to search.page?x=TOKEN.
+        # If home.page is already the search form (some CourtView installs skip
+        # the landing page), use it directly.
+        if not soup.find("form"):
+            search_link = soup.find(
+                "a", href=re.compile(r"search\.page", re.IGNORECASE)
+            )
+            if not search_link:
+                # Broader fallback: any ?x= link on the page carries the token
+                search_link = soup.find(
+                    "a", href=lambda h: h and "?x=" in h
+                )
+            if not search_link:
+                raise RuntimeError(
+                    f"Lorain: no link to search form found on home.page "
+                    f"({len(r.text)} bytes, url={r.url})"
+                )
+            search_href = search_link["href"]
+            if not search_href.startswith("http"):
+                search_href = f"{BASE_URL}/eservices/{search_href.lstrip('/')}"
+
+            time.sleep(0.4)
+            r = self.session.get(search_href, timeout=15, allow_redirects=True)
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "html.parser")
+
+        # Step 3: Find "Case Type" tab within the search page.
+        # The Name tab is the default; Case Type has the date-range form.
         case_type_link = next(
             (a["href"] for a in soup.find_all("a", href=True)
              if a.get_text(strip=True) == "Case Type"),
             None,
         )
         if not case_type_link:
-            raise RuntimeError("Lorain: could not find 'Case Type' tab link in Name search form")
+            raise RuntimeError(
+                f"Lorain: could not find 'Case Type' tab in search form "
+                f"({len(r.text)} bytes, url={r.url})"
+            )
         case_type_url = r.url.split("?")[0] + case_type_link
 
-        # Step 4: GET Case Type search form (search.page.3.1)
+        # Step 4: GET Case Type search form
         time.sleep(0.4)
         r = self.session.get(case_type_url, timeout=15, allow_redirects=True)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         form = soup.find("form")
         if not form:
-            raise RuntimeError("Lorain: no form on Case Type search page")
+            raise RuntimeError(
+                f"Lorain: no form on Case Type search page "
+                f"({len(r.text)} bytes, url={r.url})"
+            )
 
         # Extract form action (may be relative)
         form_action = form.get("action", "")
@@ -361,9 +385,13 @@ class ElyriaMunicipalScraper:
         hidden_value = hidden.get("value", "")
 
         # Extract the exact caseCd value for "Eviction (CVG)" — padded to 30 chars
-        # Sending bare 'CVG' causes the server to default to the first option (CVF).
+        # Sending bare 'CVG' defaults to the first option (CVF).
         caseCd_select = form.find("select", {"name": "caseCd"})
-        cvg_option = caseCd_select.find("option", string=re.compile(r"Eviction")) if caseCd_select else None
+        cvg_option = (
+            caseCd_select.find("option", string=re.compile(r"Eviction"))
+            if caseCd_select
+            else None
+        )
         cvg_value = cvg_option["value"] if cvg_option else "CVG"
         if not cvg_option:
             log.warning("Lorain: could not find Eviction option in caseCd select; using 'CVG'")
@@ -387,8 +415,7 @@ class ElyriaMunicipalScraper:
         r.raise_for_status()
 
         # Paginate through all result pages via Wicket '>' nav link.
-        # The portal caps at 200 records; each page shows ~25 party rows.
-        _MAX_PAGES = 20  # safety cap; portal caps at 200 records (~8 pages max)
+        _MAX_PAGES = 20  # safety cap; portal caps at ~200 records (~8 pages)
         all_rows: list[dict] = []
         page_num = 1
         html = r.text
