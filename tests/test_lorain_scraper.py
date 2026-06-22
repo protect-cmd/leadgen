@@ -442,71 +442,19 @@ def test_scraper_placeholder_tenant_falls_back_to_unknown(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _search — home.page session flow
+# _search — Playwright-based flow
 # ---------------------------------------------------------------------------
 
-def test_search_raises_when_jsessionid_missing(monkeypatch):
-    """_search must raise if home.page does not set JSESSIONID."""
-    from unittest.mock import MagicMock, patch
+def test_search_raises_when_playwright_fails(monkeypatch):
+    """_search must propagate RuntimeError when Playwright cannot render the portal."""
+    import pytest
+    import scrapers.ohio.lorain as mod
+
+    def _pw_fail(begin, end):
+        raise RuntimeError("Lorain: React home did not render Case Search card")
+
+    monkeypatch.setattr(mod, "_playwright_search", _pw_fail)
 
     scraper = ElyriaMunicipalScraper(lookback_days=2)
-
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.text = "<html><body><a href='search.page?x=tok'>Case Search</a></body></html>"
-    mock_resp.raise_for_status = lambda: None
-
-    with patch.object(scraper.session, "get", return_value=mock_resp):
-        import pytest
-        with pytest.raises(RuntimeError, match="JSESSIONID"):
-            scraper._search(date(2026, 1, 1), date(2026, 1, 7))
-
-
-def test_search_raises_when_no_search_link_on_home_page(monkeypatch):
-    """_search must raise if home.page has no link to the search form."""
-    from unittest.mock import MagicMock, patch
-
-    scraper = ElyriaMunicipalScraper(lookback_days=2)
-    scraper.session.cookies.set("JSESSIONID", "fake123")
-
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.text = "<html><body><p>Welcome</p></body></html>"
-    mock_resp.url = "https://eservices.elyriamunicourt.org/eservices/home.page"
-    mock_resp.raise_for_status = lambda: None
-
-    with patch.object(scraper.session, "get", return_value=mock_resp):
-        import pytest
-        with pytest.raises(RuntimeError, match="no link to search form"):
-            scraper._search(date(2026, 1, 1), date(2026, 1, 7))
-p.raise_for_status = lambda: None
-
-    with patch.object(scraper.session, "get", return_value=mock_resp):
-        # Session has no JSESSIONID cookie → should raise
-        import pytest
-        with pytest.raises(RuntimeError, match="JSESSIONID"):
-            scraper._search(date(2026, 1, 1), date(2026, 1, 7))
-
-
-def test_search_raises_when_no_search_link_on_home_page(monkeypatch):
-    """_search must raise if home.page has no link to search form."""
-    from unittest.mock import MagicMock, patch
-    from http.cookiejar import CookieJar
-    import requests
-
-    scraper = ElyriaMunicipalScraper(lookback_days=2)
-
-    # Inject JSESSIONID into the session so the cookie check passes
-    scraper.session.cookies.set("JSESSIONID", "fake123")
-
-    blank_html = "<html><body><p>Welcome</p></body></html>"
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.text = blank_html
-    mock_resp.url = "https://eservices.elyriamunicourt.org/eservices/home.page"
-    mock_resp.raise_for_status = lambda: None
-
-    with patch.object(scraper.session, "get", return_value=mock_resp):
-        import pytest
-        with pytest.raises(RuntimeError, match="no link to search form"):
-            scraper._search(date(2026, 1, 1), date(2026, 1, 7))
+    with pytest.raises(RuntimeError, match="React home did not render"):
+        scraper._search(date(2026, 1, 1), date(2026, 1, 7))

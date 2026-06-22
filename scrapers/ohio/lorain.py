@@ -7,7 +7,7 @@ import time
 from datetime import date, timedelta
 
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup  # still used by _parse_case_rows and _fetch_defendant_address
 
 from models.filing import Filing
 from scrapers.dates import court_today
@@ -21,7 +21,7 @@ COURT_TIMEZONE = "America/New_York"
 NOTICE_TYPE = "Eviction"
 
 BASE_URL = "https://eservices.elyriamunicourt.org"
-HOME_PAGE_URL = f"{BASE_URL}/eservices/home.page"
+ESERVICES_ROOT = f"{BASE_URL}/eservices/"
 SEARCH_RESULTS_URL = f"{BASE_URL}/eservices/searchresults.page"
 
 # Courtesy delay range (seconds) between detail-page fetches.
@@ -127,6 +127,143 @@ def _parse_filing_date(date_str: str) -> date | None:
         return None
 
 
+def _playwright_search(begin: date, end: date) -> tuple[list[dict], str]:
+    """
+    Full Playwright-based eviction search on the Elyria Municipal Court portal.
+
+    The portal's /eservices/ root serves a React SPA. The React home page
+    renders a "Case Search" card; clicking it navigates via /eservices/casesearch
+    to the Wicket search.page (with session ?x= token). The Case Type tab is
+    AJAX-driven so it cannot be triggered via plain HTTP — Playwright handles
+    the full flow.
+
+    Session flow:
+        1. GET /eservices/  (React SPA home)
+        2. Wait for React to render "Case Search" card
+        3. Click "Click Here" on the Case Search card
+        4. Follow redirect to search.page?x=TOKEN
+        5. Click "Case Type" tab (AJAX)
+        6. Fill Begin/End date + select Eviction (CVG)
+        7. Submit form (input[name=submitLink])
+        8. Collect results HTML; paginate via ">" link
+        9. Return (rows, jsessionid) — JSESSIONID reused for detail fetches
+
+    Returns (rows, jsessionid).
+    Raises RuntimeError if navigation or form submission fails.
+    """
+    from playwright.sync_api import sync_playwright  # noqa: PLC0415
+    from playwright.sync_api import TimeoutError as PWTimeout  # noqa: PLC0415
+
+    begin_str = begin.strftime("%m/%d/%Y")
+    end_str = end.strftime("%m/%d/%Y")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        ctx = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
+        )
+        page = ctx.new_page()
+        try:
+            # Step 1+2: Load React home, wait for Case Search card
+            page.goto(ESERVICES_ROOT, wait_until="networkidle", timeout=30_000)
+            try:
+                page.wait_for_selector(
+                    "text=Case Search", timeout=15_000, state="visible"
+                )
+            except PWTimeout:
+                raise RuntimeError(
+                    f"Lorain: React home did not render Case Search card (url={page.url})"
+                )
+
+            # Step 3: Click "Click Here" on the Case Search card
+            try:
+                page.click("button:has-text('Click Here')", timeout=5_000)
+            except PWTimeout:
+                page.click("text=Click Here", timeout=5_000)
+            page.wait_for_url("**/search.page**", timeout=15_000)
+            page.wait_for_load_state("networkidle", timeout=15_000)
+            log.debug("Lorain: search page URL: %s", page.url)
+
+            # Step 4: Click Case Type tab (AJAX)
+            page.click("text=Case Type", timeout=10_000)
+            page.wait_for_timeout(1_000)
+
+            # Step 5: Fill date range and case type
+            page.fill("input[name='fileDateRange:dateInputBegin']", begin_str)
+            page.fill("input[name='fileDateRange:dateInputEnd']", end_str)
+            page.select_option("select[name='caseCd']", label="Eviction (CVG)")
+            page.wait_for_timeout(300)
+
+            # Step 6: Submit
+            page.click("input[name='submitLink']", timeout=5_000)
+            page.wait_for_load_state("networkidle", timeout=15_000)
+            page.wait_for_timeout(500)
+
+            # Step 7: Collect all result pages
+            _MAX_PAGES = 20
+            all_rows: list[dict] = []
+            page_num = 1
+
+            while True:
+                rows = _parse_case_rows(page.content())
+                all_rows.extend(rows)
+                log.debug(
+                    "Lorain: page %d → %d rows (total: %d)",
+                    page_num, len(rows), len(all_rows),
+                )
+
+                if page_num >= _MAX_PAGES:
+                    break
+
+                # Use a locator (lazy, never goes stale) to find the ">" next-page link.
+                # The portal uses Wicket AJAX pagination — the URL stays the same
+                # (searchresults.page) and only the table content updates.
+                next_locator = page.locator("a", has_text=re.compile(r"^\s*>\s*$"))
+                if next_locator.count() == 0:
+                    break
+
+                # Record the first case number so we can detect when AJAX updates the table.
+                first_case_before = page.evaluate(
+                    "() => { const a = document.querySelector('td a[href*=\"searchresults\"]');"
+                    " return a ? a.innerText.trim() : ''; }"
+                )
+
+                next_locator.first.click()
+
+                if first_case_before:
+                    # Wait for the first case number in the table to change (AJAX loaded).
+                    try:
+                        page.wait_for_function(
+                            "(prev) => { const a = document.querySelector('td a[href*=\"searchresults\"]');"
+                            " return a ? a.innerText.trim() !== prev : false; }",
+                            arg=first_case_before,
+                            timeout=10_000,
+                        )
+                    except PWTimeout:
+                        log.debug("Lorain: table unchanged after '>' click — end of results")
+                        break
+                else:
+                    page.wait_for_load_state("networkidle", timeout=15_000)
+                    page.wait_for_timeout(500)
+
+                page_num += 1
+
+            cookies = ctx.cookies()
+            jsessionid = next(
+                (c["value"] for c in cookies if c["name"] == "JSESSIONID"), ""
+            )
+
+        finally:
+            browser.close()
+
+    log.info("Lorain: %d party rows across %d page(s)", len(all_rows), page_num)
+    return all_rows, jsessionid
+
+
 def _fetch_defendant_address(session: requests.Session, detail_url: str) -> str | None:
     """
     GET a CourtView case detail page and return the first defendant's address.
@@ -203,22 +340,19 @@ class ElyriaMunicipalScraper:
 
     Portal: https://eservices.elyriamunicourt.org/eservices/ (CourtView v1.55 / equivant)
 
-    This is a stateful CourtView/equivant Java (Apache Wicket) app.
-    home.page is the required entry point — it issues the JSESSIONID and the
-    initial x= page token that every subsequent Wicket URL must carry.
-    Skipping home.page and going directly to a deeper page returns a formless
-    stub because Wicket has no server-side state for the request.
+    The portal serves a React SPA at /eservices/ (root). The React app renders
+    a "Case Search" card that navigates via /eservices/casesearch to the Wicket
+    search.page. The Case Type tab is AJAX-driven and cannot be triggered via
+    plain HTTP — Playwright handles the full search flow.
 
-    Session flow:
-        1. GET /eservices/home.page          → sets JSESSIONID; page contains
-                                               nav link to search.page?x=TOKEN
-        2. Follow search.page?x=TOKEN        → Name search form with tabs
-        3. Find "Case Type" tab → GET its ?x=... link → Case Type form
-           Extract exact caseCd value for "Eviction (CVG)" from the <select>
-           (padded to 30 chars server-side; bare "CVG" defaults to CVF)
-        4. POST caseCd + date range          → searchresults.page
-        5. Paginate via ">" nav link         → collect all party rows
-        6. GET searchresults.page?x=... per case → defendant address
+    Session flow (see _playwright_search for details):
+        1.   GET /eservices/                 → React SPA home
+        2.   Wait for React "Case Search" card to appear
+        3.   Click "Click Here"              → redirect to search.page?x=TOKEN
+        4.   Click Case Type tab (AJAX)
+        5.   POST date range + Eviction CVG  → searchresults.page
+        6.   Paginate via ">" nav link       → collect all party rows
+        7.   GET searchresults.page?x=... per case → defendant address
     """
 
     def __init__(self, lookback_days: int = 2):
@@ -299,149 +433,32 @@ class ElyriaMunicipalScraper:
 
     def _search(self, begin: date, end: date) -> list[dict]:
         """
-        Execute the CourtView session flow, POST the CVG date-range query,
-        then paginate through all result pages via the Wicket '>' nav link.
+        Run the full Playwright-based search and store the JSESSIONID for
+        subsequent detail-page fetches via self.session.
 
-        Returns a flat list of row dicts from _parse_case_rows() across all pages.
-        The portal caps results at 200 records; each page shows ~25 rows.
+        Playwright sync API cannot run inside an asyncio event loop (e.g. when
+        called from run_ohio.py's async main).  If a loop is already running we
+        dispatch to a ThreadPoolExecutor so Playwright gets a loop-free thread.
         """
-        begin_str = begin.strftime("%m/%d/%Y")
-        end_str = end.strftime("%m/%d/%Y")
+        import asyncio
+        import concurrent.futures
 
-        # Step 1: GET home.page — establishes JSESSIONID and the initial Wicket
-        # x= page token.  Without this, any deeper page returns a formless stub
-        # because Wicket has no server-side state for the request.
-        r = self.session.get(HOME_PAGE_URL, timeout=15, allow_redirects=True)
-        r.raise_for_status()
-        if not self.session.cookies.get("JSESSIONID"):
-            raise RuntimeError(
-                f"Lorain: JSESSIONID not set after home.page (url={r.url})"
+        try:
+            asyncio.get_running_loop()
+            in_loop = True
+        except RuntimeError:
+            in_loop = False
+
+        if in_loop:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                rows, jsessionid = ex.submit(_playwright_search, begin, end).result()
+        else:
+            rows, jsessionid = _playwright_search(begin, end)
+
+        if jsessionid:
+            self.session.cookies.set(
+                "JSESSIONID", jsessionid,
+                domain=BASE_URL.replace("https://", ""),
+                path="/",
             )
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        # Step 2: Navigate to the Case Search / Name search form.
-        # home.page contains a nav link to search.page?x=TOKEN.
-        # If home.page is already the search form (some CourtView installs skip
-        # the landing page), use it directly.
-        if not soup.find("form"):
-            search_link = soup.find(
-                "a", href=re.compile(r"search\.page", re.IGNORECASE)
-            )
-            if not search_link:
-                # Broader fallback: any ?x= link on the page carries the token
-                search_link = soup.find(
-                    "a", href=lambda h: h and "?x=" in h
-                )
-            if not search_link:
-                raise RuntimeError(
-                    f"Lorain: no link to search form found on home.page "
-                    f"({len(r.text)} bytes, url={r.url})"
-                )
-            search_href = search_link["href"]
-            if not search_href.startswith("http"):
-                search_href = f"{BASE_URL}/eservices/{search_href.lstrip('/')}"
-
-            time.sleep(0.4)
-            r = self.session.get(search_href, timeout=15, allow_redirects=True)
-            r.raise_for_status()
-            soup = BeautifulSoup(r.text, "html.parser")
-
-        # Step 3: Find "Case Type" tab within the search page.
-        # The Name tab is the default; Case Type has the date-range form.
-        case_type_link = next(
-            (a["href"] for a in soup.find_all("a", href=True)
-             if a.get_text(strip=True) == "Case Type"),
-            None,
-        )
-        if not case_type_link:
-            raise RuntimeError(
-                f"Lorain: could not find 'Case Type' tab in search form "
-                f"({len(r.text)} bytes, url={r.url})"
-            )
-        case_type_url = r.url.split("?")[0] + case_type_link
-
-        # Step 4: GET Case Type search form
-        time.sleep(0.4)
-        r = self.session.get(case_type_url, timeout=15, allow_redirects=True)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-        form = soup.find("form")
-        if not form:
-            raise RuntimeError(
-                f"Lorain: no form on Case Type search page "
-                f"({len(r.text)} bytes, url={r.url})"
-            )
-
-        # Extract form action (may be relative)
-        form_action = form.get("action", "")
-        if not form_action.startswith("http"):
-            form_action = r.url.split("?")[0] + form_action
-
-        # Extract Wicket hidden field (name varies per session, e.g. id72_hf_0)
-        hidden = form.find("input", {"type": "hidden"})
-        if not hidden or not hidden.get("name"):
-            raise RuntimeError("Lorain: no Wicket hidden field in Case Type form")
-        hidden_name = hidden["name"]
-        hidden_value = hidden.get("value", "")
-
-        # Extract the exact caseCd value for "Eviction (CVG)" — padded to 30 chars
-        # Sending bare 'CVG' defaults to the first option (CVF).
-        caseCd_select = form.find("select", {"name": "caseCd"})
-        cvg_option = (
-            caseCd_select.find("option", string=re.compile(r"Eviction"))
-            if caseCd_select
-            else None
-        )
-        cvg_value = cvg_option["value"] if cvg_option else "CVG"
-        if not cvg_option:
-            log.warning("Lorain: could not find Eviction option in caseCd select; using 'CVG'")
-
-        # Step 5: POST Case Type form with date range → first results page
-        post_data = {
-            hidden_name: hidden_value,
-            "fileDateRange:dateInputBegin": begin_str,
-            "fileDateRange:dateInputEnd": end_str,
-            "caseCd": cvg_value,
-            "submitLink": "Search",
-        }
-        time.sleep(0.5)
-        r = self.session.post(
-            form_action,
-            data=post_data,
-            headers={"Referer": r.url},
-            timeout=30,
-            allow_redirects=True,
-        )
-        r.raise_for_status()
-
-        # Paginate through all result pages via Wicket '>' nav link.
-        _MAX_PAGES = 20  # safety cap; portal caps at ~200 records (~8 pages)
-        all_rows: list[dict] = []
-        page_num = 1
-        html = r.text
-
-        while True:
-            rows = _parse_case_rows(html)
-            all_rows.extend(rows)
-            log.debug("Lorain: page %d → %d rows (running total: %d)", page_num, len(rows), len(all_rows))
-
-            soup = BeautifulSoup(html, "html.parser")
-            next_href = next(
-                (a["href"] for a in soup.find_all("a", href=True)
-                 if a.get_text(strip=True) == ">"),
-                None,
-            )
-            if not next_href:
-                break
-            if page_num >= _MAX_PAGES:
-                log.warning("Lorain: pagination safety cap (%d pages) reached; stopping early", _MAX_PAGES)
-                break
-
-            time.sleep(0.4)
-            r = self.session.get(SEARCH_RESULTS_URL + next_href, timeout=15, allow_redirects=True)
-            r.raise_for_status()
-            html = r.text
-            page_num += 1
-
-        log.info("Lorain: %d party rows across %d page(s)", len(all_rows), page_num)
-        return all_rows
+        return rows
