@@ -24,26 +24,26 @@ class ScheduledJob:
 
 
 SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
-    ScheduledJob("texas", 13, 0, "run_texas.py"),
+    ScheduledJob("texas", 12, 0, "run_texas.py"),
     # tarrant DESCHEDULED 2026-05-29 - Bright Data tunnel failing on every
     # CaseDetail click (ERR_TUNNEL_CONNECTION_FAILED). See follow-up:
     # docs/superpowers/specs/2026-05-29-tarrant-rebuild-design.md
-    # ScheduledJob("tarrant", 13, 10, "run_tarrant.py", args=("--pipe",)),
-    ScheduledJob("tennessee", 13, 20, "run_tennessee.py"),
+    # ScheduledJob("tarrant", 12, 10, "run_tarrant.py", args=("--pipe",)),
+    ScheduledJob("tennessee", 12, 20, "run_tennessee.py"),
     # Raw insert of single-match filings (Phase 5.2: inline enrichment removed —
     # enrichment is operator-driven via /lists "Enrich selected"). run_arizona
     # persisted ONLY via --pipe, so the prior --notify-only job discarded every
     # scrape and Maricopa got near-zero daily volume. --yes-write-supabase
     # persists raw without enriching.
-    ScheduledJob("arizona", 13, 40, "run_arizona.py", args=("--yes-write-supabase", "--notify")),
+    ScheduledJob("arizona", 12, 40, "run_arizona.py", args=("--yes-write-supabase", "--notify")),
     # georgia_cobb DESCHEDULED 2026-05-29 - 200 filings / 4% gate pass rate.
     # Underlying cause: Nominatim geocoder (which Cobb's assessor chain
     # depends on for address enrichment) is unreliable. See follow-up:
     # docs/superpowers/specs/2026-05-29-cobb-address-enrichment-rebuild-design.md
-    # ScheduledJob("georgia_cobb", 14, 0, "run_georgia_cobb.py", args=("--pipe", "--notify")),
+    # ScheduledJob("georgia_cobb", 13, 0, "run_georgia_cobb.py", args=("--pipe", "--notify")),
     ScheduledJob(
         "ohio_franklin_raw",
-        14,
+        13,
         20,
         "../scripts/push_franklin_filings.py",
         args=("--lookback-days", "2", "--yes-write-supabase", "--notify"),
@@ -53,7 +53,7 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
     # args had neither, so scraped Hamilton filings were silently discarded.
     ScheduledJob(
         "ohio_hamilton",
-        14,
+        13,
         40,
         "run_ohio.py",
         args=("--lookback-days", "2", "--counties", "hamilton",
@@ -61,7 +61,7 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
     ),
     ScheduledJob(
         "ohio_montgomery",
-        14,
+        13,
         45,
         "run_ohio.py",
         args=("--lookback-days", "2", "--counties", "montgomery",
@@ -69,14 +69,14 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
     ),
     # --- post-scrape automation (Phase 1) ---
     # ISTS judgment scrapes first so judgments exist before the chain's rent step.
-    ScheduledJob("ists_harris", 14, 50, "run_ists_harris.py"),
+    ScheduledJob("ists_harris", 13, 50, "run_ists_harris.py"),
     # Franklin OH tenant-lost judgments (FCMC eviction CSV). Real upsert to
     # ists_judgments (no --dry-run); plain requests, no browser. See
     # docs/superpowers/specs/2026-06-16-ists-franklin-judgment-leads-design.md
-    ScheduledJob("ists_franklin", 14, 55, "run_ists_franklin.py"),
+    ScheduledJob("ists_franklin", 13, 55, "run_ists_franklin.py"),
     # Ordered chain: flag_enrichable -> normalize_court_date -> backfill_rent
     # (rent OFF unless RENT_BACKFILL_DAILY_CAP is set).
-    ScheduledJob("post_scrape_chain", 15, 10, "../scripts/post_scrape_chain.py"),
+    ScheduledJob("post_scrape_chain", 14, 10, "../scripts/post_scrape_chain.py"),
 )
 
 
