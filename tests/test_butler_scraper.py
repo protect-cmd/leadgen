@@ -525,6 +525,38 @@ def test_scrape_returns_filings_across_all_three_areas(monkeypatch):
     assert scraper.last_error is None
 
 
+def test_build_filings_skips_records_with_no_resolvable_date(monkeypatch):
+    """A stub with no detail filing_date and no hearing date is skipped,
+    never stamped with today (which would look spuriously fresh)."""
+    scraper = ButlerCountyAreaCourtScraper()
+
+    # Detail fetch yields no filing_date for either stub.
+    monkeypatch.setattr(
+        "scrapers.ohio.butler._fetch_case_detail",
+        lambda session, url: ("Landlord LLC", "123 Main St", None),
+    )
+    monkeypatch.setattr("scrapers.ohio.butler.time.sleep", lambda *_: None)
+
+    stubs = [
+        {  # has a hearing date -> kept, dated to the hearing
+            "case_number": "CVG2600010",
+            "tenant_raw": "Doe, Jane",
+            "court_date": date(2026, 6, 17),
+            "source_url": "https://docket.bcohio.gov/recordSearch.php?k=a",
+        },
+        {  # no filing date and no hearing date -> skipped
+            "case_number": "CVG2600011",
+            "tenant_raw": "Roe, John",
+            "court_date": None,
+            "source_url": "https://docket.bcohio.gov/recordSearch.php?k=b",
+        },
+    ]
+
+    filings = scraper._build_filings(stubs, date(2026, 6, 23))
+    assert [f.case_number for f in filings] == ["CVG2600010"]
+    assert filings[0].filing_date == date(2026, 6, 17)
+
+
 def test_scrape_deduplicates_cases_appearing_in_multiple_areas(monkeypatch):
     """Same case_number from two areas must only appear once."""
     scraper = ButlerCountyAreaCourtScraper()

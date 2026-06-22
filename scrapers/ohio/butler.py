@@ -426,6 +426,18 @@ class ButlerCountyAreaCourtScraper:
             landlord, address, filing_date = _fetch_case_detail(
                 self.session, stub["source_url"]
             )
+            # Never fabricate a filing_date. Stamping today would make a
+            # record whose true filing date is unknown look fresh and slip
+            # past the downstream freshness gate. Prefer the detail-page
+            # filing date, fall back to the hearing date, and skip the record
+            # entirely when neither is available.
+            resolved_filing_date = filing_date or stub["court_date"]
+            if resolved_filing_date is None:
+                log.warning(
+                    "Butler: skipping %s — no filing or hearing date available",
+                    stub["case_number"],
+                )
+                continue
             tenant = _strip_occupant_suffix(stub["tenant_raw"])
             filings.append(
                 Filing(
@@ -433,7 +445,7 @@ class ButlerCountyAreaCourtScraper:
                     tenant_name=clean_tenant_name(tenant) or "Unknown",
                     property_address=address or "Unknown",
                     landlord_name=landlord or "Unknown",
-                    filing_date=filing_date or stub["court_date"] or today,
+                    filing_date=resolved_filing_date,
                     court_date=stub["court_date"],
                     state=STATE,
                     county=COUNTY,
