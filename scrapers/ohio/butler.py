@@ -352,7 +352,7 @@ class ButlerCountyAreaCourtScraper:
         # POST Calendar Search
         payload: dict[str, str] = {
             "": "MU",
-            "searchType": "fileDate",
+            "searchType": "docketDate",
             "k": form_k,
             "searchBMonth": str(start.month),
             "searchBDay": str(start.day),
