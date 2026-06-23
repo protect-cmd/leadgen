@@ -232,7 +232,11 @@ def _playwright_search(begin: date, end: date) -> tuple[list[dict], str]:
                     " return a ? a.innerText.trim() : ''; }"
                 )
 
-                next_locator.first.click()
+                try:
+                    next_locator.first.click(timeout=5_000)
+                except PWTimeout:
+                    log.debug("Lorain: '>' click timed out — end of results")
+                    break
 
                 if first_case_before:
                     # Wait for the first case number in the table to change (AJAX loaded).
