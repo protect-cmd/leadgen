@@ -94,9 +94,7 @@ class OrangeScraper(BaseScraper):
     # ------------------------------------------------------------------ #
 
     async def _run_search(self, page, start: date, today: date) -> list[Filing]:
-        start_str = start.strftime("%-m/%-d/%y") if hasattr(date, "strftime") else start.strftime("%m/%d/%y")
-        end_str   = today.strftime("%-m/%-d/%y") if hasattr(date, "strftime") else today.strftime("%m/%d/%y")
-        # Windows strftime does not support %-m — use cross-platform manual format
+        # Cross-platform M/d/yy format (no leading zero on month/day, 2-digit year)
         start_str = f"{start.month}/{start.day}/{start.year % 100:02d}"
         end_str   = f"{today.month}/{today.day}/{today.year % 100:02d}"
 

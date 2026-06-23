@@ -187,3 +187,141 @@ def test_live_smoke_returns_filings():
         assert f.county == "Orange"
         assert f.case_number not in ("", None, "UNKNOWN")
         assert f.filing_date is not None
+
+
+# ------------------------------------------------------------------ #
+#  Schema contract                                                    #
+# ------------------------------------------------------------------ #
+
+def test_filing_schema_contract():
+    """
+    Construct a Filing with the exact fields orange.py produces.
+    Confirms Pydantic accepts the contract and required fields are present.
+    """
+    from models.filing import Filing
+    from datetime import date as _date
+
+    f = Filing(
+        case_number      = "2026-CC-013227-O",
+        tenant_name      = "Smith, John",
+        property_address = "1234 OAK STREET, ORLANDO, FL 32801",
+        landlord_name    = "Acme Properties LLC",
+        filing_date      = _date(2026, 6, 18),
+        court_date       = None,
+        state            = "FL",
+        county           = "Orange",
+        notice_type      = "Residential Eviction",
+        source_url       = "https://myeclerk.myorangeclerk.com/Cases/search",
+    )
+    assert f.case_number      == "2026-CC-013227-O"
+    assert f.tenant_name      == "Smith, John"
+    assert f.property_address == "1234 OAK STREET, ORLANDO, FL 32801"
+    assert f.landlord_name    == "Acme Properties LLC"
+    assert f.filing_date      == _date(2026, 6, 18)
+    assert f.court_date       is None
+    assert f.state            == "FL"
+    assert f.county           == "Orange"
+    assert f.notice_type      == "Residential Eviction"
+    assert f.source_url.startswith("https://myeclerk")
+
+
+def test_filing_schema_rejects_missing_required_fields():
+    """Pydantic must raise on missing required field."""
+    from models.filing import Filing
+    from pydantic import ValidationError
+
+    try:
+        Filing(
+            # tenant_name missing — should raise
+            case_number      = "X",
+            property_address = "Y",
+            landlord_name    = "Z",
+            filing_date      = None,  # also invalid
+            state            = "FL",
+            county           = "Orange",
+            notice_type      = "Residential Eviction",
+            source_url       = "u",
+        )
+    except ValidationError:
+        return
+    raise AssertionError("Filing should have raised on missing tenant_name")
+
+
+# ------------------------------------------------------------------ #
+#  Pagination                                                         #
+# ------------------------------------------------------------------ #
+
+def test_pagination_iterates_then_stops():
+    """
+    Mock _collect_current_page to return filings on page 1 and page 2,
+    and the Next link to be present on page 1 but absent on page 2.
+    Confirm _collect_all_pages returns the combined list and stops.
+    """
+    import asyncio
+    from datetime import date as _date
+
+    scraper = OrangeScraper.__new__(OrangeScraper)
+    scraper.lookback_days = 7
+    scraper.headless = True
+
+    next_link_calls = [AsyncMock(), None]  # page 1 has Next, page 2 does not
+    next_link_calls[0].get_attribute = AsyncMock(return_value="")  # no "disabled" class
+    next_link_calls[0].click = AsyncMock()
+
+    page_filings = [["filing_p1_a", "filing_p1_b"], ["filing_p2_a"]]
+    call_idx = {"i": 0}
+
+    async def mock_query_selector(sel):
+        i = call_idx["i"]
+        call_idx["i"] += 1
+        if i >= len(next_link_calls):
+            return None
+        return next_link_calls[i]
+
+    async def mock_collect_current(page, today, seen_cases):
+        return page_filings.pop(0) if page_filings else []
+
+    mock_page = AsyncMock()
+    mock_page.query_selector = mock_query_selector
+    mock_page.wait_for_timeout = AsyncMock()
+
+    with patch.object(scraper, "_collect_current_page", side_effect=mock_collect_current):
+        result = asyncio.run(
+            scraper._collect_all_pages(mock_page, _date(2026, 6, 18))
+        )
+
+    assert len(result) == 3
+    assert result == ["filing_p1_a", "filing_p1_b", "filing_p2_a"]
+
+
+def test_pagination_safety_stops_at_100_pages():
+    """If portal never returns a missing Next link, scraper must stop at 100."""
+    import asyncio
+    from datetime import date as _date
+
+    scraper = OrangeScraper.__new__(OrangeScraper)
+    scraper.lookback_days = 7
+    scraper.headless = True
+
+    # Always return a non-disabled Next link
+    fake_next = AsyncMock()
+    fake_next.get_attribute = AsyncMock(return_value="")
+    fake_next.click = AsyncMock()
+
+    async def always_next(_sel):
+        return fake_next
+
+    async def mock_collect_current(page, today, seen_cases):
+        return ["x"]
+
+    mock_page = AsyncMock()
+    mock_page.query_selector = always_next
+    mock_page.wait_for_timeout = AsyncMock()
+
+    with patch.object(scraper, "_collect_current_page", side_effect=mock_collect_current):
+        result = asyncio.run(
+            scraper._collect_all_pages(mock_page, _date(2026, 6, 18))
+        )
+
+    # Safety cap at 100 — should hit it and stop
+    assert len(result) == 100
