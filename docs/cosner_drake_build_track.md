@@ -1,6 +1,16 @@
 # Cosner Drake — Build Track
 
-**Status:** starting. This is the sibling brand to Garnish Proof; see `docs/garnish_proof_build_status.md` for the pipeline pattern we reuse.
+**Status (2026-06-24):** source verified, scraper built. This is the sibling brand to Garnish Proof; see `docs/garnish_proof_build_status.md` for the pipeline pattern we reuse.
+
+## Step 1 done — source verified (commit 9ee408b)
+
+Built the scraper + a dry-run verification harness and ran it live before committing to storage/enrichment.
+
+- **Scraper:** `scrapers/texas/harris_debt_claims.py` (`HarrisDebtClaimScraper`). It subclasses **`HarrisCountyScraper`** (the Vantage *Cases Filed* parser) — **not** `HarrisJudgmentScraper` as this doc originally guessed. CD is a Cases-Filed product like Vantage, so it reuses Vantage's parser/columns and just swaps the case type. `HarrisCountyScraper` is now parameterized by `casetype` + `extract_text` (eviction defaults preserved; non-breaking).
+- **Harness:** `jobs/run_cd_harris.py --dry-run` prints volume / address-completeness / individual-defendant share / creditors. Store/enrich path intentionally not built yet.
+- **Live result (Jun 22–23 filings):** **712 filings, 100% address-complete, 98% individual defendants**, debt buyers LVNV / Capital One / Portfolio Recovery / Jefferson Capital / Midland. 621 in a single day — confirms the high-volume, address-complete, date-enumerable filings stage. The doc's address-complete claim (originally verified only for the *judgments* extract) now holds for the *filings* extract too.
+
+**Next:** Step 1 (table/migration), Step 5 (cd_store + cd_enrich with the 30-day Answer-window freshness) — see build steps below.
 
 ## What Cosner Drake is
 
