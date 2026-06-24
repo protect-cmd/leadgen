@@ -10,7 +10,19 @@ Built the scraper + a dry-run verification harness and ran it live before commit
 - **Harness:** `jobs/run_cd_harris.py --dry-run` prints volume / address-completeness / individual-defendant share / creditors. Store/enrich path intentionally not built yet.
 - **Live result (Jun 22–23 filings):** **712 filings, 100% address-complete, 98% individual defendants**, debt buyers LVNV / Capital One / Portfolio Recovery / Jefferson Capital / Midland. 621 in a single day — confirms the high-volume, address-complete, date-enumerable filings stage. The doc's address-complete claim (originally verified only for the *judgments* extract) now holds for the *filings* extract too.
 
-**Next:** Step 1 (table/migration), Step 5 (cd_store + cd_enrich with the 30-day Answer-window freshness) — see build steps below.
+## Step 2 done — storage + enrichment built (commit 9b56cb3)
+
+- `migrations/025_cosner_filings.sql` — isolated `cosner_filings` table (defendant = lead, `answer_deadline` = filing + 30d, enrichment + outreach columns). **NOT applied to the live DB yet** — no migration runner / no direct Postgres connection in this repo, so it must be pasted into the Supabase SQL editor by hand (same as GP's 023).
+- `models/cosner.py` `CosnerFiling` + `to_row`; `to_cosner_filing` mapper in `harris_debt_claims.py`.
+- `services/cd_store.py` (isolated upsert/dedup), `services/cd_enrich.py` (SearchBug, 30-day Answer-window freshness; mirror of `gp_enrich`).
+- `jobs/run_cd_harris.py` now does live scrape → gate (individual defendant + full address) → map → upsert. `jobs/run_cd_enrich.py` runs the enrichment pass.
+
+**To start records landing in Supabase:**
+1. Apply `migrations/025_cosner_filings.sql` in the Supabase SQL editor.
+2. `python -m jobs.run_cd_harris` (live ingest into `cosner_filings`).
+3. `python -m jobs.run_cd_enrich --limit 50` (SearchBug phone enrichment).
+
+**Still paused (external deps):** GHL push + Bland dialer (`cd_ghl`/`cd_bland`/`run_cd_outreach`) wait on the Cosner Drake GHL subaccount (Jonas: `GHL_CD_*`) and the "you've been sued / file your Answer" call+SMS script (Chris), plus the website. Lead collection into Supabase is independent of these.
 
 ## What Cosner Drake is
 
