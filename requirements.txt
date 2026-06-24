@@ -12,3 +12,9 @@ pdfplumber==0.11.4
 requests==2.32.3
 beautifulsoup4==4.12.3
 tzdata
+
+# Orange FL (run_orange.py) free reCAPTCHA audio-challenge solver:
+#   miniaudio decodes the challenge MP3 with no ffmpeg dependency;
+#   SpeechRecognition transcribes it via the free Google Web Speech endpoint.
+SpeechRecognition==3.17.0
+miniaudio==1.71

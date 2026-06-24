@@ -146,6 +146,67 @@ def test_scrape_returns_empty_when_search_button_never_enables():
     assert result == []
 
 
+def test_solve_recaptcha_is_noop_without_api_key(monkeypatch):
+    """For a paid provider with no CAPTCHA_API_KEY the solver must not run
+    (preserves passive-wait behaviour and never touches the page)."""
+    import asyncio
+
+    monkeypatch.setenv("CAPTCHA_PROVIDER", "2captcha")
+    monkeypatch.delenv("CAPTCHA_API_KEY", raising=False)
+
+    scraper = OrangeScraper.__new__(OrangeScraper)
+    mock_page = AsyncMock()
+
+    solved = asyncio.run(scraper._solve_recaptcha(mock_page))
+
+    assert solved is False
+    mock_page.evaluate.assert_not_called()
+
+
+def test_solve_recaptcha_routes_to_audio_provider(monkeypatch):
+    """CAPTCHA_PROVIDER=audio uses the free in-browser solver (no API key)."""
+    import asyncio
+
+    monkeypatch.setenv("CAPTCHA_PROVIDER", "audio")
+    monkeypatch.delenv("CAPTCHA_API_KEY", raising=False)
+
+    scraper = OrangeScraper.__new__(OrangeScraper)
+    mock_page = AsyncMock()
+
+    with patch.object(
+        OrangeScraper, "_solve_recaptcha_audio",
+        new=AsyncMock(return_value=True),
+    ) as audio:
+        solved = asyncio.run(scraper._solve_recaptcha(mock_page))
+
+    assert solved is True
+    audio.assert_awaited_once_with(mock_page)
+
+
+def test_solve_recaptcha_injects_token_and_fires_callback(monkeypatch):
+    """With a key set, a solved token is injected into the page via evaluate."""
+    import asyncio
+
+    monkeypatch.setenv("CAPTCHA_API_KEY", "test-key")
+    monkeypatch.setenv("CAPTCHA_PROVIDER", "2captcha")
+
+    scraper = OrangeScraper.__new__(OrangeScraper)
+    mock_page = AsyncMock()
+    # First evaluate() reads the live sitekey; later one injects the token.
+    mock_page.evaluate = AsyncMock(side_effect=["live-sitekey", None])
+
+    with patch.object(
+        OrangeScraper, "_solve_via_2captcha",
+        new=AsyncMock(return_value="TOKEN-123"),
+    ):
+        solved = asyncio.run(scraper._solve_recaptcha(mock_page))
+
+    assert solved is True
+    # The token-injection evaluate call received the solved token as an arg.
+    inject_call = mock_page.evaluate.call_args_list[-1]
+    assert "TOKEN-123" in inject_call.args
+
+
 # ------------------------------------------------------------------ #
 #  Live smoke test                                                    #
 # ------------------------------------------------------------------ #

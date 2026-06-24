@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
+import os
 import re
 from datetime import date, datetime, timedelta
 
@@ -18,7 +20,12 @@ log = logging.getLogger(__name__)
 # Portal: Orange County FL Clerk of Courts — myeclerk
 # Search page exposes Case Type multiselect (Eviction = checkbox value "41")
 # + DateFrom/DateTo text inputs (M/d/yy) + reCAPTCHA + Search button.
-# Captcha is handled by Railway infra (BrightData + solver) at runtime.
+#
+# The portal loads fine on a plain US IP (HTTP 200) — the ONLY gate is a
+# Google reCAPTCHA v2 *checkbox* (not Enterprise) that keeps #caseSearch
+# disabled until solved. BrightData's residential zone refuses this domain
+# (classified "Government"), so we solve the captcha directly via a solver
+# service (2Captcha / CapSolver) and inject the token. See _solve_recaptcha.
 PORTAL_URL       = "https://myeclerk.myorangeclerk.com/"
 CASE_SEARCH_URL  = "https://myeclerk.myorangeclerk.com/Cases/search"
 DOC_BASE_URL     = "https://myeclerk.myorangeclerk.com"
@@ -29,6 +36,16 @@ COURT_TIMEZONE   = "America/New_York"
 NOTICE_TYPE      = "Residential Eviction"
 
 EVICTION_CASE_TYPE_VALUE = "41"   # Confirmed via DOM inspection (June 2026)
+
+# reCAPTCHA v2 checkbox on the search form (confirmed via live DOM, June 2026).
+# Used as a fallback only — _solve_recaptcha reads the live data-sitekey first.
+RECAPTCHA_SITEKEY = "6LdtOBETAAAAABvi0Md4UUqb7GKfkRiUR6AsrFX-"
+
+# Captcha solver config — env-gated so unit tests and the existing "external
+# infra solves it" deployment keep working with no key set.
+#   CAPTCHA_PROVIDER : "2captcha" (default) | "capsolver"
+#   CAPTCHA_API_KEY  : solver account key; if unset, solving is skipped
+CAPTCHA_SOLVE_TIMEOUT_S = 150   # max wall-clock to wait for a solved token
 
 # Regex for street-address recovery from Complaint PDFs.
 # Florida complaints follow FL Statute 83 service-of-process formatting:
@@ -55,7 +72,7 @@ class OrangeScraper(BaseScraper):
       1. Load /Cases/search
       2. Open Case Type multiselect → check "Eviction" (value=41)
       3. Fill DateFrom (today - lookback_days) and DateTo (today)
-      4. (Captcha handled by Railway runtime infra)
+      4. Solve reCAPTCHA v2 + inject token (_solve_recaptcha) so Search enables
       5. Click #caseSearch
       6. Iterate paginated case list — for each case number link:
          - Open case detail
@@ -119,8 +136,11 @@ class OrangeScraper(BaseScraper):
         await page.fill("#DateTo", end_str)
         await page.wait_for_timeout(300)
 
-        # Step 5 — captcha handled by Railway infra (BrightData + solver)
-        # Wait until search button enables OR a captcha solver toggles it.
+        # Step 5 — solve the reCAPTCHA so #caseSearch becomes enabled.
+        # If a solver key is configured we solve+inject directly; otherwise we
+        # fall back to passively waiting (e.g. an external solver toggles it).
+        await self._solve_recaptcha(page)
+
         log.info("Orange FL: waiting for search button to enable")
         try:
             await page.wait_for_function(
@@ -145,6 +165,281 @@ class OrangeScraper(BaseScraper):
 
         await page.wait_for_timeout(2_000)
         return await self._collect_all_pages(page, today)
+
+    # ------------------------------------------------------------------ #
+    #  reCAPTCHA v2 solving (2Captcha / CapSolver)                         #
+    # ------------------------------------------------------------------ #
+
+    async def _solve_recaptcha(self, page) -> bool:
+        """
+        Make #caseSearch become enabled by satisfying the reCAPTCHA v2.
+
+        Three modes via CAPTCHA_PROVIDER:
+          - "audio"            : free, no key — solve the audio challenge
+                                 in-browser with local speech-to-text.
+          - "2captcha"/"capsolver" : paid solver API; token is injected.
+
+        For the paid modes this is a no-op (returns False) when
+        CAPTCHA_API_KEY is unset — preserving the old passive-wait behaviour
+        and keeping unit tests green.
+        """
+        provider = os.getenv("CAPTCHA_PROVIDER", "2captcha").strip().lower()
+
+        # Free path: complete the audio challenge directly in the browser so
+        # reCAPTCHA itself sets the token + fires the callback. No key needed.
+        if provider == "audio":
+            return await self._solve_recaptcha_audio(page)
+
+        api_key = os.getenv("CAPTCHA_API_KEY", "").strip()
+        if not api_key:
+            log.info("Orange FL: no CAPTCHA_API_KEY set — relying on passive wait")
+            return False
+
+        # Prefer the live sitekey off the page; fall back to the known constant.
+        sitekey = await page.evaluate(
+            "() => { const el = document.querySelector('.g-recaptcha');"
+            " return el ? el.getAttribute('data-sitekey') : null; }"
+        ) or RECAPTCHA_SITEKEY
+
+        log.info("Orange FL: solving reCAPTCHA via %s (sitekey %s…)", provider, sitekey[:12])
+        try:
+            if provider == "capsolver":
+                token = await self._solve_via_capsolver(api_key, sitekey)
+            else:
+                token = await self._solve_via_2captcha(api_key, sitekey)
+        except Exception as e:
+            log.warning("Orange FL: captcha solve failed: %s", e)
+            return False
+
+        if not token:
+            log.warning("Orange FL: captcha solver returned no token")
+            return False
+
+        # Inject the token into the response field(s) and fire the page callback
+        # (data-callback="recaptchaCallback") so the form's validation enables
+        # the Search button exactly as a human solve would.
+        await page.evaluate(
+            """(token) => {
+                document.querySelectorAll('textarea[name="g-recaptcha-response"], #g-recaptcha-response')
+                    .forEach(el => { el.style.display = ''; el.value = token; });
+                const el = document.querySelector('.g-recaptcha');
+                const cbName = el && el.getAttribute('data-callback');
+                const cb = cbName && window[cbName];
+                if (typeof cb === 'function') { try { cb(token); } catch (e) {} }
+            }""",
+            token,
+        )
+        log.info("Orange FL: reCAPTCHA token injected")
+        return True
+
+    @staticmethod
+    async def _solve_via_2captcha(api_key: str, sitekey: str) -> str | None:
+        """2Captcha userrecaptcha flow (proxyless)."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                "https://2captcha.com/in.php",
+                data={
+                    "key": api_key,
+                    "method": "userrecaptcha",
+                    "googlekey": sitekey,
+                    "pageurl": CASE_SEARCH_URL,
+                    "json": "1",
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+            if data.get("status") != 1:
+                raise RuntimeError(f"2captcha submit error: {data.get('request')}")
+            captcha_id = data["request"]
+
+            deadline = asyncio.get_event_loop().time() + CAPTCHA_SOLVE_TIMEOUT_S
+            while asyncio.get_event_loop().time() < deadline:
+                await asyncio.sleep(5)
+                rr = await client.get(
+                    "https://2captcha.com/res.php",
+                    params={"key": api_key, "action": "get", "id": captcha_id, "json": "1"},
+                )
+                rr.raise_for_status()
+                res = rr.json()
+                if res.get("status") == 1:
+                    return res["request"]
+                if res.get("request") != "CAPCHA_NOT_READY":
+                    raise RuntimeError(f"2captcha poll error: {res.get('request')}")
+        return None
+
+    @staticmethod
+    async def _solve_via_capsolver(api_key: str, sitekey: str) -> str | None:
+        """CapSolver ReCaptchaV2TaskProxyLess flow."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                "https://api.capsolver.com/createTask",
+                json={
+                    "clientKey": api_key,
+                    "task": {
+                        "type": "ReCaptchaV2TaskProxyLess",
+                        "websiteURL": CASE_SEARCH_URL,
+                        "websiteKey": sitekey,
+                    },
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+            if data.get("errorId"):
+                raise RuntimeError(f"capsolver createTask error: {data.get('errorDescription')}")
+            task_id = data["taskId"]
+
+            deadline = asyncio.get_event_loop().time() + CAPTCHA_SOLVE_TIMEOUT_S
+            while asyncio.get_event_loop().time() < deadline:
+                await asyncio.sleep(5)
+                rr = await client.post(
+                    "https://api.capsolver.com/getTaskResult",
+                    json={"clientKey": api_key, "taskId": task_id},
+                )
+                rr.raise_for_status()
+                res = rr.json()
+                if res.get("errorId"):
+                    raise RuntimeError(f"capsolver result error: {res.get('errorDescription')}")
+                if res.get("status") == "ready":
+                    return res["solution"]["gRecaptchaResponse"]
+        return None
+
+    # ------------------------------------------------------------------ #
+    #  Free audio-challenge solver (no key, no per-solve cost)             #
+    # ------------------------------------------------------------------ #
+
+    async def _solve_recaptcha_audio(self, page) -> bool:
+        """
+        Solve the reCAPTCHA v2 *audio* challenge entirely in the browser:
+        open the checkbox → switch to audio → download the spoken-phrase MP3 →
+        transcribe it locally (miniaudio + SpeechRecognition) → type the answer
+        → verify. reCAPTCHA then sets g-recaptcha-response and fires the page
+        callback, so #caseSearch enables exactly as a human solve would.
+
+        Returns True if an answer was submitted (the caller's button-enable
+        wait is the final confirmation). Returns False if the challenge frames
+        aren't found, Google blocks automated solving, or transcription fails.
+        """
+        sitekey = await page.evaluate(
+            "() => { const el = document.querySelector('.g-recaptcha');"
+            " return el ? el.getAttribute('data-sitekey') : null; }"
+        ) or RECAPTCHA_SITEKEY
+
+        def frame(substr: str):
+            # Match the VISIBLE widget's frames by sitekey (the page also has a
+            # second, invisible reCAPTCHA we must not touch).
+            for f in page.frames:
+                u = f.url or ""
+                if substr in u and f"k={sitekey}" in u:
+                    return f
+            return None
+
+        anchor = frame("api2/anchor")
+        if not anchor:
+            log.warning("Orange FL: reCAPTCHA anchor frame not found")
+            return False
+
+        log.info("Orange FL: solving reCAPTCHA via free audio challenge")
+        try:
+            await anchor.click("#recaptcha-anchor", timeout=10_000)
+        except Exception as e:
+            log.warning("Orange FL: could not click reCAPTCHA checkbox: %s", e)
+        await page.wait_for_timeout(2_000)
+
+        # Sometimes the checkbox passes with no challenge at all.
+        if (await anchor.get_attribute("#recaptcha-anchor", "aria-checked")) == "true":
+            log.info("Orange FL: reCAPTCHA passed without a challenge")
+            return True
+
+        bframe = frame("api2/bframe")
+        if not bframe:
+            await page.wait_for_timeout(2_000)
+            bframe = frame("api2/bframe")
+        if not bframe:
+            log.warning("Orange FL: reCAPTCHA challenge frame not found")
+            return False
+
+        try:
+            await bframe.click("#recaptcha-audio-button", timeout=10_000)
+            await page.wait_for_timeout(2_000)
+        except Exception as e:
+            log.warning("Orange FL: could not open audio challenge: %s", e)
+            return False
+
+        for attempt in range(1, 4):
+            body_txt = ""
+            try:
+                body_txt = (await bframe.inner_text("body")).lower()
+            except Exception:
+                pass
+            if "automated queries" in body_txt or await bframe.query_selector(".rc-doscaptcha-header"):
+                log.warning("Orange FL: reCAPTCHA blocked automated audio solving")
+                return False
+
+            audio_url = await bframe.get_attribute("#audio-source", "src")
+            if not audio_url:
+                link = await bframe.query_selector(".rc-audiochallenge-tdownload-link")
+                audio_url = await link.get_attribute("href") if link else None
+            if not audio_url:
+                log.warning("Orange FL: no audio source found")
+                return False
+
+            text = await self._transcribe_audio(audio_url)
+            if not text:
+                log.warning("Orange FL: transcription failed (attempt %d), reloading", attempt)
+                reload_btn = await bframe.query_selector("#recaptcha-reload-button")
+                if reload_btn:
+                    await reload_btn.click()
+                    await page.wait_for_timeout(2_000)
+                continue
+
+            log.info("Orange FL: audio transcription (attempt %d): %r", attempt, text)
+            await bframe.fill("#audio-response", text.lower().strip())
+            await bframe.click("#recaptcha-verify-button")
+            await page.wait_for_timeout(3_000)
+
+            token = await page.evaluate(
+                "() => { const t = document.querySelector('#g-recaptcha-response');"
+                " return t ? t.value : ''; }"
+            )
+            if token or (await anchor.get_attribute("#recaptcha-anchor", "aria-checked")) == "true":
+                log.info("Orange FL: reCAPTCHA audio challenge solved")
+                return True
+            log.info("Orange FL: audio answer not accepted, retrying")
+
+        return False
+
+    async def _transcribe_audio(self, audio_url: str) -> str | None:
+        """Download the challenge MP3 and transcribe it off the event loop."""
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.get(audio_url)
+                r.raise_for_status()
+                mp3_bytes = r.content
+            return await asyncio.to_thread(self._mp3_to_text, mp3_bytes)
+        except Exception as e:
+            log.warning("Orange FL: audio fetch/transcribe error: %s", e)
+            return None
+
+    @staticmethod
+    def _mp3_to_text(mp3_bytes: bytes) -> str | None:
+        """Decode MP3 → 16 kHz mono PCM (miniaudio, no ffmpeg) → free Google STT."""
+        import miniaudio
+        import speech_recognition as sr
+
+        decoded = miniaudio.decode(
+            mp3_bytes,
+            output_format=miniaudio.SampleFormat.SIGNED16,
+            nchannels=1,
+            sample_rate=16_000,
+        )
+        audio = sr.AudioData(decoded.samples.tobytes(), 16_000, 2)
+        try:
+            return sr.Recognizer().recognize_google(audio)
+        except sr.UnknownValueError:
+            return None
+        except Exception as e:
+            log.warning("Orange FL: speech-to-text error: %s", e)
+            return None
 
     # ------------------------------------------------------------------ #
     #  Results table — paginate and collect                               #
