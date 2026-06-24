@@ -69,6 +69,7 @@ def test_scheduler_defines_daily_jobs():
         ("ists_harris", 13, 50, "run_ists_harris.py"),
         ("ists_franklin", 13, 55, "run_ists_franklin.py"),
         ("post_scrape_chain", 14, 10, "../scripts/post_scrape_chain.py"),
+        ("cosner_drake", 14, 20, "run_cd_harris.py"),
     ]
     # arizona raw-persists since Phase 5.2 (enrichment is operator-driven). It
     # must carry --yes-write-supabase or run_arizona discards the scrape.
@@ -76,6 +77,11 @@ def test_scheduler_defines_daily_jobs():
     assert "--yes-write-supabase" in az_job.args
     assert "--notify" in az_job.args
     assert "--pipe" not in az_job.args
+
+    # Cosner Drake ingest runs ingest-only with a 2-day lookback, spaced last so
+    # the day's three Harris pulls don't stack and trip Cloudflare.
+    cd_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "cosner_drake")
+    assert cd_job.args == ("--lookback", "2")
 
 
 def test_tarrant_descheduled():

@@ -12,6 +12,7 @@ startCommand = "sh scripts/start_dashboard.sh"
 #   13:50 ISTS Harris judgments
 #   13:55 ISTS Franklin judgments
 #   14:10 post-scrape chain (flag_enrichable -> normalize_court_date -> rent)
+#   14:20 Cosner Drake (Harris debt-claim filings -> cosner_filings)
 # Tarrant + Cobb descheduled 2026-05-29 (see daily_scheduler.py).
 #
 # DNC scrubbing requires the FTC registry at $FTC_DNC_DB_PATH on the
