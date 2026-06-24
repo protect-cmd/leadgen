@@ -207,8 +207,11 @@ class HillsboroughScraper(BaseScraper):
         start = today - timedelta(days=self.lookback_days)
         filings: list[Filing] = []
 
-        page = await self._launch_browser()
         try:
+            # Launch inside the try so a Bright Data connect failure
+            # (e.g. a suspended account) is captured in last_error rather
+            # than propagating uncaught and bypassing the failure signal.
+            page = await self._launch_browser()
             log.info(
                 "Hillsborough FL: searching evictions %s -> %s",
                 start.isoformat(), today.isoformat(),
@@ -243,7 +246,10 @@ class HillsboroughScraper(BaseScraper):
             return []
 
         await page.click("#nav-DateFiled-tab")
-        await page.wait_for_selector("#caseCategory", state="visible", timeout=30_000)
+        # The native <select> is hidden behind a Bootstrap widget, so it never
+        # reports "visible". Wait for it to be attached; select_option drives
+        # the hidden select directly.
+        await page.wait_for_selector("#caseCategory", state="attached", timeout=30_000)
 
         # CIVIL category triggers the AJAX that populates #caseTypes.
         await page.select_option("#caseCategory", value="CV")
