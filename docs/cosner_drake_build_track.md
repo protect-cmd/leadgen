@@ -1,0 +1,80 @@
+# Cosner Drake — Build Track
+
+**Status (2026-06-24):** source verified, scraper built. This is the sibling brand to Garnish Proof; see `docs/garnish_proof_build_status.md` for the pipeline pattern we reuse.
+
+## Step 1 done — source verified (commit 9ee408b)
+
+Built the scraper + a dry-run verification harness and ran it live before committing to storage/enrichment.
+
+- **Scraper:** `scrapers/texas/harris_debt_claims.py` (`HarrisDebtClaimScraper`). It subclasses **`HarrisCountyScraper`** (the Vantage *Cases Filed* parser) — **not** `HarrisJudgmentScraper` as this doc originally guessed. CD is a Cases-Filed product like Vantage, so it reuses Vantage's parser/columns and just swaps the case type. `HarrisCountyScraper` is now parameterized by `casetype` + `extract_text` (eviction defaults preserved; non-breaking).
+- **Harness:** `jobs/run_cd_harris.py --dry-run` prints volume / address-completeness / individual-defendant share / creditors. Store/enrich path intentionally not built yet.
+- **Live result (Jun 22–23 filings):** **712 filings, 100% address-complete, 98% individual defendants**, debt buyers LVNV / Capital One / Portfolio Recovery / Jefferson Capital / Midland. 621 in a single day — confirms the high-volume, address-complete, date-enumerable filings stage. The doc's address-complete claim (originally verified only for the *judgments* extract) now holds for the *filings* extract too.
+
+## Step 2 done — storage + enrichment built (commit 9b56cb3)
+
+- `migrations/025_cosner_filings.sql` — isolated `cosner_filings` table (defendant = lead, `answer_deadline` = filing + 30d, enrichment + outreach columns). **NOT applied to the live DB yet** — no migration runner / no direct Postgres connection in this repo, so it must be pasted into the Supabase SQL editor by hand (same as GP's 023).
+- `models/cosner.py` `CosnerFiling` + `to_row`; `to_cosner_filing` mapper in `harris_debt_claims.py`.
+- `services/cd_store.py` (isolated upsert/dedup), `services/cd_enrich.py` (SearchBug, 30-day Answer-window freshness; mirror of `gp_enrich`).
+- `jobs/run_cd_harris.py` now does live scrape → gate (individual defendant + full address) → map → upsert. `jobs/run_cd_enrich.py` runs the enrichment pass.
+
+**To start records landing in Supabase:**
+1. Apply `migrations/025_cosner_filings.sql` in the Supabase SQL editor.
+2. `python -m jobs.run_cd_harris` (live ingest into `cosner_filings`).
+3. `python -m jobs.run_cd_enrich --limit 50` (SearchBug phone enrichment).
+
+**Still paused (external deps):** GHL push + Bland dialer (`cd_ghl`/`cd_bland`/`run_cd_outreach`) wait on the Cosner Drake GHL subaccount (Jonas: `GHL_CD_*`) and the "you've been sued / file your Answer" call+SMS script (Chris), plus the website. Lead collection into Supabase is independent of these.
+
+## What Cosner Drake is
+
+Document-prep brand for consumers who were **just sued by a debt collector** and have a hard **30-day window to file a written Answer** before the court enters a **default judgment** against them. We prepare that Answer. The client is the **defendant** (the consumer being sued), same defendant-side model as Vantage / ISTS / Garnish Proof.
+
+- **Stage:** fresh filings, **pre-judgment**. Reach them the same day the case hits the docket, before they're served (same as how we reach tenants pre-service in evictions). Earlier = better close rate.
+- **Volume:** ~4–5M debt-collection lawsuits filed annually nationwide — much higher than evictions.
+- Cosner Drake is the **upstream** half of the same debt lifecycle Garnish Proof sits at the downstream end of (lawsuit filed → [30-day Answer window: Cosner Drake] → default judgment → [Garnish Proof] → garnishment).
+
+## The source (already verified)
+
+**Same Harris JP extract system we already scrape.** Cosner Drake = the **"Cases Filed" extract × "Debt Claim" case type** (the lawsuit *filings*, pre-judgment), which carries the **defendant's full home address** (verified during the Garnish Proof audit — the Harris extract's Debt Claim type is address-complete). This is the exact precursor stage to the Garnish Proof judgment feed.
+
+Difference from Garnish Proof's source: GP uses **"Judgments Entered"** + a default-judgment filter; Cosner Drake uses **"Cases Filed"** with **no disposition filter** (there's no judgment yet — these are brand-new filings).
+
+## Reuse plan (mirror Garnish Proof, which mirrors ISTS)
+
+Almost everything reuses. The pipeline is: scrape → store → enrich (SearchBug) → DNC (shared `dnc_service`) → GHL push (CD tag) → Bland (CD script). Only config + the source stage differ.
+
+**Architectural opportunity:** `scrapers/texas/harris_judgments.py` is already parameterized by `casetype`. To serve Cosner Drake cleanly, also parameterize the **extract** ("Cases Filed" vs "Judgments Entered"). One Harris extract-downloader could then serve all four products:
+- Vantage = Cases Filed × Eviction
+- ISTS = Judgments Entered × Eviction
+- Cosner Drake = Cases Filed × Debt Claim
+- Garnish Proof = Judgments Entered × Debt Claim
+
+## Build steps (each mirrors the GP equivalent)
+
+1. **Table:** `migrations/0XX_cosner_filings.sql` — mirror garnishment_orders shape (defendant name + address, filing_date, case_number, creditor/plaintiff, language_hint, phone, enriched_at, ghl_contact_id, ghl_pushed_at, bland_call_id, bland_triggered_at). Add an `answer_deadline` (filing_date + 30d) as the urgency clock.
+2. **Model:** a `CosnerFiling` dataclass (or reuse `models/filing.py` `Filing` since these ARE filings, not judgments) + `to_row()`.
+3. **Scraper:** `scrapers/texas/harris_debt_claims.py` — Cases Filed × Debt Claim; keep individual defendants with a home address (reuse `gate_name` / `gate_address`); NO defendant-lost filter. Parameterize the extract on `HarrisJudgmentScraper` or fork the downloader.
+4. **Ingest job:** `jobs/run_cd_harris.py` (mirror `run_gp_harris`).
+5. **Store/enrich:** `services/cd_store.py`, `services/cd_enrich.py` (mirror gp_store/gp_enrich; 30-day Answer-window freshness).
+6. **Outreach:** `services/cd_ghl.py` (tag `cosner-drake-lead`, CD subaccount config), `services/cd_bland.py` (CD "Answer deadline" script, BLAND_CD_* config, reuse shared dnc_service + ISTS call helpers), `jobs/run_cd_outreach.py`.
+7. **Env:** add `GHL_CD_*` and `BLAND_CD_*` to `.env.example`.
+
+## Differences from Garnish Proof (what actually changes)
+
+| | Garnish Proof | Cosner Drake |
+|---|---|---|
+| Source stage | Judgments Entered (post-judgment) | **Cases Filed (pre-judgment)** |
+| Disposition filter | default judgments only | **none** (new filings) |
+| Urgency clock | vacate window (judgment + ~30d) | **Answer window (filing + 30d)** |
+| Pitch / script | "judgment entered, Motion to Vacate + exemption" | **"you've been sued, file an Answer in 30 days or you'll default"** |
+| Brand routing | `garnish-proof-lead` tag, GP subaccount, "Alex" agent | **`cosner-drake-lead` tag, CD subaccount, CD agent** |
+| Extra scope (per Chris) | none | **needs a full website build** (more complex than GP) |
+
+## Dependencies (same shape as GP)
+
+- **Jonas:** Cosner Drake GHL subaccount + `GHL_CD_*` config + custom-field UUIDs.
+- **Chris:** the "you've been sued / file your Answer" Bland + SMS script; the website; Stripe links.
+
+## Reference
+
+- Pipeline pattern + reuse details: `docs/garnish_proof_build_status.md`
+- Source audit + Harris extract facts: memory `project_court_source_audit`, `project_garnish_proof_feasibility`, `project_ists_harris_civil_extract`

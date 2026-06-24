@@ -229,10 +229,14 @@ SCHEDULED_JOB_COUNTIES: dict[str, tuple[str, str] | None] = {
     "ohio_franklin_raw": ("OH", "Franklin"),
     "ohio_hamilton": ("OH", "Hamilton"),
     "ohio_montgomery": ("OH", "Montgomery"),
-    # Non-filings jobs: ISTS writes ists_judgments, the chain is post-scrape
-    # automation. Mapped to None so they're skipped (not flagged as unmapped).
+    # Non-filings jobs: ISTS writes ists_judgments, Cosner Drake writes
+    # cosner_filings, the chain is post-scrape automation. Mapped to None so the
+    # verifier skips them (it audits the prod `filings` table) instead of
+    # flagging them as unmapped.
     "ists_harris": None,
+    "ists_franklin": None,
     "post_scrape_chain": None,
+    "cosner_drake": None,
 }
 
 _PASS_RATE_OK = 0.85
