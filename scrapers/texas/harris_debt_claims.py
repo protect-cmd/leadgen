@@ -18,6 +18,10 @@ storage concern applied downstream, not here.
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
+from models.cosner import CosnerFiling
+from models.filing import Filing
 from scrapers.texas.harris import HarrisCountyScraper
 
 # A Texas defendant generally has until the end of the Monday after 20 days from
@@ -39,3 +43,27 @@ class HarrisDebtClaimScraper(HarrisCountyScraper):
             casetype=CASE_TYPE,
             extract_text=EXTRACT_TEXT,
         )
+
+
+def to_cosner_filing(filing: Filing) -> CosnerFiling:
+    """Map a debt-claim Filing onto the Cosner Drake storage shape.
+
+    The eviction-shaped Filing reuses tenant/landlord field names; here the
+    defendant is the consumer who was sued (the lead) and the 'landlord' slot
+    carries the creditor/debt-buyer plaintiff.
+    """
+    deadline = (
+        filing.filing_date + timedelta(days=TX_ANSWER_WINDOW_DAYS)
+        if filing.filing_date else None
+    )
+    return CosnerFiling(
+        case_number=filing.case_number,
+        defendant_name=filing.tenant_name,
+        defendant_address=filing.property_address,
+        creditor_name=filing.landlord_name or None,
+        state=filing.state,
+        county=filing.county,
+        filing_date=filing.filing_date,
+        answer_deadline=deadline,
+        source_url=filing.source_url,
+    )

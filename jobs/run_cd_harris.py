@@ -1,32 +1,32 @@
 # jobs/run_cd_harris.py
-"""Cosner Drake — Harris debt-claim filings (Cases Filed). Verification harness.
+"""Cosner Drake — Harris debt-claim filings (Cases Filed). NOT wired into daily_scheduler.
 
     python -m jobs.run_cd_harris --dry-run                  # scrape + metrics, no DB
     python -m jobs.run_cd_harris --dry-run --lookback 5     # widen the lookback window
+    python -m jobs.run_cd_harris                            # scrape -> gate -> upsert to cosner_filings
 
-This is the first Cosner Drake build step: prove the Harris JP
-'Cases Filed / Debt Claim' extract is date-enumerable AND address-complete for
-individual defendants before any storage/enrichment is built on top of it. The
-GP audit verified the *Judgments* x Debt Claim extract was 100% address-complete;
-this harness confirms the same for the *filings* extract.
+Source: the Harris JP 'Cases Filed / Debt Claim' extract (pre-judgment debt
+lawsuits), proven date-enumerable + address-complete. Live runs gate each filing
+to an individual defendant with a complete home address (gate_name + gate_address),
+map to the Cosner Drake storage shape (answer_deadline = filing_date + 30d), and
+upsert new case numbers to cosner_filings for SearchBug enrichment + routing under
+the cosner-drake-lead tag.
 
-Only --dry-run is implemented for now: it scrapes the window and prints
-verification metrics (volume, address-completeness, individual-defendant share,
-sample creditors). The store/enrich path is added in a later step once these
-numbers justify it.
+Requires migration 025_cosner_filings.sql applied to the live DB.
 """
 from __future__ import annotations
 import argparse
 import asyncio
 import logging
 from collections import Counter
-from datetime import date, timedelta
 
 from pipeline.gates import gate_address, gate_name
 from scrapers.texas.harris_debt_claims import (
     HarrisDebtClaimScraper,
+    to_cosner_filing,
     TX_ANSWER_WINDOW_DAYS,
 )
+from services import cd_store
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("cd.harris")
@@ -51,32 +51,37 @@ def _metrics(filings) -> str:
     )
 
 
-async def main(dry_run: bool, lookback: int) -> None:
-    if not dry_run:
-        raise SystemExit(
-            "Only --dry-run is implemented. Storage/enrichment is a later step "
-            "pending the verification numbers this harness produces."
-        )
+def _enrichable(filings):
+    """Individual defendants with a complete home address — the storable leads."""
+    return [f for f in filings
+            if gate_name(f.tenant_name) and gate_address(f.property_address)]
 
+
+async def main(dry_run: bool, lookback: int) -> None:
     scraper = HarrisDebtClaimScraper(lookback_days=lookback)
     filings = await scraper.scrape()
     log.info("METRICS: %s", _metrics(filings))
 
-    today = date.today()
     creditors: Counter = Counter(f.landlord_name for f in filings if f.landlord_name)
     log.info("top creditors: %s", dict(creditors.most_common(10)))
 
-    for f in filings[:25]:
-        deadline = (f.filing_date + timedelta(days=TX_ANSWER_WINDOW_DAYS)
-                    if f.filing_date else None)
-        flags = "".join((
-            "A" if gate_address(f.property_address) else "-",
-            "N" if gate_name(f.tenant_name) else "-",
-        ))
-        log.info("DRY [%s] %s | %s | %s | creditor=%s | filed=%s | answer-by=%s",
-                 flags, f.case_number, f.tenant_name, f.property_address,
-                 f.landlord_name, f.filing_date, deadline)
-    log.info("dry-run: %d filings NOT written", len(filings))
+    selected = _enrichable(filings)
+    log.info("gated to %d enrichable filings (of %d scraped)", len(selected), len(filings))
+    records = [to_cosner_filing(f) for f in selected]
+
+    if dry_run:
+        for cf in records[:25]:
+            log.info("DRY %s | %s | %s | creditor=%s | filed=%s | answer-by=%s",
+                     cf.case_number, cf.defendant_name, cf.defendant_address,
+                     cf.creditor_name, cf.filing_date, cf.answer_deadline)
+        log.info("dry-run: %d filings NOT written", len(records))
+        return
+
+    existing = await cd_store.existing_case_numbers([cf.case_number for cf in records])
+    new = [cf for cf in records if cf.case_number not in existing]
+    for cf in new:
+        await cd_store.upsert_filing(cf)
+    log.info("stored %d new (skipped %d already present)", len(new), len(records) - len(new))
 
 
 if __name__ == "__main__":
