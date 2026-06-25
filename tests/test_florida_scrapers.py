@@ -178,7 +178,7 @@ class TestMiamiDadeScraper:
             "<td>05/07/2026</td>"
             "<td>RE</td>"
             "<td>Acme LLC</td>"
-            "<td>John Doe</td>"
+            "<td>Maria Gonzalez</td>"
             "<td>100 Oak Ave, Miami FL 33101</td>"
             "</tr>"
             "</tbody></table></body></html>"
@@ -191,7 +191,27 @@ class TestMiamiDadeScraper:
         assert f.county == "Miami-Dade"
         assert f.filing_date == date(2026, 5, 7)
         assert f.landlord_name == "Acme LLC"
-        assert f.tenant_name == "John Doe"
+        assert f.tenant_name == "Maria Gonzalez"
+
+    def test_parse_html_results_placeholder_tenant_becomes_unknown(self):
+        """A placeholder defendant (e.g. "John Doe") must not survive as a lead;
+        clean_tenant_name strips it and we fall back to "Unknown", not the raw."""
+        scraper = MiamiDadeScraper(lookback_days=2)
+        html = (
+            "<html><body><table><tbody>"
+            "<tr>"
+            "<td>2026-CC-002</td>"
+            "<td>05/07/2026</td>"
+            "<td>RE</td>"
+            "<td>Acme LLC</td>"
+            "<td>John Doe</td>"
+            "<td>100 Oak Ave, Miami FL 33101</td>"
+            "</tr>"
+            "</tbody></table></body></html>"
+        )
+        result = scraper._parse_html_results(html, date(2026, 5, 9))
+        assert len(result) == 1
+        assert result[0].tenant_name == "Unknown"
 
 
 # ---------------------------------------------------------------------------
