@@ -256,8 +256,10 @@ class DuvalScraper(BaseScraper):
             log.debug("Duval FL: no File Date parsed for %s", case_number)
             return None, None
 
-        cleaned = clean_tenant_name(parsed["tenant"] or "")
-        tenant = cleaned if cleaned else (parsed["tenant"] or "Unknown")
+        # clean_tenant_name returns "" for placeholders (Jane Doe, "all
+        # occupants", etc.); fall back to "Unknown" rather than re-injecting the
+        # raw placeholder, which would otherwise pass the downstream name gate.
+        tenant = clean_tenant_name(parsed["tenant"] or "") or "Unknown"
 
         filing = Filing(
             case_number      = case_number,
