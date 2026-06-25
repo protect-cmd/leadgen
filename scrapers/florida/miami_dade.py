@@ -306,7 +306,7 @@ class MiamiDadeScraper(BaseScraper):
 
             return Filing(
                 case_number=case_number,
-                tenant_name=clean_tenant_name(tenant) or tenant,
+                tenant_name=clean_tenant_name(tenant) or "Unknown",
                 property_address=address,
                 landlord_name=landlord,
                 filing_date=filing_date,
