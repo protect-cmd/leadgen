@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scrapers.florida.miami_dade import MiamiDadeScraper
 from scrapers.florida.broward import BrowardScraper
 from scrapers.florida.hillsborough import HillsboroughScraper
+from scrapers.florida.sarasota import SarasotaScraper
 from pipeline import runner
 from services import notification_service
 
@@ -25,6 +26,7 @@ async def main() -> None:
         ("Miami-Dade County", MiamiDadeScraper(lookback_days=2)),
         ("Broward County", BrowardScraper(lookback_days=2)),
         ("Hillsborough County", HillsboroughScraper(lookback_days=2)),
+        ("Sarasota County", SarasotaScraper(lookback_days=2)),
     ]
 
     for label, scraper in scrapers:
