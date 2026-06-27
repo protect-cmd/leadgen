@@ -1,16 +1,24 @@
 from __future__ import annotations
 
+import csv
 import logging
 import os
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from models.filing import Filing
+from pipeline.qualification import extract_property_zip
 
 log = logging.getLogger(__name__)
 
 RENTOMETER_SUMMARY_URL = "https://www.rentometer.com/api/v1/summary"
+
+# National ZIP-level HUD Small Area Fair Market Rents (free, no rate limit).
+# Regenerate annually with scripts/build_hud_safmr_table.py.
+DEFAULT_SAFMR_PATH = Path(__file__).resolve().parent.parent / "resources" / "hud_safmr_fy2026.csv"
 
 # /summary only accepts these values (per Rentometer API docs). Anything else
 # makes the endpoint reject the request, so we validate before spending a call.
@@ -52,11 +60,13 @@ async def estimate_rent(filing: Filing) -> float | None:
         return None
 
     provider = os.getenv("RENT_PRECHECK_PROVIDER", "rentometer").strip().lower()
-    if provider != "rentometer":
-        log.warning("Rent precheck provider %r is not supported; continuing without precheck", provider)
-        return None
+    if provider == "rentometer":
+        return await _estimate_rentometer(filing)
+    if provider in {"hud", "safmr", "hud_safmr"}:
+        return _estimate_hud_safmr(filing)
 
-    return await _estimate_rentometer(filing)
+    log.warning("Rent precheck provider %r is not supported; continuing without precheck", provider)
+    return None
 
 
 async def _estimate_rentometer(filing: Filing) -> float | None:
@@ -121,3 +131,50 @@ def _rent_from_response(payload: dict[str, Any]) -> float | None:
         except (TypeError, ValueError):
             continue
     return None
+
+
+@lru_cache(maxsize=4)
+def _load_safmr_table(path: str) -> dict[str, dict[int, float]]:
+    """ZIP -> {bedrooms: rent} from a HUD SAFMR CSV (columns zip,br0..br4)."""
+    table: dict[str, dict[int, float]] = {}
+    with open(path, newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            zip_code = (row.get("zip") or "").strip().zfill(5)
+            if not zip_code:
+                continue
+            rents: dict[int, float] = {}
+            for bedrooms in range(5):
+                raw = (row.get(f"br{bedrooms}") or "").strip()
+                if raw:
+                    try:
+                        rents[bedrooms] = float(raw)
+                    except ValueError:
+                        continue
+            if rents:
+                table[zip_code] = rents
+    return table
+
+
+def _estimate_hud_safmr(filing: Filing) -> float | None:
+    zip_code = extract_property_zip(filing.property_address)
+    if not zip_code:
+        return None
+
+    path = os.getenv("HUD_SAFMR_DATA_PATH", "").strip() or str(DEFAULT_SAFMR_PATH)
+    try:
+        table = _load_safmr_table(path)
+    except FileNotFoundError:
+        log.warning("HUD SAFMR data file not found at %s; continuing without precheck", path)
+        return None
+
+    rents = table.get(zip_code)
+    if not rents:
+        return None
+
+    bedrooms_raw = os.getenv("HUD_SAFMR_BEDROOMS") or os.getenv("RENTOMETER_BEDROOMS") or "2"
+    try:
+        bedrooms = int(bedrooms_raw)
+    except ValueError:
+        bedrooms = 2
+
+    return rents.get(bedrooms) or rents.get(2)
