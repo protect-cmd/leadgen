@@ -331,6 +331,230 @@ async def _apply_rent_precheck(filing: Filing) -> bool:
     return False
 
 
+async def _ingest_one(filing: Filing, m: dict) -> bool:
+    """Ingest stage: dedup -> insert -> language hint -> address normalize ->
+    classify. Returns True if the filing should proceed to enrichment; False if
+    it was a duplicate, had an unusable address, or was discarded/captured.
+
+    Part of the PLAN.md Phase 2 split (ingest -> enrich -> stage -> fire). Logic
+    is lifted verbatim from the former run() loop body; behavior is unchanged."""
+    if await dedup_service.is_duplicate(filing.case_number):
+        log.info(f"Duplicate skipped: {filing.case_number}")
+        m["duplicates_skipped"] += 1
+        # Backfill a late-published address onto the existing row (no-op unless
+        # the stored address is still "Unknown").
+        await dedup_service.backfill_address(filing.case_number, filing.property_address)
+        return False
+
+    await dedup_service.insert_filing(filing)
+
+    language_hint = language_service.language_hint_for_name(filing.tenant_name)
+    if language_hint:
+        await dedup_service.update_language_hint(filing.case_number, language_hint)
+
+    normalized = await geocode_service.normalize_address(filing.property_address)
+    if normalized:
+        log.debug(f"{filing.case_number} address normalized: {normalized}")
+        filing.property_address = normalized
+    elif not _is_usable_address(filing.property_address):
+        log.warning(f"{filing.case_number} skipped: unusable address {filing.property_address!r}")
+        await _classify_and_store(filing)
+        m["address_skipped"] += 1
+        return False
+
+    lead_bucket = await _classify_and_store(filing)
+    if lead_bucket == "discarded":
+        log.info(f"{filing.case_number} discarded before enrichment")
+        m["address_skipped"] += 1
+        return False
+    if lead_bucket == "captured":
+        log.info(f"{filing.case_number} captured (off-allowlist ZIP); no enrichment")
+        m["captured"] += 1
+        return False
+    return True
+
+
+async def _enrich_one(
+    filing: Filing,
+    m: dict,
+    *,
+    today,
+    seen_queries: set[str],
+    state: str,
+    county: str,
+    tenant_track_enabled: bool,
+    landlord_track_enabled: bool,
+) -> tuple[EnrichedContact | None, EnrichedContact | None] | None:
+    """Enrich stage: rent precheck + the gate filter (the only place paid
+    enrichment is authorized) + BatchData/SearchBug + persistence +
+    post-enrichment re-classify. Returns (ec_contact, ng_contact) to route, or
+    None if the filing was gated out or discarded after enrichment.
+
+    Logic lifted verbatim from the former run() loop body (PLAN.md Phase 2)."""
+    from pipeline import gates as _gates
+    from services.name_utils import parse_name as _parse_name
+    from services.searchbug_service import query_street_address as _qsa
+    from pipeline.qualification import extract_property_zip as _ezip
+
+    language_hint = language_service.language_hint_for_name(filing.tenant_name)
+
+    if await _apply_rent_precheck(filing):
+        m["address_skipped"] += 1
+        return None
+
+    # 9-gate filter before any paid enrichment call. Each gate increments a
+    # run metric on miss so telemetry shows where leads are dropping.
+    if not _gates.gate_filing_window(filing.filing_date, today, _ENRICHMENT_WINDOW_DAYS):
+        log.info(f"{filing.case_number} skipped: out of filing window")
+        m["gate_out_of_window"] += 1
+        return None
+    if not _gates.gate_court_date(filing.court_date, today):
+        log.info(f"{filing.case_number} skipped: court_date overdue")
+        m["gate_overdue"] += 1
+        return None
+    if not _gates.gate_address(filing.property_address):
+        recovered = await _maybe_llm_recover(filing, reason="address")
+        if recovered:
+            m["gate_llm_recovered"] = m.get("gate_llm_recovered", 0) + 1
+            log.info(f"{filing.case_number} LLM-recovered address: {filing.property_address!r}")
+        else:
+            log.info(f"{filing.case_number} skipped: invalid address")
+            m["gate_invalid_address"] += 1
+            return None
+    if not _gates.gate_name(filing.tenant_name):
+        recovered = await _maybe_llm_recover(filing, reason="name")
+        if recovered:
+            m["gate_llm_recovered"] = m.get("gate_llm_recovered", 0) + 1
+            log.info(f"{filing.case_number} LLM-recovered name: {filing.tenant_name!r}")
+        else:
+            log.info(f"{filing.case_number} skipped: bad tenant name")
+            m["gate_bad_name"] += 1
+            return None
+
+    if await dedup_service.has_ng_phone(filing.case_number):
+        log.info(f"{filing.case_number} skipped: tenant phone already in lead_contacts")
+        m["gate_existing_phone"] = m.get("gate_existing_phone", 0) + 1
+        return None
+
+    _first, _last = _parse_name(filing.tenant_name)
+    _street = _qsa(filing.property_address)
+    _zip = _ezip(filing.property_address) or ""
+    if not _gates.gate_query_dedup(_first, _last, _street, _zip, seen_queries):
+        log.info(f"{filing.case_number} skipped: duplicate query in run")
+        m["gate_duplicate_in_run"] += 1
+        return None
+
+    # gate_name (upstream) already rejects business-named tenants, so any
+    # filing that reaches here is safe for the tenant track when enabled.
+    try:
+        property_info = None
+        property_lookup_calls = 0
+        # Only the landlord track needs BatchData's property lookup (it informs
+        # commercial-vs-residential routing for the owner skip-trace). In
+        # tenant-only mode we infer property_type from notice_type + tenant_name
+        # heuristics — saves a third-party call per filing.
+        if landlord_track_enabled and filing.property_type_hint is None:
+            property_info = await batchdata_service.lookup_property_info(filing)
+            property_lookup_calls = 1
+        elif filing.property_type_hint is None:
+            from services.name_utils import infer_property_type
+            filing.property_type_hint = infer_property_type(filing)
+
+        if landlord_track_enabled and tenant_track_enabled:
+            ec_contact, ng_contact = await asyncio.gather(
+                batchdata_service.enrich(
+                    filing,
+                    property_info=property_info,
+                    lookup_property_if_missing=False,
+                ),
+                batchdata_service.enrich_tenant(
+                    filing,
+                    property_info=property_info,
+                    lookup_property_if_missing=False,
+                ),
+            )
+            # enrich (EC) makes 1 BatchData skip-trace; enrich_tenant (NG)
+            # no longer calls BatchData — it goes straight to SearchBug.
+            m["batchdata_calls"] += property_lookup_calls + 1
+        elif tenant_track_enabled:
+            ng_contact = await batchdata_service.enrich_tenant(
+                filing,
+                property_info=property_info,
+                lookup_property_if_missing=False,
+            )
+            ec_contact = None
+            # No BatchData skip-trace for tenant track — SearchBug only.
+            m["batchdata_calls"] += property_lookup_calls
+        else:
+            ec_contact = await batchdata_service.enrich(
+                filing,
+                property_info=property_info,
+                lookup_property_if_missing=False,
+            )
+            ng_contact = None
+            m["batchdata_calls"] += property_lookup_calls + 1
+    except Exception as e:
+        log.warning(f"Enrichment failed for {filing.case_number}: {e}")
+        await notification_service.send_job_error(
+            job=f"{state or filing.state}/{county or filing.county}",
+            stage="batchdata_enrichment",
+            error=e,
+        )
+        return None
+
+    if ec_contact is not None:
+        ec_contact.language_hint = language_hint
+        if ec_contact.phone:
+            m["phones_found"] += 1
+        await dedup_service.update_enrichment(ec_contact)
+    if ng_contact is not None:
+        ng_contact.language_hint = language_hint
+        if ng_contact.phone:
+            m["phones_found"] += 1
+        await dedup_service.update_enrichment(ng_contact)
+
+    classify_contact = ec_contact or ng_contact
+    lead_bucket = await _classify_and_store(filing, classify_contact)
+    if lead_bucket == "discarded":
+        log.info(f"{filing.case_number} discarded after enrichment")
+        m["address_skipped"] += 1
+        return None
+
+    return ec_contact, ng_contact
+
+
+async def _stage_and_fire(
+    ec_contact: EnrichedContact | None,
+    ng_contact: EnrichedContact | None,
+    m: dict,
+) -> None:
+    """Stage (GHL/Instantly) + fire (Bland) via _process_track, tallying the
+    GHL/Instantly/Bland run metrics. PLAN.md Phase 2: stage+fire seam.
+
+    NOTE (Phase 5): _process_track currently fuses GHL+Instantly (stage) with
+    Bland (fire) and runs before any DNC gate. The two-stage spend guard will be
+    inserted here — a post-enrichment DNC/channel check before staging, and the
+    fire step gated separately — once the guard lands."""
+    tasks = []
+    if ec_contact is not None:
+        tasks.append(_process_track(ec_contact))
+    if ng_contact is not None:
+        tasks.append(_process_track(ng_contact))
+    results = await asyncio.gather(*tasks)
+    for result in results:
+        if result.ghl_created:
+            m["ghl_created"] += 1
+            if result.track == "ng":
+                if result.is_review:
+                    m["ng_review_pushed"] += 1
+                else:
+                    m["ng_phones_pushed"] += 1
+        if result.instantly_error:
+            m.setdefault("instantly_failures", []).append(result.instantly_error)
+        if result.instantly_enrolled:
+            m["instantly_enrolled"] += 1
+
+
 async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
     started_at = datetime.now(timezone.utc)
     log.info(f"Runner received {len(filings)} filings")
@@ -382,10 +606,6 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
     )
 
     from datetime import date as _date
-    from pipeline import gates as _gates
-    from services.name_utils import parse_name as _parse_name
-    from services.searchbug_service import query_street_address as _qsa
-    from pipeline.qualification import extract_property_zip as _ezip
 
     _today = _date.today()
     _seen_queries: set[str] = set()
@@ -393,182 +613,27 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
     for filing in filings:
         log.info(f"Processing {filing.case_number}")
 
-        if await dedup_service.is_duplicate(filing.case_number):
-            log.info(f"Duplicate skipped: {filing.case_number}")
-            m["duplicates_skipped"] += 1
-            # Backfill a late-published address onto the existing row (no-op
-            # unless the stored address is still "Unknown").
-            await dedup_service.backfill_address(
-                filing.case_number, filing.property_address
-            )
+        # Stage 1 — ingest (dedup, insert, classify).
+        if not await _ingest_one(filing, m):
             continue
 
-        await dedup_service.insert_filing(filing)
-
-        language_hint = language_service.language_hint_for_name(filing.tenant_name)
-        if language_hint:
-            await dedup_service.update_language_hint(filing.case_number, language_hint)
-
-        normalized = await geocode_service.normalize_address(filing.property_address)
-        if normalized:
-            log.debug(f"{filing.case_number} address normalized: {normalized}")
-            filing.property_address = normalized
-        elif not _is_usable_address(filing.property_address):
-            log.warning(f"{filing.case_number} skipped: unusable address {filing.property_address!r}")
-            await _classify_and_store(filing)
-            m["address_skipped"] += 1
+        # Stage 2 — enrich (gates + paid lookup). None => gated out / discarded.
+        contacts = await _enrich_one(
+            filing,
+            m,
+            today=_today,
+            seen_queries=_seen_queries,
+            state=state,
+            county=county,
+            tenant_track_enabled=tenant_track_enabled,
+            landlord_track_enabled=landlord_track_enabled,
+        )
+        if contacts is None:
             continue
+        ec_contact, ng_contact = contacts
 
-        lead_bucket = await _classify_and_store(filing)
-        if lead_bucket == "discarded":
-            log.info(f"{filing.case_number} discarded before enrichment")
-            m["address_skipped"] += 1
-            continue
-        if lead_bucket == "captured":
-            log.info(f"{filing.case_number} captured (off-allowlist ZIP); no enrichment")
-            m["captured"] += 1
-            continue
-
-        if await _apply_rent_precheck(filing):
-            m["address_skipped"] += 1
-            continue
-
-        # 9-gate filter before any paid enrichment call. Each gate increments a
-        # run metric on miss so telemetry shows where leads are dropping.
-        if not _gates.gate_filing_window(filing.filing_date, _today, _ENRICHMENT_WINDOW_DAYS):
-            log.info(f"{filing.case_number} skipped: out of filing window")
-            m["gate_out_of_window"] += 1
-            continue
-        if not _gates.gate_court_date(filing.court_date, _today):
-            log.info(f"{filing.case_number} skipped: court_date overdue")
-            m["gate_overdue"] += 1
-            continue
-        if not _gates.gate_address(filing.property_address):
-            recovered = await _maybe_llm_recover(filing, reason="address")
-            if recovered:
-                m["gate_llm_recovered"] = m.get("gate_llm_recovered", 0) + 1
-                log.info(f"{filing.case_number} LLM-recovered address: {filing.property_address!r}")
-            else:
-                log.info(f"{filing.case_number} skipped: invalid address")
-                m["gate_invalid_address"] += 1
-                continue
-        if not _gates.gate_name(filing.tenant_name):
-            recovered = await _maybe_llm_recover(filing, reason="name")
-            if recovered:
-                m["gate_llm_recovered"] = m.get("gate_llm_recovered", 0) + 1
-                log.info(f"{filing.case_number} LLM-recovered name: {filing.tenant_name!r}")
-            else:
-                log.info(f"{filing.case_number} skipped: bad tenant name")
-                m["gate_bad_name"] += 1
-                continue
-
-        if await dedup_service.has_ng_phone(filing.case_number):
-            log.info(f"{filing.case_number} skipped: tenant phone already in lead_contacts")
-            m["gate_existing_phone"] = m.get("gate_existing_phone", 0) + 1
-            continue
-
-        _first, _last = _parse_name(filing.tenant_name)
-        _street = _qsa(filing.property_address)
-        _zip = _ezip(filing.property_address) or ""
-        if not _gates.gate_query_dedup(_first, _last, _street, _zip, _seen_queries):
-            log.info(f"{filing.case_number} skipped: duplicate query in run")
-            m["gate_duplicate_in_run"] += 1
-            continue
-
-        # gate_name (upstream) already rejects business-named tenants, so any
-        # filing that reaches here is safe for the tenant track when enabled.
-        try:
-            property_info = None
-            property_lookup_calls = 0
-            # Only the landlord track needs BatchData's property lookup (it informs
-            # commercial-vs-residential routing for the owner skip-trace). In
-            # tenant-only mode we infer property_type from notice_type + tenant_name
-            # heuristics — saves a third-party call per filing.
-            if landlord_track_enabled and filing.property_type_hint is None:
-                property_info = await batchdata_service.lookup_property_info(filing)
-                property_lookup_calls = 1
-            elif filing.property_type_hint is None:
-                from services.name_utils import infer_property_type
-                filing.property_type_hint = infer_property_type(filing)
-
-            if landlord_track_enabled and tenant_track_enabled:
-                ec_contact, ng_contact = await asyncio.gather(
-                    batchdata_service.enrich(
-                        filing,
-                        property_info=property_info,
-                        lookup_property_if_missing=False,
-                    ),
-                    batchdata_service.enrich_tenant(
-                        filing,
-                        property_info=property_info,
-                        lookup_property_if_missing=False,
-                    ),
-                )
-                # enrich (EC) makes 1 BatchData skip-trace; enrich_tenant (NG)
-                # no longer calls BatchData — it goes straight to SearchBug.
-                m["batchdata_calls"] += property_lookup_calls + 1
-            elif tenant_track_enabled:
-                ng_contact = await batchdata_service.enrich_tenant(
-                    filing,
-                    property_info=property_info,
-                    lookup_property_if_missing=False,
-                )
-                ec_contact = None
-                # No BatchData skip-trace for tenant track — SearchBug only.
-                m["batchdata_calls"] += property_lookup_calls
-            else:
-                ec_contact = await batchdata_service.enrich(
-                    filing,
-                    property_info=property_info,
-                    lookup_property_if_missing=False,
-                )
-                ng_contact = None
-                m["batchdata_calls"] += property_lookup_calls + 1
-        except Exception as e:
-            log.warning(f"Enrichment failed for {filing.case_number}: {e}")
-            await notification_service.send_job_error(
-                job=f"{state or filing.state}/{county or filing.county}",
-                stage="batchdata_enrichment",
-                error=e,
-            )
-            continue
-
-        if ec_contact is not None:
-            ec_contact.language_hint = language_hint
-            if ec_contact.phone:
-                m["phones_found"] += 1
-            await dedup_service.update_enrichment(ec_contact)
-        if ng_contact is not None:
-            ng_contact.language_hint = language_hint
-            if ng_contact.phone:
-                m["phones_found"] += 1
-            await dedup_service.update_enrichment(ng_contact)
-
-        classify_contact = ec_contact or ng_contact
-        lead_bucket = await _classify_and_store(filing, classify_contact)
-        if lead_bucket == "discarded":
-            log.info(f"{filing.case_number} discarded after enrichment")
-            m["address_skipped"] += 1
-            continue
-
-        tasks = []
-        if ec_contact is not None:
-            tasks.append(_process_track(ec_contact))
-        if ng_contact is not None:
-            tasks.append(_process_track(ng_contact))
-        results = await asyncio.gather(*tasks)
-        for result in results:
-            if result.ghl_created:
-                m["ghl_created"] += 1
-                if result.track == "ng":
-                    if result.is_review:
-                        m["ng_review_pushed"] += 1
-                    else:
-                        m["ng_phones_pushed"] += 1
-            if result.instantly_error:
-                m.setdefault("instantly_failures", []).append(result.instantly_error)
-            if result.instantly_enrolled:
-                m["instantly_enrolled"] += 1
+        # Stages 3+4 — stage (GHL/Instantly) + fire (Bland).
+        await _stage_and_fire(ec_contact, ng_contact, m)
 
     elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
     m["elapsed_seconds"] = elapsed
