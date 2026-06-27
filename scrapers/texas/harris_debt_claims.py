@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from models.amount_kind import DEBT_CLAIM_TOTAL
 from models.cosner import CosnerFiling
 from models.filing import Filing
 from scrapers.texas.harris import HarrisCountyScraper
@@ -56,6 +57,7 @@ def to_cosner_filing(filing: Filing) -> CosnerFiling:
         filing.filing_date + timedelta(days=TX_ANSWER_WINDOW_DAYS)
         if filing.filing_date else None
     )
+    amount_kind = DEBT_CLAIM_TOTAL if filing.claim_amount is not None else None
     return CosnerFiling(
         case_number=filing.case_number,
         defendant_name=filing.tenant_name,
@@ -65,5 +67,7 @@ def to_cosner_filing(filing: Filing) -> CosnerFiling:
         county=filing.county,
         filing_date=filing.filing_date,
         answer_deadline=deadline,
+        debt_amount=filing.claim_amount,
+        amount_kind=amount_kind,
         source_url=filing.source_url,
     )
