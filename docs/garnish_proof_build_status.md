@@ -38,11 +38,14 @@ The outreach layer is a **config-swapped reuse of the ISTS pipeline** (shared dn
 
 ## What's left to go live
 
-1. **Apply migration 024** to the live DB (Supabase SQL editor; same as 023 was applied by hand).
+1. **Apply migration 024** to the live DB (Supabase SQL editor; same as 023 was applied by hand). Needed for the `ghl_contact_id` / `bland_call_id` columns that `gp_ghl.push_batch` + `gp_bland` read.
 2. **Live ingest:** `python -m jobs.run_gp_harris` (real write into garnishment_orders).
-3. **Jonas:** create the Garnish Proof GHL subaccount; set `GHL_GP_LOCATION_ID`, `GHL_API_GP_KEY`, `GHL_GP_NEW_FILING_STAGE_ID`; paste GP custom-field UUIDs into `gp_ghl._FIELD_IDS`.
-4. **Chris:** sign off the "Alex" judgment-framed Bland script + SMS copy; then set `BLAND_GP_AGENT_ID` / `BLAND_GP_SPANISH_AGENT_ID` / `BLAND_GP_PHONE_NUMBER` / `BLAND_GP_CALLBACK_PHONE_NUMBER`.
-5. **Schedule:** wire `run_gp_harris` into `services/daily_scheduler.py` after enrichment + DNC are proven on real rows.
+3. ~~**Jonas:** GHL subaccount~~ **DONE 2026-06-25.** GHL push fully wired and verified end-to-end against the live Garnish Proof sub-account (location `vO3eJrO7Ty8VtI143sqN`). All 9 custom-field UUIDs mapped in `gp_ghl._FIELD_IDS`; New Filing stage `710806b6-...` set; token + location + stage in gitignored `.env` (`GHL_GP_*`). Test contact upserts with `garnish-proof-lead` tag + 9/9 fields, then deleted. The subaccount was pre-built (cloned from ISTS) so no field creation was needed.
+4. **Bland pathways — BUILT 2026-06-27.** Two pathways created live via the Bland API with TX-accurate judgment framing (Marcus EN `b667895e-3369-45a5-8642-3db98f89322d`, Daniel ES `b186df96-dc92-4857-a90c-8da8249188f5`); see `docs/bland_gp_setup.md`. `gp_bland.py` now passes `{{county}}`. **Remaining:** Chris sign-off on copy; pick voice + paste global prompt in the Bland UI then Publish; buy a GP outbound number; set `BLAND_GP_AGENT_ID` / `BLAND_GP_SPANISH_AGENT_ID` / `BLAND_GP_PHONE_NUMBER` / `BLAND_GP_CALLBACK_PHONE_NUMBER`.
+5. **Enrichment:** run `gp_enrich` to attach phones (SearchBug; budget-constrained — pending the Data Axle vendor eval). GHL push requires phone present.
+6. **Schedule:** wire `run_gp_harris` into `services/daily_scheduler.py` after enrichment + DNC are proven on real rows.
+
+**Chain to get contacts into GHL now that the subaccount is wired:** apply migration 024 → `run_gp_harris` (ingest) → `gp_enrich` (phones) → `gp_ghl.push_batch`. GHL itself is proven.
 
 ## Premium source still open (manual, via assistant Susan)
 
