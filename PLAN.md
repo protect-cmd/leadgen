@@ -77,7 +77,22 @@ the contract. The contract is **three layers, not one record**:
    Vantage + ISTS. Add a registry so Cosner Drake and Garnish Proof get queue, fire, and
    dashboard/API coverage through the same stages.
 
-### Phase 3 — Fix data loss (dedup + upsert) — staged schema migration
+### Phase 3 — Fix data loss (dedup + upsert) — REVISED BY EVIDENCE (2026-06-28)
+**Live-DB audit finding:** every county uses a distinct case_number format
+(Harris `268100280524`, Franklin `2026 CVG 036618`, Davidson `26GT6862`,
+Maricopa `CC2026166265`, ...); `distinct_cases == filings` in every county;
+zero cross-county collisions; only one FK references `filings.case_number`
+(`lead_contacts`). The cd_store/gp_store upserts write only SOURCE columns
+(enrichment/outreach not in payload), and the pipeline enriches each filing once
+(dedup skips re-processing) — so the "blind upsert clobbering" is not realized.
+**Decision: DEFER the composite-key PK migration** (pure risk, no current
+benefit). Add a "collision canary" to the Phase 9 monitor instead (warn if a new
+county's case_number format ever overlaps another's). The data-loss the operator
+actually experiences is the `enriched_at` burn on SearchBug-dry days — a
+spend-control problem fixed by Phase 5's quota guard, not a schema problem.
+Original (deferred) plan retained below for reference:
+
+
 9. **Duplicate-check collision (root cause):** `dedup_service.is_duplicate(case_number)`
    checks `filings` **globally by case number only**; court case numbers (e.g.
    `09-CC-001607`) are reused across counties, so new filings collide and are silently
