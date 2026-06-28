@@ -65,6 +65,9 @@ async def enrich_batch(limit: int = 50, dry_run: bool = False) -> dict:
             .is_("phone", "null")
             .is_("enriched_at", "null")
             .gte("filing_date", cutoff)
+            # Cosner is value-first: spend the daily cap on the largest debts
+            # first (highest-stakes defendants). Unknown amounts sort last.
+            .order("debt_amount", desc=True, nullsfirst=False)
             .limit(limit)
             .execute()
             .data or []

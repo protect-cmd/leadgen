@@ -63,6 +63,9 @@ async def enrich_batch(limit: int = 50, dry_run: bool = False) -> dict:
             .is_("phone", "null")
             .is_("enriched_at", "null")
             .gte("filing_date", cutoff)
+            # GP has no amount dimension, so prioritize by writ recency: the
+            # freshest garnishment writs (most urgent exemption window) first.
+            .order("filing_date", desc=True)
             .limit(limit)
             .execute()
             .data or []
