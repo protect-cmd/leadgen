@@ -17,6 +17,8 @@ class CosnerFiling:
     county: str = "Harris"
     filing_date: date | None = None
     answer_deadline: date | None = None  # filing_date + Answer window
+    debt_amount: float | None = None
+    amount_kind: str | None = None
     source_url: str | None = None
 
     def to_row(self) -> dict:
@@ -31,5 +33,7 @@ class CosnerFiling:
             "county": self.county,
             "filing_date": self.filing_date.isoformat() if self.filing_date else None,
             "answer_deadline": self.answer_deadline.isoformat() if self.answer_deadline else None,
+            "debt_amount": self.debt_amount,
+            "amount_kind": self.amount_kind,
             "source_url": self.source_url,
         }
