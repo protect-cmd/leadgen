@@ -18,7 +18,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import sys
 from collections import Counter
+from pathlib import Path
+
+# The daily scheduler invokes this as `python jobs/run_cd_harris.py` (script mode),
+# which puts jobs/ — not the repo root — on sys.path, so the absolute imports below
+# (pipeline.*, scrapers.*, services.*) fail with ModuleNotFoundError. Add the repo
+# root, matching run_texas.py et al., so the scheduled Cosner job can import.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pipeline.gates import gate_address, gate_name
 from scrapers.texas.harris_debt_claims import (

@@ -10,7 +10,7 @@ import httpx
 from supabase import create_client, Client
 from models.filing import Filing
 from models.contact import EnrichedContact, RoutingOutcome
-from pipeline.qualification import QualificationOutcome
+from pipeline.qualification import QualificationOutcome, classify_lead
 
 load_dotenv()
 
@@ -77,6 +77,21 @@ async def is_duplicate(case_number: str) -> bool:
 
 
 async def insert_filing(filing: Filing) -> None:
+    # Classify at insert time so the lead_bucket is never left NULL. The raw-push
+    # scrapers (run_ohio / run_arizona / push_franklin_filings, all invoked with
+    # --yes-write-supabase) insert directly through here WITHOUT going through
+    # pipeline.runner, so without this they'd land lead_bucket=NULL forever ->
+    # is_enrichable=FALSE -> never reach the To-Enrich queue (good_leads_now).
+    # classify_lead is pure-local (no network, no spend). The runner path runs
+    # _classify_and_store again after address normalization; that overwrite is
+    # idempotent, so this is safe for every caller.
+    outcome = classify_lead(
+        state=filing.state,
+        property_address=filing.property_address,
+        filing_date=filing.filing_date,
+        property_type=filing.property_type_hint,
+    )
+
     def _insert() -> None:
         _execute_with_retry(
             _client.table("filings").insert({
@@ -90,6 +105,11 @@ async def insert_filing(filing: Filing) -> None:
                 "county": filing.county,
                 "notice_type": filing.notice_type,
                 "source_url": filing.source_url,
+                "property_zip": outcome.property_zip,
+                "lead_bucket": outcome.lead_bucket,
+                "discard_reason": outcome.discard_reason,
+                "qualification_notes": outcome.qualification_notes,
+                "classified_at": datetime.now(timezone.utc).isoformat(),
             }),
             "insert filing",
         )
