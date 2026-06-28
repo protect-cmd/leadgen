@@ -54,20 +54,6 @@ class TrackResult:
     is_review: bool = False
 
 
-_NO_ATTEMPT_STATUSES = frozenset({"(none)", "account_error", "enformion_error"})
-
-
-def _was_real_attempt(contact: EnrichedContact) -> bool:
-    """True when enrichment actually spent a paid lookup — a phone hit or a
-    genuine no-record. Depletion/non-attempt statuses (credit dry, account
-    error) do NOT count, so their quota reservation is rolled back rather than
-    consumed. Mirrors the enriched_at "real outcome" rule."""
-    if contact.phone:
-        return True
-    status = getattr(contact, "searchbug_status", None)
-    return bool(status) and status not in _NO_ATTEMPT_STATUSES
-
-
 def _is_usable_address(address: str) -> bool:
     return bool(address and address.strip().lower() not in {"unknown", ""})
 
@@ -546,7 +532,10 @@ async def _enrich_one(
     # roll back so the slot is freed — never burned. Mirrors the enriched_at rule.
     if quota_reserved:
         _contacts = [c for c in (ec_contact, ng_contact) if c is not None]
-        if any(_was_real_attempt(c) for c in _contacts):
+        # SearchBug bills only on a SUCCESSFUL lookup (a number returned). No-hits
+        # and depletion are free, so roll back the reservation — that frees the
+        # budget slot to try more leads. The daily cap counts PAID hits, not attempts.
+        if any(c.phone for c in _contacts):
             await quota_service.commit(Business.VANTAGE, "searchbug", filing.case_number)
         else:
             await quota_service.rollback(Business.VANTAGE, "searchbug", filing.case_number)

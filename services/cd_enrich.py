@@ -15,11 +15,17 @@ from datetime import date, datetime, timedelta, timezone
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
+from pipeline.contract import Business
+from services import quota_service
 from services.name_utils import clean_tenant_name, parse_name
 from services.searchbug_service import search_tenant_detailed
 
 load_dotenv()
 log = logging.getLogger(__name__)
+
+# Opt-in per-business budget guard (calendar caps + weekend pause). Off by default
+# so behavior is unchanged until enabled with the quota guard.
+_QUOTA_GUARD_ENABLED = os.getenv("QUOTA_GUARD_ENABLED", "false").lower() == "true"
 
 _client: Client = create_client(
     os.environ["SUPABASE_URL"],
@@ -98,12 +104,30 @@ async def enrich_batch(limit: int = 50, dry_run: bool = False) -> dict:
                      case_number, first, last, city, state, zip_, hint)
             continue
 
+        # Reserve a Cosner budget slot before the paid call. Denied => the daily
+        # cap (paid hits) is reached or it's a weekend pause — stop the batch.
+        if _QUOTA_GUARD_ENABLED:
+            res = await quota_service.try_reserve(Business.COSNER, "searchbug", case_number)
+            if not res.granted:
+                log.info("CD enrich: budget reached / paused — stopping at %d paid hits",
+                         metrics["phone_found"])
+                metrics["quota_stopped"] = True
+                break
+
         result = await search_tenant_detailed(
             first_name=first, last_name=last,
             city=city, state=state, postal=zip_, address=address,
         )
         phone = result.phone if result.status in ("phone_found", "name_mismatch") else None
         now = datetime.now(timezone.utc).isoformat()
+
+        # SearchBug bills only on a hit: commit the slot on a phone, roll back
+        # (free the slot) on a no-hit so the budget counts paid leads, not attempts.
+        if _QUOTA_GUARD_ENABLED:
+            if phone:
+                await quota_service.commit(Business.COSNER, "searchbug", case_number)
+            else:
+                await quota_service.rollback(Business.COSNER, "searchbug", case_number)
 
         def _update(case=case_number, p=phone, h=hint, t=now):
             payload = {"enriched_at": t, "language_hint": h}
