@@ -45,6 +45,20 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
     # scrape and Maricopa got near-zero daily volume. --yes-write-supabase
     # persists raw without enriching.
     ScheduledJob("arizona", 11, 10, "run_arizona.py", args=("--yes-write-supabase", "--notify")),
+    # Green VDG scrapers verified live 2026-06-28 (address-complete: Butler 100%,
+    # Lorain 90%, Barberton 100%, Duval 100%). Scheduled before 13:00 UTC so leads
+    # are ready by 9 PM PHT. Hillsborough is intentionally NOT scheduled — its
+    # search endpoint is WAF/403-blocked and needs a residential unlocker.
+    ScheduledJob("ohio_lorain", 11, 20, "run_ohio.py",
+                 args=("--lookback-days", "2", "--counties", "lorain",
+                       "--yes-write-supabase", "--notify")),
+    ScheduledJob("ohio_butler", 11, 25, "run_ohio.py",
+                 args=("--lookback-days", "2", "--counties", "butler",
+                       "--yes-write-supabase", "--notify")),
+    ScheduledJob("ohio_barberton", 11, 35, "run_ohio.py",
+                 args=("--lookback-days", "2", "--counties", "barberton",
+                       "--yes-write-supabase", "--notify")),
+    ScheduledJob("florida_duval", 11, 40, "run_florida.py", args=("--counties", "duval")),
     # georgia_cobb DESCHEDULED 2026-05-29 - 200 filings / 4% gate pass rate.
     # Underlying cause: Nominatim geocoder (which Cobb's assessor chain
     # depends on for address enrichment) is unreliable. See follow-up:
