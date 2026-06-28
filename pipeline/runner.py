@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from models.contact import EnrichedContact
 from models.filing import Filing
 from pipeline import router
+from pipeline.contract import Business
 from pipeline.qualification import classify_lead
 from services import (
     batchdata_service,
@@ -19,6 +20,7 @@ from services import (
     instantly_service,
     language_service,
     notification_service,
+    quota_service,
     rent_estimate_service,
 )
 
@@ -34,6 +36,11 @@ _NG_REVIEW_STATUSES = frozenset({"name_mismatch", "ambiguous"})
 _CAPTURE_EXPANDED_ZIPS = os.getenv("CAPTURE_EXPANDED_ZIPS", "true").lower() == "true"
 _BYPASS_ZIP_FILTER = os.getenv("BYPASS_ZIP_FILTER", "false").lower() == "true"
 _ENRICHMENT_WINDOW_DAYS = int(os.getenv("ENRICHMENT_WINDOW_DAYS", "10"))
+# Phase 5 two-stage spend guard. Opt-in: when false, _enrich_one behaves exactly
+# as before (no quota reservation), so enabling it is a deliberate, calibrated
+# rollout once the per-business caps are set. runner.run() processes Vantage
+# (eviction x filed) filings, so its quota business is VANTAGE.
+_QUOTA_GUARD_ENABLED = os.getenv("QUOTA_GUARD_ENABLED", "false").lower() == "true"
 
 SPANISH_LIKELY_TAG = "Spanish-Likely"
 
@@ -45,6 +52,20 @@ class TrackResult:
     instantly_error: str | None = None
     track: str = ""
     is_review: bool = False
+
+
+_NO_ATTEMPT_STATUSES = frozenset({"(none)", "account_error", "enformion_error"})
+
+
+def _was_real_attempt(contact: EnrichedContact) -> bool:
+    """True when enrichment actually spent a paid lookup — a phone hit or a
+    genuine no-record. Depletion/non-attempt statuses (credit dry, account
+    error) do NOT count, so their quota reservation is rolled back rather than
+    consumed. Mirrors the enriched_at "real outcome" rule."""
+    if contact.phone:
+        return True
+    status = getattr(contact, "searchbug_status", None)
+    return bool(status) and status not in _NO_ATTEMPT_STATUSES
 
 
 def _is_usable_address(address: str) -> bool:
@@ -444,6 +465,20 @@ async def _enrich_one(
         m["gate_duplicate_in_run"] += 1
         return None
 
+    # --- Phase 5 pre-enrichment spend guard (opt-in) ---------------------
+    # Reserve a per-business SearchBug quota slot BEFORE the paid call. If the
+    # daily cap is reached, HOLD the lead (spend nothing, stamp no enriched_at)
+    # so it is retried later instead of being burned on a depleted day. This is
+    # the structural fix for the SearchBug-dry "enriched_at burn".
+    quota_reserved = False
+    if _QUOTA_GUARD_ENABLED:
+        _q = await quota_service.try_reserve(Business.VANTAGE, "searchbug", filing.case_number)
+        if not _q.granted:
+            log.info(f"{filing.case_number} held: searchbug quota reached (used={_q.used})")
+            m["quota_held_searchbug"] = m.get("quota_held_searchbug", 0) + 1
+            return None
+        quota_reserved = True
+
     # gate_name (upstream) already rejects business-named tenants, so any
     # filing that reaches here is safe for the tenant track when enabled.
     try:
@@ -494,6 +529,10 @@ async def _enrich_one(
             ng_contact = None
             m["batchdata_calls"] += property_lookup_calls + 1
     except Exception as e:
+        # The paid call errored — free the reserved slot so the lead isn't
+        # counted against the cap and can be retried later.
+        if quota_reserved:
+            await quota_service.rollback(Business.VANTAGE, "searchbug", filing.case_number)
         log.warning(f"Enrichment failed for {filing.case_number}: {e}")
         await notification_service.send_job_error(
             job=f"{state or filing.state}/{county or filing.county}",
@@ -501,6 +540,16 @@ async def _enrich_one(
             error=e,
         )
         return None
+
+    # Settle the reservation: commit only if a REAL paid attempt happened (a hit
+    # or a genuine no-record). Depletion/non-attempts (status None/account_error)
+    # roll back so the slot is freed — never burned. Mirrors the enriched_at rule.
+    if quota_reserved:
+        _contacts = [c for c in (ec_contact, ng_contact) if c is not None]
+        if any(_was_real_attempt(c) for c in _contacts):
+            await quota_service.commit(Business.VANTAGE, "searchbug", filing.case_number)
+        else:
+            await quota_service.rollback(Business.VANTAGE, "searchbug", filing.case_number)
 
     if ec_contact is not None:
         ec_contact.language_hint = language_hint
