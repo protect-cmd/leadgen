@@ -66,15 +66,28 @@ class FakeClient:
 @pytest.fixture
 def qs(monkeypatch):
     import services.quota_service as qs
+    # Neutralize the weekend pause so reservation tests are calendar-independent;
+    # a dedicated test re-enables it.
+    import services.budget_schedule as bs
+    monkeypatch.setattr(bs, "paid_actions_paused", lambda *a, **k: False)
     return qs
 
 
 # --- cap_for ---------------------------------------------------------------
+def test_cap_for_searchbug_uses_budget_schedule(qs, monkeypatch):
+    monkeypatch.delenv("QUOTA_CAP_VANTAGE_SEARCHBUG", raising=False)
+    monkeypatch.delenv("QUOTA_CAP_SEARCHBUG", raising=False)
+    import services.budget_schedule as bs
+    monkeypatch.setattr(bs, "enrichment_cap", lambda day=None: 99)
+    # no env override -> searchbug cap comes from the calendar budget
+    assert qs.cap_for(Business.VANTAGE, "searchbug") == 99
+    # a non-searchbug action with no override falls back to the global default
+    assert qs.cap_for(Business.VANTAGE, "bland") == qs._GLOBAL_DEFAULT_CAP
+
+
 def test_cap_for_resolution_order(qs, monkeypatch):
     monkeypatch.delenv("QUOTA_CAP_VANTAGE_SEARCHBUG", raising=False)
     monkeypatch.delenv("QUOTA_CAP_SEARCHBUG", raising=False)
-    # global default
-    assert qs.cap_for(Business.VANTAGE, "searchbug") == qs._GLOBAL_DEFAULT_CAP
     # per-action override
     monkeypatch.setenv("QUOTA_CAP_SEARCHBUG", "50")
     assert qs.cap_for(Business.VANTAGE, "searchbug") == 50
@@ -83,6 +96,16 @@ def test_cap_for_resolution_order(qs, monkeypatch):
     assert qs.cap_for(Business.VANTAGE, "searchbug") == 20
     # a different business still uses the per-action value
     assert qs.cap_for(Business.ISTS, "searchbug") == 50
+
+
+def test_try_reserve_denied_on_weekend_pause(qs, monkeypatch):
+    import services.budget_schedule as bs
+    monkeypatch.setattr(bs, "paid_actions_paused", lambda *a, **k: True)
+    fake = FakeClient(rpc_resp=_Resp(data=[{"granted": True, "used": 0, "remaining": 9}]))
+    monkeypatch.setattr(qs, "_client", fake)
+    res = asyncio.run(qs.try_reserve(Business.VANTAGE, "searchbug", "x"))
+    assert res.granted is False
+    assert fake.rpc_calls == []   # never even hit the DB on a paused day
 
 
 # --- try_reserve -----------------------------------------------------------

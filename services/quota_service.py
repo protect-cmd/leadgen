@@ -78,6 +78,11 @@ def cap_for(business: Business, action: str) -> int:
                 return int(raw)
             except ValueError:
                 log.warning("Invalid %s=%r; ignoring", key, raw)
+    # Enrichment cap follows the calendar budget schedule (green/yellow/red),
+    # per-business, unless an explicit env override above set it.
+    if action == "searchbug":
+        from services import budget_schedule
+        return budget_schedule.enrichment_cap()
     return _GLOBAL_DEFAULT_CAP
 
 
@@ -92,6 +97,14 @@ async def try_reserve(
     """Atomically reserve a quota slot. granted=False means the cap is reached
     for the day — the caller MUST NOT perform the paid action."""
     import asyncio
+
+    from services import budget_schedule
+    # Weekend (PHT) pause: no paid actions go live on weekends — scraping still
+    # runs, but enrichment/GHL/Bland are held so leads aren't worked on a no-go day.
+    if budget_schedule.paid_actions_paused():
+        log.info("quota: paid actions paused (weekend PHT) — denying %s/%s",
+                 business.value, action)
+        return ReserveResult(granted=False, used=0, remaining=0)
 
     eff_cap = cap if cap is not None else cap_for(business, action)
     eff_day = day or _today()

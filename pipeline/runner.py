@@ -41,6 +41,12 @@ _ENRICHMENT_WINDOW_DAYS = int(os.getenv("ENRICHMENT_WINDOW_DAYS", "10"))
 # rollout once the per-business caps are set. runner.run() processes Vantage
 # (eviction x filed) filings, so its quota business is VANTAGE.
 _QUOTA_GUARD_ENABLED = os.getenv("QUOTA_GUARD_ENABLED", "false").lower() == "true"
+# Manual model (operator's standing instruction): when PIPELINE_INGEST_ONLY=true,
+# scheduled runs STOP after ingest+classify. Nothing auto-enriches; the scored
+# "ready to enrich" queue is built by queue_builder for the dashboard, and
+# enrichment/GHL/Bland are operator-triggered. Set to true in production. (Code
+# default is false so the full-flow tests exercise enrichment.)
+_INGEST_ONLY = os.getenv("PIPELINE_INGEST_ONLY", "false").lower() == "true"
 
 SPANISH_LIKELY_TAG = "Spanish-Likely"
 
@@ -52,20 +58,6 @@ class TrackResult:
     instantly_error: str | None = None
     track: str = ""
     is_review: bool = False
-
-
-_NO_ATTEMPT_STATUSES = frozenset({"(none)", "account_error", "enformion_error"})
-
-
-def _was_real_attempt(contact: EnrichedContact) -> bool:
-    """True when enrichment actually spent a paid lookup — a phone hit or a
-    genuine no-record. Depletion/non-attempt statuses (credit dry, account
-    error) do NOT count, so their quota reservation is rolled back rather than
-    consumed. Mirrors the enriched_at "real outcome" rule."""
-    if contact.phone:
-        return True
-    status = getattr(contact, "searchbug_status", None)
-    return bool(status) and status not in _NO_ATTEMPT_STATUSES
 
 
 def _is_usable_address(address: str) -> bool:
@@ -546,7 +538,10 @@ async def _enrich_one(
     # roll back so the slot is freed — never burned. Mirrors the enriched_at rule.
     if quota_reserved:
         _contacts = [c for c in (ec_contact, ng_contact) if c is not None]
-        if any(_was_real_attempt(c) for c in _contacts):
+        # SearchBug bills only on a SUCCESSFUL lookup (a number returned). No-hits
+        # and depletion are free, so roll back the reservation — that frees the
+        # budget slot to try more leads. The daily cap counts PAID hits, not attempts.
+        if any(c.phone for c in _contacts):
             await quota_service.commit(Business.VANTAGE, "searchbug", filing.case_number)
         else:
             await quota_service.rollback(Business.VANTAGE, "searchbug", filing.case_number)
@@ -604,8 +599,10 @@ async def _stage_and_fire(
             m["instantly_enrolled"] += 1
 
 
-async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
+async def run(filings: list[Filing], state: str = "", county: str = "",
+              *, ingest_only: bool | None = None) -> None:
     started_at = datetime.now(timezone.utc)
+    ing = _INGEST_ONLY if ingest_only is None else ingest_only
     log.info(f"Runner received {len(filings)} filings")
 
     tenant_track_enabled = os.getenv("TENANT_TRACK_ENABLED", "true").lower() == "true"
@@ -664,6 +661,12 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
 
         # Stage 1 — ingest (dedup, insert, classify).
         if not await _ingest_one(filing, m):
+            continue
+
+        # Manual model: stop here. The lead is ingested + classified; the scored
+        # "ready to enrich" queue is built by queue_builder for the dashboard, and
+        # enrichment/GHL/Bland are operator-triggered. No paid step runs here.
+        if ing:
             continue
 
         # Stage 2 — enrich (gates + paid lookup). None => gated out / discarded.
