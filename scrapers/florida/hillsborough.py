@@ -17,6 +17,10 @@ log = logging.getLogger(__name__)
 
 PORTAL_URL      = "https://hover.hillsclerk.com/"
 CASE_SEARCH_URL = "https://hover.hillsclerk.com/html/case/caseSearch.html"
+# Bright Data rotates residential IPs; some sessions get a degraded / WAF-
+# challenged page where the search form never renders. Retry with a fresh
+# session until it loads (env-overridable).
+_MAX_SEARCH_ATTEMPTS = int(os.getenv("HILLSBOROUGH_MAX_ATTEMPTS", "3"))
 SOURCE_URL      = PORTAL_URL
 STATE           = "FL"
 COUNTY          = "Hillsborough"
@@ -202,26 +206,40 @@ class HillsboroughScraper(BaseScraper):
     # ------------------------------------------------------------------ #
 
     async def scrape(self) -> list[Filing]:
-        self.last_error = None
         today = court_today(COURT_TIMEZONE)
         start = today - timedelta(days=self.lookback_days)
         filings: list[Filing] = []
 
-        try:
-            # Launch inside the try so a Bright Data connect failure
-            # (e.g. a suspended account) is captured in last_error rather
-            # than propagating uncaught and bypassing the failure signal.
-            page = await self._launch_browser()
-            log.info(
-                "Hillsborough FL: searching evictions %s -> %s",
-                start.isoformat(), today.isoformat(),
-            )
-            filings = await self._run_search(page, start, today)
-        except Exception as e:
-            self.last_error = str(e)
-            log.error("Hillsborough FL: scrape failed: %s", e, exc_info=True)
-        finally:
-            await self._close_browser()
+        # Retry with a fresh Bright Data session when the search form fails to
+        # render (intermittent residential-IP/WAF behaviour). A clean run that
+        # simply finds no cases (no last_error) is genuine and not retried.
+        for attempt in range(1, _MAX_SEARCH_ATTEMPTS + 1):
+            self.last_error = None
+            try:
+                # Launch inside the try so a Bright Data connect failure
+                # (e.g. a suspended account) is captured in last_error rather
+                # than propagating uncaught and bypassing the failure signal.
+                page = await self._launch_browser()
+                log.info(
+                    "Hillsborough FL: searching evictions %s -> %s (attempt %d/%d)",
+                    start.isoformat(), today.isoformat(), attempt, _MAX_SEARCH_ATTEMPTS,
+                )
+                filings = await self._run_search(page, start, today)
+            except Exception as e:
+                self.last_error = str(e)
+                log.error("Hillsborough FL: attempt %d failed: %s", attempt, e, exc_info=True)
+            finally:
+                await self._close_browser()
+
+            if filings:
+                break
+            if not self.last_error:
+                break  # clean run, genuinely no cases — don't waste a retry
+            if attempt < _MAX_SEARCH_ATTEMPTS:
+                log.warning(
+                    "Hillsborough FL: retrying after render/session failure (%s)",
+                    self.last_error,
+                )
 
         log.info("Hillsborough FL: %d filings found", len(filings))
         return filings
