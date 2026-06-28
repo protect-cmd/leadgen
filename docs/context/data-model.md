@@ -31,6 +31,16 @@ The Vantage "ready to enrich" pool: enrichable filings (passed gates, not yet en
 `lead_contacts` row with `phone IS NOT NULL OR enriched_at IS NOT NULL` suppresses re-enrichment
 (don't re-pay a dead lookup).
 
+## Classification, is_enrichable, estimated_rent (see [[decisions]] D-010)
+- `lead_bucket` is set at **insert** — `dedup_service.insert_filing` runs `classify_lead`, so
+  every insert path (runner AND raw-push) populates it. NULL bucket no longer happens.
+- `is_enrichable` = `lead_bucket=residential_approved AND gate_name AND gate_address`, refreshed
+  daily by `flag_enrichable.flag()` which re-checks ALL rows and writes only the diffs
+  (**self-healing** — a stale FALSE flips as soon as its inputs justify it).
+- `estimated_rent`: free HUD SAFMR baseline (`scripts/backfill_rent_hud.py`, ZIP→2BR) fills every
+  null in `post_scrape_chain`; Rentometer (paid precision) is currently **off**. Rent is a
+  ranking signal only, never a discard gate.
+
 ## Dedup & data-loss notes (see [[decisions]])
 - `is_duplicate(case_number)` checks `filings` globally; in practice safe because each county
   uses a **distinct case_number format** (verified — zero cross-county collisions), so the

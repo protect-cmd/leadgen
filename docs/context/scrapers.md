@@ -38,3 +38,5 @@ Tarrant TX (Bright Data tunnel failing), Cobb GA (geocoder/4% gate pass) — see
   (Bright Data) or a US IP; verify egress with `ipinfo.io/json`.
 - Name-only sources (address only on detail / not exposed) are low-value — the pipeline needs
   street addresses ([[glossary]] quality floor).
+- Raw-push scrapers (`--yes-write-supabase`) classify on insert (lead_bucket) and get a free HUD
+  rent baseline in `post_scrape_chain`, so their leads rank like runner-based ones ([[decisions]] D-010).

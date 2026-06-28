@@ -3,6 +3,22 @@
 Why the system is the way it is — so you don't re-litigate settled calls. Newest first.
 Each: decision, why, status.
 
+## D-010 Classify-at-insert, free HUD rent baseline, self-healing enrichable flag — 2026-06-29
+Three fixes from an end-to-end scrape test (PRs #58/#59/#60):
+1. **Classify at insert.** Raw-push scrapers (OH/AZ/Franklin, `--yes-write-supabase`) insert via
+   `dedup_service.insert_filing`, bypassing the runner, so they used to leave `lead_bucket=NULL`
+   → `is_enrichable=FALSE` → never in `good_leads_now`. `classify_lead` now runs inside
+   `insert_filing` (local, no spend). **Why:** one chokepoint covers every insert path.
+2. **HUD SAFMR is the free always-on rent baseline.** `backfill_rent.py` is Rentometer-only
+   (paid); non-TX tracks had no rent and couldn't rank. `scripts/backfill_rent_hud.py` fills
+   `estimated_rent` (null only) from the free HUD ZIP→2BR table in `post_scrape_chain`.
+   Rentometer = paid precision layer for top leads, now **disabled** (`RENT_PRECHECK_ENABLED=false`,
+   `RENT_BACKFILL_DAILY_CAP=0`). **Why:** rank every lead at $0; HUD compresses the luxury high
+   end but never drops a lead. See `docs/hud_fmr_vs_rentometer_research.md`.
+3. **Self-healing `flag_enrichable`.** Daily chain re-evaluates ALL filings but writes only
+   changed rows (was `only_null`, which could never un-stick a stale FALSE). **Why:** a
+   reclassification or late fix now heals on the next run, no manual backfill.
+
 ## D-009 Hillsborough parked (per-case address fetch not viable) — 2026-06-28
 HOVER is behind PerimeterX "Press & Hold" that re-triggers on every page. Bright Data solves it
 for *search* but per-case detail fetches (where the address lives) succeed ~3%. **Decision:**
@@ -54,3 +70,4 @@ via grill + 3 Codex review rounds (`PLAN.md` / `PLAN-REVIEW-LOG.md`).
   git / outward push). Admin-merge PRs (`gh pr merge --admin`) is authorized.
 - No emojis / AI-status-lines in PR comments — plain prose.
 - No Melissa for people-search; SearchBug is the vendor (Enformion under eval).
+- Flag adjacent problems proactively (severity + one-line fix path), don't silently pass them.

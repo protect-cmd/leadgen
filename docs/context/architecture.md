@@ -17,7 +17,8 @@ scrape → ingest → (gate + score) → [manual] enrich → stage(GHL) → fire
 1. **Scrape** — `scrapers/<state>/<county>.py`, class `XScraper.scrape() -> list[Filing]`.
    Date-enumerable, address-complete sources only. See [[scrapers]].
 2. **Ingest** — `pipeline/runner.py::_ingest_one`: dedup → insert → classify (lead_bucket).
-   `services/dedup_service.py` does the Supabase writes.
+   `services/dedup_service.py` does the Supabase writes; `insert_filing` classifies on insert,
+   so raw-push scrapers (OH/AZ/Franklin, `--yes-write-supabase`) get `lead_bucket` too ([[decisions]] D-010).
 3. **Gate + score** — `pipeline/gates.py` (address/name/freshness) + `pipeline/lead_score.py`
    (per-business profile). The scored, floor-passing, unenriched set = the "ready to enrich"
    queue (`pipeline/queue_builder.py` → `good_leads_now` view for Vantage).
