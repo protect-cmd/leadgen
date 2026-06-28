@@ -23,10 +23,13 @@ log = logging.getLogger(__name__)
 # run only the working FL sources (e.g. duval) and skip the blocked Hillsborough
 # (WAF/403) or dormant Miami-Dade/Broward.
 _FL_COUNTIES = {
-    "miami-dade": ("Miami-Dade County", MiamiDadeScraper),
-    "broward": ("Broward County", BrowardScraper),
-    "hillsborough": ("Hillsborough County", HillsboroughScraper),
-    "duval": ("Duval County", DuvalScraper),
+    "miami-dade": ("Miami-Dade County", lambda: MiamiDadeScraper(lookback_days=2)),
+    "broward": ("Broward County", lambda: BrowardScraper(lookback_days=2)),
+    # Hillsborough sits behind a Press & Hold challenge that re-triggers on every
+    # page, so per-case address fetches don't scale. Cap to the freshest 50 cases
+    # over a 1-day window for a reliable, address-complete feed (quality > volume).
+    "hillsborough": ("Hillsborough County", lambda: HillsboroughScraper(lookback_days=1, max_cases=50)),
+    "duval": ("Duval County", lambda: DuvalScraper(lookback_days=2)),
 }
 
 
@@ -39,7 +42,7 @@ async def main(argv: list[str] | None = None) -> None:
     log.info("Starting Florida scrape job (%s)", args.counties or "all counties")
 
     scrapers = [
-        (label, factory(lookback_days=2))
+        (label, factory())
         for key, (label, factory) in _FL_COUNTIES.items()
         if only is None or key in only
     ]

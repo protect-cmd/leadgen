@@ -395,18 +395,26 @@ class HillsboroughScraper(BaseScraper):
         """Open case ``idx`` and return one Filing per defendant with a real
         address. Returns [] on any failure so the caller keeps the grid filing.
         """
-        try:
-            buttons = await page.query_selector_all("button.details")
-            if idx >= len(buttons):
-                return []
-            await buttons[idx].click()
-            await page.wait_for_selector("#tabCaseParties", state="visible", timeout=30_000)
-            await page.click("#tabCaseParties")
-            await page.wait_for_selector("#partiesTable tbody tr", timeout=20_000)
-            parties = await page.evaluate(_JS_EXTRACT_PARTIES)
-        except Exception as e:
-            log.warning("Hillsborough FL: detail fetch failed for %s: %s", base.case_number, e)
-            await self._return_to_results(page)
+        # Each detail page can re-trigger the "Press & Hold" challenge, which
+        # Bright Data solves but needs time for. Give it a generous timeout and
+        # one retry (return to the grid between attempts) before giving up.
+        parties = None
+        for d_attempt in range(2):
+            try:
+                buttons = await page.query_selector_all("button.details")
+                if idx >= len(buttons):
+                    return []
+                await buttons[idx].click()
+                await page.wait_for_selector("#tabCaseParties", state="visible", timeout=45_000)
+                await page.click("#tabCaseParties")
+                await page.wait_for_selector("#partiesTable tbody tr", timeout=45_000)
+                parties = await page.evaluate(_JS_EXTRACT_PARTIES)
+                break
+            except Exception as e:
+                log.warning("Hillsborough FL: detail fetch attempt %d failed for %s: %s",
+                            d_attempt + 1, base.case_number, e)
+                await self._return_to_results(page)
+        if parties is None:
             return []
 
         plaintiff = base.landlord_name
