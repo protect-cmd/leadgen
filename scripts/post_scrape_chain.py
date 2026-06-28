@@ -37,9 +37,18 @@ def _normalize() -> None:
     normalize_main()
 
 
+def _backfill_rent_hud() -> None:
+    """Free, always-on baseline rent for every lead from the HUD SAFMR table
+    (ZIP -> 2BR). Only fills estimated_rent IS NULL, so it never clobbers a
+    Rentometer value. This is what makes non-Texas tracks (e.g. Ohio) rankable —
+    they're raw-pushed and otherwise have no rent signal."""
+    from scripts.backfill_rent_hud import main as hud_main
+    hud_main(["--track", "both", "--write"])
+
+
 def _backfill_rent(cap: int) -> None:
     if cap <= 0:
-        log.info("rent backfill skipped (RENT_BACKFILL_DAILY_CAP=%s)", cap)
+        log.info("rent backfill (Rentometer) skipped (RENT_BACKFILL_DAILY_CAP=%s)", cap)
         return
     from scripts.backfill_rent import main as rent_main
     rent_main(["--track", "both", "--cap", str(cap)])
@@ -59,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO)
     cap = int(os.getenv("RENT_BACKFILL_DAILY_CAP", "0"))
     steps = (("flag", _flag), ("normalize", _normalize),
+             ("rent_hud", _backfill_rent_hud),
              ("rent", lambda: _backfill_rent(cap)), ("health", _health))
     failed = 0
     for name, fn in steps:
