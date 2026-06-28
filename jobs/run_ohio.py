@@ -134,6 +134,8 @@ async def main(
         except Exception as e:
             log.error("Ohio / Lorain: unexpected error: %s", e, exc_info=True)
 
+    inserted: int | None = None
+    duplicates: int | None = None
     if yes_write_supabase:
         from services import dedup_service
         all_filings = (
@@ -195,10 +197,15 @@ async def main(
     print(message)
 
     if notify:
-        await notification_service.send_alert(
-            "Ohio run",
-            message,
-            tags={"mode": "pipeline" if pipe else "scraper-only"},
+        # Per-court breakdown (lines between the header and the Total/runner lines).
+        breakdown = summary.to_lines()[1:7]
+        await notification_service.send_scrape_summary(
+            source="Ohio",
+            scraped=summary.total_filings,
+            inserted=inserted,
+            duplicates=duplicates,
+            piped=pipe,
+            breakdown=breakdown,
         )
 
     log.info("Ohio run complete")

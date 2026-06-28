@@ -102,6 +102,8 @@ async def main(
         and f.property_address not in ("Unknown", "", None)
     ]
 
+    inserted: int | None = None
+    duplicates: int | None = None
     if yes_write_supabase:
         # Raw insert (no enrichment/outreach), matching the OH jobs. run_arizona
         # previously persisted ONLY via --pipe, so the scheduled job (--notify
@@ -147,10 +149,17 @@ async def main(
     print(message)
 
     if notify:
-        await notification_service.send_alert(
-            "Arizona Maricopa run",
-            message,
-            tags={"mode": "pipeline" if pipe else "scraper-only"},
+        breakdown = [
+            f"Usable single-match addresses: {summary.usable_single_match}",
+            f"Held for review: {summary.held_for_review}",
+        ]
+        await notification_service.send_scrape_summary(
+            source="Arizona/Maricopa",
+            scraped=summary.total_filings,
+            inserted=inserted,
+            duplicates=duplicates,
+            piped=pipe,
+            breakdown=breakdown,
         )
 
     log.info("Arizona / Maricopa run complete")

@@ -111,13 +111,12 @@ async def main_async(argv: list[str] | None = None) -> int:
     if args.notify:
         from services import notification_service
 
-        await notification_service.send_alert(
-            "Franklin OH raw filing push",
-            "\n".join(format_summary(summary)),
-            tags={
-                "job": "ohio_franklin_raw",
-                "mode": "raw_supabase_only",
-            },
+        await notification_service.send_scrape_summary(
+            source="Franklin OH",
+            scraped=summary.received,
+            inserted=summary.inserted,
+            duplicates=summary.duplicates,
+            piped=False,
         )
     return 0
 
