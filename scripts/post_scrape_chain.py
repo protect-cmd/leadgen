@@ -45,11 +45,21 @@ def _backfill_rent(cap: int) -> None:
     rent_main(["--track", "both", "--cap", str(cap)])
 
 
+def _health() -> None:
+    """Run the pipeline health checks and push a Pushover summary. This is what
+    makes monitoring reliable: it runs every day at the end of the post-scrape
+    chain instead of being a manual one-shot."""
+    import asyncio
+    from scripts.verify_pipeline_health import notify_health
+    fails = asyncio.run(notify_health())
+    log.info("pipeline health: %s FAIL", fails)
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO)
     cap = int(os.getenv("RENT_BACKFILL_DAILY_CAP", "0"))
     steps = (("flag", _flag), ("normalize", _normalize),
-             ("rent", lambda: _backfill_rent(cap)))
+             ("rent", lambda: _backfill_rent(cap)), ("health", _health))
     failed = 0
     for name, fn in steps:
         try:
