@@ -6,6 +6,22 @@ This repo powers the eviction/legal-services lead pipeline for Grant Ellis Group
 
 This file is the repo-level operating manual for Codex and other coding agents. Keep it concise, current, and focused on rules that should survive across sessions.
 
+## Context Vault (read first for depth)
+
+`docs/context/` is an Obsidian-style, cross-linked knowledge base — the durable source of
+truth for *intent* so agents don't re-derive architecture/business/history every session.
+Start at `docs/context/index.md`, then follow `[[wikilinks]]`:
+- `architecture.md` — the pipeline stages, shared contract, spend guard, key files
+- `businesses.md` — the four businesses (2×2: eviction/debt × filed/judgment)
+- `data-model.md` — Supabase tables, columns, the DNC enum, `good_leads_now`
+- `runbook.md` — schedule, env switches, budget tiers, how to run/deploy
+- `scrapers.md` — per-county status (scheduled / blocked / parked)
+- `decisions.md` — ADRs (why things are the way they are)
+- `glossary.md` — project terms
+
+Update the relevant note when you change the system; code is truth for *behaviour*, the vault
+for *intent*. When they disagree, trust code and fix the note.
+
 ## Brand Rules
 
 - Grant Ellis Group is the landlord/document-prep brand.
@@ -19,7 +35,7 @@ This file is the repo-level operating manual for Codex and other coding agents. 
 ## Safety And Compliance Guardrails
 
 - Phone outreach must fail closed unless DNC status is explicitly clear.
-- Treat `dnc_status = "clear"` as callable, `blocked` as blocked, and `unknown` as manual review only.
+- DNC enum is `callable` | `dnc` | `unknown` (set by `services/dnc_service.py`). Treat `callable` as dialable, `dnc` as blocked, `unknown` as manual review only. (Legacy `clear`/`blocked` are accepted only via the dashboard back-compat mapper.) Fire requires `callable`.
 - Bland.ai auto-calling must remain disabled unless the user explicitly asks to enable it. The env flag is `AUTO_BLAND_CALLS_ENABLED`.
 - Pushover phone alerts are optional and controlled by `PUSHOVER_ENABLED`, `PUSHOVER_APP_TOKEN`, and `PUSHOVER_USER_KEY`. Alert failures must never crash a job.
 - GHL/dashboard approval must block Bland for missing phone numbers or non-clear DNC status.
