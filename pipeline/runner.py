@@ -41,6 +41,12 @@ _ENRICHMENT_WINDOW_DAYS = int(os.getenv("ENRICHMENT_WINDOW_DAYS", "10"))
 # rollout once the per-business caps are set. runner.run() processes Vantage
 # (eviction x filed) filings, so its quota business is VANTAGE.
 _QUOTA_GUARD_ENABLED = os.getenv("QUOTA_GUARD_ENABLED", "false").lower() == "true"
+# Manual model (operator's standing instruction): when PIPELINE_INGEST_ONLY=true,
+# scheduled runs STOP after ingest+classify. Nothing auto-enriches; the scored
+# "ready to enrich" queue is built by queue_builder for the dashboard, and
+# enrichment/GHL/Bland are operator-triggered. Set to true in production. (Code
+# default is false so the full-flow tests exercise enrichment.)
+_INGEST_ONLY = os.getenv("PIPELINE_INGEST_ONLY", "false").lower() == "true"
 
 SPANISH_LIKELY_TAG = "Spanish-Likely"
 
@@ -593,8 +599,10 @@ async def _stage_and_fire(
             m["instantly_enrolled"] += 1
 
 
-async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
+async def run(filings: list[Filing], state: str = "", county: str = "",
+              *, ingest_only: bool | None = None) -> None:
     started_at = datetime.now(timezone.utc)
+    ing = _INGEST_ONLY if ingest_only is None else ingest_only
     log.info(f"Runner received {len(filings)} filings")
 
     tenant_track_enabled = os.getenv("TENANT_TRACK_ENABLED", "true").lower() == "true"
@@ -653,6 +661,12 @@ async def run(filings: list[Filing], state: str = "", county: str = "") -> None:
 
         # Stage 1 — ingest (dedup, insert, classify).
         if not await _ingest_one(filing, m):
+            continue
+
+        # Manual model: stop here. The lead is ingested + classified; the scored
+        # "ready to enrich" queue is built by queue_builder for the dashboard, and
+        # enrichment/GHL/Bland are operator-triggered. No paid step runs here.
+        if ing:
             continue
 
         # Stage 2 — enrich (gates + paid lookup). None => gated out / discarded.

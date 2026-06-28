@@ -99,6 +99,24 @@ def test_granted_real_attempt_commits(monkeypatch):
     rollback.assert_not_awaited()
 
 
+def test_ingest_only_stops_before_enrichment(monkeypatch):
+    """Manual model: ingest_only=True must STOP after ingest — no enrichment,
+    no stage/fire (no paid steps)."""
+    monkeypatch.setattr(runner, "_ingest_one", AsyncMock(return_value=True))
+    enrich = AsyncMock(); stage = AsyncMock()
+    monkeypatch.setattr(runner, "_enrich_one", enrich)
+    monkeypatch.setattr(runner, "_stage_and_fire", stage)
+    monkeypatch.setattr(runner.dedup_service, "write_run_metrics", AsyncMock())
+    monkeypatch.setattr(runner.notification_service, "send_run_summary", AsyncMock())
+    monkeypatch.setattr(runner.notification_service, "send_alert", AsyncMock())
+
+    asyncio.run(runner.run([_filing()], state="TX", county="Harris", ingest_only=True))
+
+    runner._ingest_one.assert_awaited_once()
+    enrich.assert_not_awaited()      # no paid lookup
+    stage.assert_not_awaited()       # no GHL / Bland
+
+
 def test_granted_depletion_nonattempt_rolls_back(monkeypatch):
     # phone-less + "(none)" status == credit-depletion non-attempt (not a real hit)
     contact = EnrichedContact(filing=_filing(), track="ng", phone=None, searchbug_status="(none)")
