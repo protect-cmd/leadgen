@@ -59,18 +59,22 @@ def test_scheduler_defines_daily_jobs():
     docs/superpowers/specs/2026-05-29-cobb-address-enrichment-rebuild-design.md."""
     from services import daily_scheduler
 
+    # Times shifted earlier 2026-06-28 so the whole chain finishes before
+    # 13:00 UTC (= 9 PM PHT good-leads deadline); see daily_scheduler header.
     assert [(job.name, job.hour, job.minute, job.script_name) for job in daily_scheduler.SCHEDULED_JOBS] == [
-        ("texas", 12, 0, "run_texas.py"),
-        ("tennessee", 12, 20, "run_tennessee.py"),
-        ("arizona", 12, 40, "run_arizona.py"),
-        ("ohio_franklin_raw", 13, 20, "../scripts/push_franklin_filings.py"),
-        ("ohio_hamilton", 13, 40, "run_ohio.py"),
-        ("ohio_montgomery", 13, 45, "run_ohio.py"),
-        ("ists_harris", 13, 50, "run_ists_harris.py"),
-        ("ists_franklin", 13, 55, "run_ists_franklin.py"),
-        ("post_scrape_chain", 14, 10, "../scripts/post_scrape_chain.py"),
-        ("cosner_drake", 14, 20, "run_cd_harris.py"),
+        ("texas", 10, 30, "run_texas.py"),
+        ("tennessee", 10, 50, "run_tennessee.py"),
+        ("arizona", 11, 10, "run_arizona.py"),
+        ("ohio_franklin_raw", 11, 50, "../scripts/push_franklin_filings.py"),
+        ("ohio_hamilton", 12, 10, "run_ohio.py"),
+        ("ohio_montgomery", 12, 15, "run_ohio.py"),
+        ("ists_harris", 12, 20, "run_ists_harris.py"),
+        ("ists_franklin", 12, 25, "run_ists_franklin.py"),
+        ("post_scrape_chain", 12, 40, "../scripts/post_scrape_chain.py"),
+        ("cosner_drake", 12, 50, "run_cd_harris.py"),
     ]
+    # Every job must start before 13:00 UTC so leads are ready by 9 PM PHT.
+    assert all(j.hour * 60 + j.minute < 13 * 60 for j in daily_scheduler.SCHEDULED_JOBS)
     # arizona raw-persists since Phase 5.2 (enrichment is operator-driven). It
     # must carry --yes-write-supabase or run_arizona discards the scrape.
     az_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "arizona")

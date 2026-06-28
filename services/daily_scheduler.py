@@ -23,19 +23,28 @@ class ScheduledJob:
     args: tuple[str, ...] = ()
 
 
+# Schedule (UTC) is set BACKWARD from the operator's deadline: good leads must be
+# ready by 9 PM PHT = 13:00 UTC. So the whole chain (scrape -> ISTS -> post-scrape
+# flag/normalize/rent/health) must FINISH before 13:00 UTC. These times put the
+# last step (post_scrape_chain 12:40) done ~12:50 UTC. Harris pulls (texas,
+# ists_harris, cosner) stay spaced so they don't stack and trip Cloudflare.
+# CAVEAT: arizona now runs ~11:10 UTC (~04:10 MST), inside the window where some
+# court portals do overnight maintenance. If Maricopa starts coming back empty,
+# the freshness monitor (scripts/verify_pipeline_health) will alert — move it
+# later (closer to 12:00 UTC) and accept a slightly later AZ readiness.
 SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
-    ScheduledJob("texas", 12, 0, "run_texas.py"),
+    ScheduledJob("texas", 10, 30, "run_texas.py"),
     # tarrant DESCHEDULED 2026-05-29 - Bright Data tunnel failing on every
     # CaseDetail click (ERR_TUNNEL_CONNECTION_FAILED). See follow-up:
     # docs/superpowers/specs/2026-05-29-tarrant-rebuild-design.md
     # ScheduledJob("tarrant", 12, 10, "run_tarrant.py", args=("--pipe",)),
-    ScheduledJob("tennessee", 12, 20, "run_tennessee.py"),
+    ScheduledJob("tennessee", 10, 50, "run_tennessee.py"),
     # Raw insert of single-match filings (Phase 5.2: inline enrichment removed —
     # enrichment is operator-driven via /lists "Enrich selected"). run_arizona
     # persisted ONLY via --pipe, so the prior --notify-only job discarded every
     # scrape and Maricopa got near-zero daily volume. --yes-write-supabase
     # persists raw without enriching.
-    ScheduledJob("arizona", 12, 40, "run_arizona.py", args=("--yes-write-supabase", "--notify")),
+    ScheduledJob("arizona", 11, 10, "run_arizona.py", args=("--yes-write-supabase", "--notify")),
     # georgia_cobb DESCHEDULED 2026-05-29 - 200 filings / 4% gate pass rate.
     # Underlying cause: Nominatim geocoder (which Cobb's assessor chain
     # depends on for address enrichment) is unreliable. See follow-up:
@@ -43,8 +52,8 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
     # ScheduledJob("georgia_cobb", 13, 0, "run_georgia_cobb.py", args=("--pipe", "--notify")),
     ScheduledJob(
         "ohio_franklin_raw",
-        13,
-        20,
+        11,
+        50,
         "../scripts/push_franklin_filings.py",
         args=("--lookback-days", "2", "--yes-write-supabase", "--notify"),
     ),
@@ -53,36 +62,36 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
     # args had neither, so scraped Hamilton filings were silently discarded.
     ScheduledJob(
         "ohio_hamilton",
-        13,
-        40,
+        12,
+        10,
         "run_ohio.py",
         args=("--lookback-days", "2", "--counties", "hamilton",
               "--yes-write-supabase", "--notify"),
     ),
     ScheduledJob(
         "ohio_montgomery",
-        13,
-        45,
+        12,
+        15,
         "run_ohio.py",
         args=("--lookback-days", "2", "--counties", "montgomery",
               "--yes-write-supabase", "--notify"),
     ),
     # --- post-scrape automation (Phase 1) ---
     # ISTS judgment scrapes first so judgments exist before the chain's rent step.
-    ScheduledJob("ists_harris", 13, 50, "run_ists_harris.py"),
+    ScheduledJob("ists_harris", 12, 20, "run_ists_harris.py"),
     # Franklin OH tenant-lost judgments (FCMC eviction CSV). Real upsert to
     # ists_judgments (no --dry-run); plain requests, no browser. See
     # docs/superpowers/specs/2026-06-16-ists-franklin-judgment-leads-design.md
-    ScheduledJob("ists_franklin", 13, 55, "run_ists_franklin.py"),
+    ScheduledJob("ists_franklin", 12, 25, "run_ists_franklin.py"),
     # Ordered chain: flag_enrichable -> normalize_court_date -> backfill_rent
     # (rent OFF unless RENT_BACKFILL_DAILY_CAP is set).
-    ScheduledJob("post_scrape_chain", 14, 10, "../scripts/post_scrape_chain.py"),
+    ScheduledJob("post_scrape_chain", 12, 40, "../scripts/post_scrape_chain.py"),
     # Cosner Drake — Harris JP "Cases Filed / Debt Claim" filings. Third Harris
     # pull of the day (after texas 12:00 and ists_harris 13:50); spaced last so
     # the Harris requests don't stack and trip Cloudflare. Ingest-only (scrape ->
     # gate -> upsert to cosner_filings); SearchBug enrichment stays manual
     # (run_cd_enrich).
-    ScheduledJob("cosner_drake", 14, 20, "run_cd_harris.py", args=("--lookback", "2")),
+    ScheduledJob("cosner_drake", 12, 50, "run_cd_harris.py", args=("--lookback", "2")),
 )
 
 
