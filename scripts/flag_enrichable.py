@@ -29,7 +29,7 @@ load_dotenv()
 from supabase import create_client
 from pipeline.gates import gate_name, gate_address
 
-_COLS = "case_number,lead_bucket,tenant_name,property_address"
+_COLS = "case_number,lead_bucket,tenant_name,property_address,is_enrichable"
 
 
 def _client():
@@ -52,10 +52,21 @@ def _bulk_set(sb, cases: list[str], value: bool, now: str) -> None:
 
 
 def flag(case_numbers: list[str] | None = None, only_null: bool = False) -> dict:
-    """Compute & persist is_enrichable. Returns {'true': n, 'false': n, 'total': n}.
+    """Compute & persist is_enrichable, writing ONLY rows whose value changed.
+
+    Returns {'true': set-to-true, 'false': set-to-false, 'unchanged': n, 'total': n}.
+
+    The default (no args) does a full re-evaluation of every filing but only writes
+    the rows whose computed value differs from what's stored. This is the daily
+    chain's mode: one cheap paginated read, minimal writes, and — crucially — it
+    SELF-HEALS. A row that was stamped is_enrichable=FALSE under old data (e.g. a
+    raw-push insert before lead_bucket was set, or any later reclassification) is
+    re-checked every run and flips as soon as its inputs justify it. The old
+    only_null path could never re-check an already-stamped row, so a stuck FALSE
+    stayed stuck until a manual full backfill.
 
     case_numbers: restrict to these (e.g. a scraper's fresh rows). None = all filings.
-    only_null:    skip rows already flagged (incremental refresh).
+    only_null:    legacy incremental mode — consider only rows not yet stamped.
     """
     sb = _client()
     now = datetime.now(timezone.utc).isoformat()
@@ -77,11 +88,23 @@ def flag(case_numbers: list[str] | None = None, only_null: bool = False) -> dict
                 break
             off += 1000
 
-    true_c = [r["case_number"] for r in rows if _is_enrichable(r)]
-    false_c = [r["case_number"] for r in rows if not _is_enrichable(r)]
+    # Write-only-the-diff: compare the freshly computed value against what's stored
+    # so a daily full scan stays cheap (most rows are immutable after ingest).
+    true_c: list[str] = []
+    false_c: list[str] = []
+    unchanged = 0
+    for r in rows:
+        desired = _is_enrichable(r)
+        if r.get("is_enrichable") is desired:
+            unchanged += 1
+        elif desired:
+            true_c.append(r["case_number"])
+        else:
+            false_c.append(r["case_number"])
     _bulk_set(sb, true_c, True, now)
     _bulk_set(sb, false_c, False, now)
-    return {"true": len(true_c), "false": len(false_c), "total": len(rows)}
+    return {"true": len(true_c), "false": len(false_c),
+            "unchanged": unchanged, "total": len(rows)}
 
 
 def main(argv=None) -> int:
@@ -96,8 +119,9 @@ def main(argv=None) -> int:
             print("ERROR: column missing — apply migrations/017_lead_quality.sql first.", file=sys.stderr)
             return 2
         raise
-    print(f"flagged {res['total']} filings: "
-          f"is_enrichable=TRUE {res['true']} | FALSE {res['false']}")
+    print(f"scanned {res['total']} filings: "
+          f"set TRUE {res['true']} | set FALSE {res['false']} | "
+          f"unchanged {res.get('unchanged', 0)}")
     return 0
 
 

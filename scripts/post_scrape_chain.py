@@ -27,8 +27,12 @@ log = logging.getLogger("post_scrape_chain")
 
 
 def _flag() -> None:
+    # Full re-evaluation (not only_null): writes only changed rows but re-checks
+    # every filing, so a stuck is_enrichable=FALSE (raw-push pre-classification, or
+    # any later reclassification) self-heals on the next chain run instead of
+    # needing a manual backfill. See scripts/flag_enrichable.flag().
     from scripts.flag_enrichable import flag
-    res = flag(only_null=True)
+    res = flag()
     log.info("flag_enrichable: %s", res)
 
 
