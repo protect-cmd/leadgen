@@ -13,6 +13,7 @@ from datetime import date
 
 from models.contact import EnrichedContact
 from models.filing import Filing
+from pipeline.contract import Business
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +34,35 @@ def _bland_cap_ok() -> bool:
 def _bland_cap_increment() -> None:
     from services.enrichment_cache import get_cache
     get_cache().increment_daily_count(kind="bland")
+
+
+# Phase 5: when the quota guard is on, the Bland dial cap becomes PER-BUSINESS
+# via the atomic quota_service (reserve before dial, commit on success, rollback
+# on skip/failure). Opt-in so behavior is byte-for-byte unchanged until enabled.
+_QUOTA_GUARD_ENABLED = os.getenv("QUOTA_GUARD_ENABLED", "false").lower() == "true"
+
+
+async def _bland_reserve(business, case_number: str) -> bool:
+    """Reserve a Bland dial slot. True => OK to dial. Per-business quota when the
+    guard is on; the global SQLite daily cap otherwise (unchanged behavior)."""
+    if _QUOTA_GUARD_ENABLED:
+        from services import quota_service
+        res = await quota_service.try_reserve(business, "bland", case_number)
+        return res.granted
+    return _bland_cap_ok()
+
+
+async def _bland_settle(business, case_number: str, *, success: bool) -> None:
+    """Settle a dial: on success bump the (display) SQLite counter and commit the
+    quota slot; on failure/skip roll the slot back so it isn't burned."""
+    if success:
+        _bland_cap_increment()
+        if _QUOTA_GUARD_ENABLED:
+            from services import quota_service
+            await quota_service.commit(business, "bland", case_number)
+    elif _QUOTA_GUARD_ENABLED:
+        from services import quota_service
+        await quota_service.rollback(business, "bland", case_number)
 
 
 async def fire_case(sb, case_number: str) -> dict:
@@ -102,17 +132,19 @@ async def fire_case(sb, case_number: str) -> dict:
         except Exception as e:
             return {"case_number": case_number, "status": "ghl_failed", "error": repr(e)[:120]}
 
-    # Daily Bland ceiling: stage to GHL (done above) but don't dial once capped.
-    if not _bland_cap_ok():
+    # Daily Bland ceiling (per-business when guarded): stage to GHL (done above)
+    # but don't dial once capped.
+    if not await _bland_reserve(Business.VANTAGE, case_number):
         return {"case_number": case_number, "status": "daily_cap", "ghl_id": ghl_id}
 
     # 2) dial Bland
     try:
         call_id = await bland_service.trigger_voicemail(ec)
-        _bland_cap_increment()
+        await _bland_settle(Business.VANTAGE, case_number, success=True)
         await set_bland_status(case_number, "ng", "triggered", call_id=call_id)
         return {"case_number": case_number, "status": "fired", "ghl_id": ghl_id, "call_id": call_id}
     except Exception as e:
+        await _bland_settle(Business.VANTAGE, case_number, success=False)
         await set_bland_status(case_number, "ng", "pending")
         rl = "429" in repr(e)
         return {"case_number": case_number, "status": "rate_limited" if rl else "bland_failed",
@@ -157,19 +189,23 @@ async def ists_fire_case(sb, case_number: str) -> dict:
         except Exception as e:
             return {"case_number": case_number, "status": "ghl_failed", "error": repr(e)[:120]}
 
-    # Daily Bland ceiling: GHL push (above) still happens; only the dial is gated.
-    if not _bland_cap_ok():
+    # Daily Bland ceiling (per-business when guarded): GHL push (above) still
+    # happens; only the dial is gated.
+    if not await _bland_reserve(Business.ISTS, case_number):
         return {"case_number": case_number, "status": "daily_cap", "ghl_id": ghl_id}
 
     try:
         call_id = await ists_bland.trigger_call(rec)
     except Exception as e:
+        await _bland_settle(Business.ISTS, case_number, success=False)
         return {"case_number": case_number, "status": "bland_failed", "error": repr(e)[:120]}
     if call_id == "dnc_skip":
+        await _bland_settle(Business.ISTS, case_number, success=False)
         return {"case_number": case_number, "status": "dnc_skip"}
     if call_id in (None, "outside_window"):
+        await _bland_settle(Business.ISTS, case_number, success=False)
         return {"case_number": case_number, "status": call_id or "failed"}
-    _bland_cap_increment()
+    await _bland_settle(Business.ISTS, case_number, success=True)
     sb.table("ists_judgments").update(
         {"bland_call_id": call_id, "bland_triggered_at": now}
     ).eq("case_number", case_number).execute()
