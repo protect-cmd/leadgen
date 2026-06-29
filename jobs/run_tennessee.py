@@ -6,6 +6,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scrapers.tennessee.davidson import DavidsonTNScraper
+from scrapers.tennessee.shelby import ShelbyTNScraper
 from pipeline import runner
 from services import notification_service
 
@@ -21,6 +22,7 @@ async def main() -> None:
 
     scrapers = [
         ("Davidson County", DavidsonTNScraper(lookback_days=2)),
+        ("Shelby County", ShelbyTNScraper(lookback_days=2)),
     ]
 
     for label, scraper in scrapers:
