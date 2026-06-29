@@ -41,6 +41,20 @@ edge `data.label` conditions above.
   **Publish** on the pathway in the Bland UI, then bump `pathway_version` in the script.
 - **Browser User-Agent required** on all API calls or Cloudflare returns 1010.
 
+## Pause / re-enable (the real on/off switch)
+
+A pathway showing "Published" in the library **routes nothing on its own** — what routes
+inbound calls is the *number assignment*. So:
+
+- **Pause:** detach the pathway from the number — `POST /v1/inbound/+18186167276` with
+  `{"pathway_id": null, "pathway_version": null, "prompt": null}`. Inbound reverts to its
+  original do-nothing state; the pathway stays in the library as an editable draft. (Bland
+  has no true "unpublish"; this is the equivalent.)
+- **Re-enable:** re-run this script with `INBOUND_IVR_PATHWAY_ID=57e5af09-ecab-47d3-b51d-08d28a7cbef3`
+  so it re-attaches the existing pathway instead of creating a new one.
+
+> Status 2026-06-29: built, published, then **paused** (detached) pending go-live readiness.
+
 ## Limitations / future
 
 - This is the cheaper single-number approach. The cleaner long-term option is one Bland
