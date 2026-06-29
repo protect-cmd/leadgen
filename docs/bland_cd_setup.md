@@ -32,18 +32,25 @@ The scripts below deliberately:
 
 ---
 
-## Pathways (to be created live via the Bland API)
+## Pathways (created live via the Bland API 2026-06-29)
 
 | Pathway | Bland pathway ID | Persona | Railway var |
 |---|---|---|---|
-| `Cosner Drake English Outbound` | _(set after creation)_ | Marcus (EN) | `BLAND_CD_AGENT_ID` |
-| `Cosner Drake Spanish Outbound` | _(set after creation)_ | Daniel (ES) | `BLAND_CD_SPANISH_AGENT_ID` |
+| `Cosner Drake English Outbound` | `92f5ae96-2d85-41d8-a495-75751be344e0` | Marcus (EN) | `BLAND_CD_AGENT_ID` |
+| `Cosner Drake Spanish Outbound` | `ef717876-9113-4eba-86af-153811982d7a` | Daniel (ES) | `BLAND_CD_SPANISH_AGENT_ID` |
 
-Build each the same way as the working GP/EC pathways: a single `Default` node → `End Call`,
-with `skipUserResponse` + `block_interruptions` ON (agent reads, does not wait), and the
-message node's `prompt` beginning *"Deliver the following message exactly. Do not
-paraphrase…"* wrapping the script in quotes so the legally sensitive wording is delivered
-word-for-word.
+Each is a one-way voicemail drop: a single `Default` start node holding the script in the
+**`text`** field (verbatim — spoken word-for-word, never paraphrased) with
+`skipUserResponse` + `block_interruptions` ON and `modelOptions.voice` set
+(`mason` EN / `Esteban` ES), edged straight to an `End Call` node. The agent reads the
+message and hangs up — it lands identically on a live answer or a machine. Verified via
+`GET /v1/pathway/{id}`: text, voice, and `skipUserResponse` all persisted.
+
+Built and populated programmatically via `POST /v1/pathway/create` then
+`POST /v1/pathway/{id}` (browser UA to clear Cloudflare). **One manual step remains:**
+both show `published_at: null` and the `/promote` endpoint 404s via API (same limitation
+GP hit), so click **Publish** on each in the Bland UI once — calls with `pathway_id` use
+the published production version.
 
 ---
 
@@ -108,24 +115,33 @@ is authoritative for real dials.
 
 ---
 
-## Go-live prerequisites (calling, not just code)
+## Numbers (cleared up 2026-06-29)
 
-The code path (`cd_bland.trigger_batch`) is built and wired into `jobs.run_cd_outreach`
-(Step 3) with the shared DNC gate, the Answer-window gate, and the CT call-window. To
-actually dial, this still needs:
+There is **one Bland outbound number across all four businesses**: `+18186167276`
+(labeled "EC - Outbound" in Bland → Phone Numbers). That is the dial-*from* caller ID for
+CD too — `BLAND_CD_PHONE_NUMBER=+18186167276`.
 
-1. **Create both pathways** in Bland (via API or UI) from the scripts above; record the IDs.
-2. **Confirm the outbound number is Bland-usable.** (888) 338-2915 is shown as a RingEX
-   (RingCentral) number — to dial *from* it in Bland it must be owned/verified in the Bland
-   account (or buy a Houston-area DID and use that). Set `BLAND_CD_PHONE_NUMBER` +
-   `BLAND_CD_CALLBACK_PHONE_NUMBER`.
-3. **Set the agent IDs in Railway** (and `.env` for local QA):
-   `BLAND_CD_AGENT_ID`, `BLAND_CD_SPANISH_AGENT_ID`.
-4. **Publish both pathways** in the Bland UI (API calls with `pathway_id` use the published
-   version).
-5. **Have inventory:** run `jobs.run_cd_outreach --enrich-only` then `--ghl-only` so
+The four RingCentral toll-free numbers (Cosner Drake `888 338-2915`, Garnish Proof
+`888 224-2863`, ISTS `888 322-4034`, Vantage `888 214-1711`) are **callback** numbers the
+lead dials back — they are *not* Bland numbers and cannot be a Bland dial-from. CD's goes
+into the script as `{{cd_phone}}`: `BLAND_CD_CALLBACK_PHONE_NUMBER=+18883382915`.
+
+(Caller ID is therefore an 818 number on Houston-bound calls — a known answer-rate tradeoff
+of the single shared number, same as every other vertical. Bland "Local Presence" would fix
+it if ever desired.)
+
+## Status (2026-06-29) and remaining go-live steps
+
+Done and verified:
+- Both pathways created, populated (verbatim text + voice + one-way drop), live IDs above.
+- Railway vars set: `BLAND_CD_AGENT_ID`, `BLAND_CD_SPANISH_AGENT_ID`,
+  `BLAND_CD_PHONE_NUMBER=+18186167276`, `BLAND_CD_CALLBACK_PHONE_NUMBER=+18883382915`,
+  `BLAND_CD_VOICE=mason`, `BLAND_CD_SPANISH_VOICE=Esteban`.
+- `cd_bland.trigger_batch` wired into `jobs.run_cd_outreach` Step 3 with the shared DNC
+  gate, the forward Answer-window gate, and the CT call-window.
+
+Remaining before real dials:
+1. **Publish both pathways** in the Bland UI (one click each — API `/promote` 404s).
+2. **Have inventory:** `python -m jobs.run_cd_outreach --enrich-only` then `--ghl-only` so
    `cosner_filings` has rows with `phone` + `ghl_contact_id` + an open `answer_deadline`.
-6. **QA** with `--dry-run`, then a single test call to an internal number, before real dials.
-
-`cd_bland` already enforces the shared DNC gate, the Answer-window freshness gate, and the
-CT call-window — the same guardrails as ISTS/GP.
+3. **QA** with `--dry-run`, then a single test call to an internal number, before real dials.
