@@ -218,7 +218,7 @@ def check_schema() -> list[CheckResult]:
 # in the filings table. Note: filings.county is the bare county name
 # ("Davidson", "Cobb"), NOT "Davidson County" — that latter form appears
 # in run_metrics but not in filings. Verified 2026-05-29.
-SCHEDULED_JOB_COUNTIES: dict[str, tuple[str, str] | None] = {
+SCHEDULED_JOB_COUNTIES: dict[str, tuple[str, str | None] | None] = {
     "texas": ("TX", "Harris"),
     # tarrant + georgia_cobb descheduled 2026-05-29 — see daily_scheduler.py
     # and the follow-up specs (2026-05-29-tarrant-rebuild-design.md,
@@ -233,6 +233,9 @@ SCHEDULED_JOB_COUNTIES: dict[str, tuple[str, str] | None] = {
     "ohio_butler": ("OH", "Butler"),
     "ohio_barberton": ("OH", "Summit"),     # Barberton Municipal Court is in Summit County
     "florida_duval": ("FL", "Duval"),
+    # Statewide source (all 92 IN counties) — county=None means "match on
+    # state only" below, since no single county represents its output.
+    "indiana_mycase": ("IN", None),
     # Non-filings jobs: ISTS writes ists_judgments, Cosner Drake writes
     # cosner_filings, the chain is post-scrape automation. Mapped to None so the
     # verifier skips them (it audits the prod `filings` table) instead of
@@ -291,12 +294,17 @@ def check_scheduled_scrapers(now: datetime | None = None) -> list[CheckResult]:
         if loc is None:
             continue  # non-filings job (ISTS, post-scrape chain) — nothing to audit here
         state, county = loc
+        label = f"{state}/{county}" if county else f"{state}/statewide"
         try:
-            rows = (
+            query = (
                 client.table("filings")
                 .select("property_address,tenant_name")
                 .eq("state", state)
-                .eq("county", county)
+            )
+            if county:
+                query = query.eq("county", county)
+            rows = (
+                query
                 .gte("scraped_at", cutoff)
                 .order("scraped_at", desc=True)
                 .limit(100)
@@ -306,14 +314,14 @@ def check_scheduled_scrapers(now: datetime | None = None) -> list[CheckResult]:
             )
         except Exception as exc:
             out.append(CheckResult(
-                "scrapers", f"{state}/{county}", "FLAG",
+                "scrapers", label, "FLAG",
                 f"Supabase query failed: {exc!r}",
             ))
             continue
 
         if not rows:
             out.append(CheckResult(
-                "scrapers", f"{state}/{county}", "FLAG",
+                "scrapers", label, "FLAG",
                 f"no filings in the last {PASS_RATE_LOOKBACK_DAYS}d "
                 "(new scraper, paused source, or dark — see freshness check)",
             ))
@@ -321,7 +329,7 @@ def check_scheduled_scrapers(now: datetime | None = None) -> list[CheckResult]:
 
         rate = _compute_pass_rate(rows)
         pct = f"{100 * rate:.0f}%"
-        name = f"{state}/{county} (n={len(rows)})"
+        name = f"{label} (n={len(rows)})"
         if rate >= _PASS_RATE_OK:
             out.append(CheckResult("scrapers", name, "OK", f"pass rate {pct} (>={int(_PASS_RATE_OK*100)}%)"))
         elif rate >= _PASS_RATE_FAIL:
@@ -380,12 +388,17 @@ def check_scraper_freshness(now: datetime | None = None) -> list[CheckResult]:
         if loc is None:
             continue  # already FLAGged by check_scheduled_scrapers
         state, county = loc
+        label = f"{state}/{county}" if county else f"{state}/statewide"
         try:
-            rows = (
+            query = (
                 client.table("filings")
                 .select("scraped_at")
                 .eq("state", state)
-                .eq("county", county)
+            )
+            if county:
+                query = query.eq("county", county)
+            rows = (
+                query
                 .order("scraped_at", desc=True)
                 .limit(1)
                 .execute()
@@ -394,12 +407,12 @@ def check_scraper_freshness(now: datetime | None = None) -> list[CheckResult]:
             )
         except Exception as exc:
             out.append(CheckResult(
-                "scrapers", f"{state}/{county} freshness", "FLAG",
+                "scrapers", f"{label} freshness", "FLAG",
                 f"Supabase query failed: {exc!r}",
             ))
             continue
 
-        name = f"{state}/{county} freshness"
+        name = f"{label} freshness"
         if not rows:
             out.append(CheckResult(
                 "scrapers", name, "FLAG",

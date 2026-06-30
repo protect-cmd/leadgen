@@ -34,6 +34,9 @@ class ScheduledJob:
 # later (closer to 12:00 UTC) and accept a slightly later AZ readiness.
 SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
     ScheduledJob("texas", 10, 30, "run_texas.py"),
+    # Indiana statewide MyCase (all 92 counties). Throttled (2-4s/detail fetch);
+    # placed early with the most runway since raw EV-case volume varies by day.
+    ScheduledJob("indiana_mycase", 10, 45, "run_indiana.py"),
     # tarrant DESCHEDULED 2026-05-29 - Bright Data tunnel failing on every
     # CaseDetail click (ERR_TUNNEL_CONNECTION_FAILED). See follow-up:
     # docs/superpowers/specs/2026-05-29-tarrant-rebuild-design.md
