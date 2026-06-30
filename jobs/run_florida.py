@@ -11,6 +11,7 @@ from scrapers.florida.broward import BrowardScraper
 from scrapers.florida.hillsborough import HillsboroughScraper
 from scrapers.florida.duval import DuvalScraper
 from scrapers.florida.volusia import VolusiaScraper
+from scrapers.florida.sarasota import SarasotaScraper
 from pipeline import runner
 from services import notification_service
 
@@ -29,6 +30,7 @@ _FL_COUNTIES = {
     "hillsborough": ("Hillsborough County", HillsboroughScraper),
     "duval": ("Duval County", DuvalScraper),
     "volusia": ("Volusia County", VolusiaScraper),
+    "sarasota": ("Sarasota County", SarasotaScraper),
 }
 
 
