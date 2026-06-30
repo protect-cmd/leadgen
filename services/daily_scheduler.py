@@ -106,6 +106,11 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
     # gate -> upsert to cosner_filings); SearchBug enrichment stays manual
     # (run_cd_enrich).
     ScheduledJob("cosner_drake", 12, 50, "run_cd_harris.py", args=("--lookback", "2")),
+    # Indiana statewide MyCase debt suits (Cosner Drake new source, isolated
+    # cd_debt_suits table — see migrations/029). Ingest-only, no enrichment/GHL/
+    # Bland wiring yet. Spaced after cosner_drake (different portal, no Harris
+    # Cloudflare contention).
+    ScheduledJob("indiana_debt", 12, 55, "run_indiana_debt.py", args=("--lookback-days", "2")),
 )
 
 

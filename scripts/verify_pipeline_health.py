@@ -241,6 +241,7 @@ SCHEDULED_JOB_COUNTIES: dict[str, tuple[str, str] | None] = {
     "ists_franklin": None,
     "post_scrape_chain": None,
     "cosner_drake": None,
+    "indiana_debt": None,
 }
 
 _PASS_RATE_OK = 0.85
@@ -532,6 +533,7 @@ def check_ghl_stage_ids() -> list[CheckResult]:
 _BUSINESS_TABLES: list[tuple[str, str, str, bool]] = [
     ("ISTS", "ists_judgments", "judgment_date", True),
     ("Cosner Drake", "cosner_filings", "filing_date", True),
+    ("Cosner Drake IN Debt", "cd_debt_suits", "filing_date", True),
     ("Garnish Proof (manual import)", "garnishment_orders", "filing_date", False),
 ]
 

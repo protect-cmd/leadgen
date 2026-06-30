@@ -146,17 +146,32 @@
 
 ---
 
-## Indiana Marion — public.courts.in.gov/mycase
+## Indiana statewide — public.courts.in.gov/mycase (Cosner Drake debt source)
 
-**Status:** Blocked from current automation environment as of 2026-05-13.
+**Status:** GREEN — re-confirmed accessible 2026-06-27. Supersedes the 2026-05-13 "blocked/forbidden" finding (portal no longer redirects to Forbidden from this environment).
 
-**Findings:**
-- Existing scraper assumes the old `/mycase/Search/SearchCases` JSON endpoint shape.
-- A 90-day diagnostic search returned HTML instead of JSON for tested prefixes.
-- Direct MyCase portal load redirected to `/mycase/Error/Forbidden`.
-- The displayed error text says access may be denied for restricted pages, outside-US access, anonymous browsing services, or being flagged as a non-human automated process.
+**Access path (confirmed via live probes 2026-06-27):**
+- Portal `https://public.courts.in.gov/mycase/` returns HTTP 200; SPA is a hash-router (`#/vw/Search`).
+- **Search:** `POST /mycase/Search/SearchCases` (call from page context to reuse session cookies). Returns JSON `{TotalResults, Skip, Take, Sort, Results}`.
+- **Name NOT required** — this is the key fix vs. the old scraper. Send blank `Last`/`First`/`Middle` + `FileStart`/`FileEnd` (MM/DD/YYYY) + `CountyCode` (e.g. `"49"`=Marion), then paginate with `Skip`/`Take` (50/page). The old a–z prefix loop is wrong: single-letter `Last` matches *exactly* (only redacted juvenile initials), which is why the 2026-05-13 diagnostic looked empty.
+- **`TotalResults` caps at ~1000** (1001 observed for a 50-day Marion window) → chunk searches by date (and/or county) to avoid truncation, like the GA re:SearchGA 1,000-row cap.
+- **Statewide scope:** either loop `CountyCode` per county, or use `CourtItemID` from `POST /mycase/Dropdown/GetByKey {"key":"DDCourtItems"}` (162 entries; `92`="All Odyssey Courts"). Each court entry exposes `CategoryKeys` (`CR/CV/FAM/PR`) and `LimitKeys` (`COM/APL`).
+- **Detail:** `GET /mycase/Case/CaseSummary?CaseToken=<token>` returns full case JSON (`Parties`, `Events`, `CaseTypeCode`, `CaseCategoryKey`, …). **The old KnockoutJS `ob.Parties` viewmodel scrape is dead** (SPA rewrite; viewmodel now only exposes `ActiveView`/`Title`). `CaseToken` regenerates per search — fetch detail soon after.
 
-**Decision:** Do not continue Marion scraper work unless a compliant no-cost access path is found. The current zero-result smoke was not a valid “no cases” result.
+**Cosner Drake field mapping (debt-collection lawsuits just filed):**
+| Field | Source | Notes |
+|---|---|---|
+| `case_number` | `CaseNumber` | e.g. `49D12-2606-CC-033187` |
+| case type | `CaseTypeCode` | **`CC` = Civil Collection** (the CD target); also `SC`, `PL`, `MI` |
+| defendant (consumer) | `Parties[]` where `Connection==2` | `Name` is `LAST, FIRST`; the lead |
+| defendant **home address** | that party's `Address` (`Line1/City/State/Zip`) | unmasked in 5/5 CC sample (`Masked: false`) |
+| plaintiff/creditor | `Parties[]` where `Connection==3` | Capital One, Midland Credit Mgmt, etc. — **never the target** |
+| filing date | `FileDate` | |
+| amount sued for | **not a structured field** | only `$157` filing fee appears in `FeeSummary`/`Transactions`; debt amount is in the complaint document |
+
+**Volume sanity check (Marion, ~50-day window):** CC=60, EV=24 (evictions → VDG, separate), SC=6, plus criminal/infraction/family. CC is the dominant civil-collection type.
+
+**Decision:** Build a statewide CC scraper as a new `scrapers/indiana/` module (do not reuse the eviction-only `marion.py` filter or its dead viewmodel detail path). Indiana is garnish-legal, so the same filed-debt feed serves Cosner Drake now and Garnish Proof later.
 
 ---
 

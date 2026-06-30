@@ -76,6 +76,7 @@ def test_scheduler_defines_daily_jobs():
         ("ists_franklin", 12, 25, "run_ists_franklin.py"),
         ("post_scrape_chain", 12, 40, "../scripts/post_scrape_chain.py"),
         ("cosner_drake", 12, 50, "run_cd_harris.py"),
+        ("indiana_debt", 12, 55, "run_indiana_debt.py"),
     ]
     # Every job must start before 13:00 UTC so leads are ready by 9 PM PHT.
     assert all(j.hour * 60 + j.minute < 13 * 60 for j in daily_scheduler.SCHEDULED_JOBS)
@@ -90,6 +91,12 @@ def test_scheduler_defines_daily_jobs():
     # the day's three Harris pulls don't stack and trip Cloudflare.
     cd_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "cosner_drake")
     assert cd_job.args == ("--lookback", "2")
+
+    # Indiana MyCase debt ingest: raw insert only, 2-day lookback, spaced after
+    # cosner_drake so the two debt sources don't stack.
+    in_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "indiana_debt")
+    assert in_job.args == ("--lookback-days", "2")
+    assert in_job.hour * 60 + in_job.minute > cd_job.hour * 60 + cd_job.minute
 
 
 def test_tarrant_descheduled():
