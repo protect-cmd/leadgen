@@ -21,16 +21,16 @@ log = logging.getLogger(__name__)
 
 async def main() -> None:
     from pipeline.runner import run
-    from scrapers.indiana.marion import MarionCountyScraper
+    from scrapers.indiana.mycase import IndianaMyCaseScraper
 
     log.info("Starting Indiana scrape job")
 
     counties = [
-        ("Marion", MarionCountyScraper(lookback_days=2)),
+        ("Indiana", IndianaMyCaseScraper(lookback_days=2)),
     ]
 
     for name, scraper in counties:
-        log.info(f"=== Indiana / {name} County ===")
+        log.info(f"=== Indiana / {name} ===")
         try:
             filings = await scraper.scrape()
             if not filings:
@@ -38,9 +38,9 @@ async def main() -> None:
                 continue
             await run(filings, state="IN", county=name)
         except NotImplementedError as e:
-            log.warning(f"{name}: scraper not yet implemented — {e}")
+            log.warning(f"{name}: scraper not yet implemented - {e}")
         except Exception as e:
-            log.error(f"{name}: unexpected error — {e}", exc_info=True)
+            log.error(f"{name}: unexpected error - {e}", exc_info=True)
 
     log.info("Indiana scrape job complete")
 
