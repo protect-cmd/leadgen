@@ -17,7 +17,6 @@ from scrapers.arizona.maricopa import MaricopaJusticeCourtScraper
 from scrapers.florida.broward import BrowardScraper
 from scrapers.florida.hillsborough import HillsboroughScraper
 from scrapers.florida.miami_dade import MiamiDadeScraper
-from scrapers.florida.palm_beach import PalmBeachScraper
 from scrapers.georgia.cobb import CobbMagistrateCourtScraper
 from scrapers.georgia.dekalb import DeKalbDispossessoryScraper
 from scrapers.georgia.researchga import ReSearchGAScraper
@@ -65,12 +64,7 @@ def _florida_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, obj
         ("Miami-Dade", MiamiDadeScraper(lookback_days=lookback_days, headless=headless)),
         ("Broward", BrowardScraper(lookback_days=lookback_days, headless=headless)),
         ("Hillsborough", HillsboroughScraper(lookback_days=lookback_days, headless=headless)),
-        ("Palm Beach", PalmBeachScraper(lookback_days=lookback_days, headless=headless)),
     ]
-
-
-def _palm_beach_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, object]]:
-    return [("Palm Beach", PalmBeachScraper(lookback_days=lookback_days, headless=headless))]
 
 
 def _georgia_scrapers(lookback_days: int, headless: bool) -> list[tuple[str, object]]:
@@ -106,7 +100,6 @@ SCRAPER_FACTORIES: dict[str, StateFactory] = {
     "texas_tarrant": _texas_tarrant_scrapers,
     "tennessee": _tennessee_scrapers,
     "florida": _florida_scrapers,
-    "palm_beach": _palm_beach_scrapers,
     "georgia": _georgia_scrapers,
     "arizona": _arizona_scrapers,
     "georgia_cobb": _georgia_cobb_scrapers,
@@ -132,10 +125,6 @@ STATE_ALIASES = {
     "miami-dade": "florida",
     "broward": "florida",
     "hillsborough": "florida",
-    "palm_beach": "palm_beach",
-    "palm-beach": "palm_beach",
-    "palmbeach": "palm_beach",
-    "west_palm": "palm_beach",
     "ga": "georgia",
     "georgia": "georgia",
     "researchga": "georgia",
