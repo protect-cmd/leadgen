@@ -110,6 +110,10 @@ _SEARCH_HEADERS = {
 }
 
 
+class _PortalBlockedError(Exception):
+    """Raised when the portal serves a CAPTCHA challenge instead of search results."""
+
+
 # ── Scraper ────────────────────────────────────────────────────────────── #
 
 class IndianaMyCaseScraper:
@@ -132,6 +136,7 @@ class IndianaMyCaseScraper:
         self.court_id = court_id
         self.mode = mode
         self._session: requests.Session | None = None
+        self.last_error: str | None = None
 
     # ── Public interface ──────────────────────────────────────────────── #
 
@@ -142,6 +147,7 @@ class IndianaMyCaseScraper:
     # ── Core sync implementation ──────────────────────────────────────── #
 
     def _scrape_sync(self) -> list[Filing]:
+        self.last_error = None
         if not self._init_session():
             return []
 
@@ -153,7 +159,12 @@ class IndianaMyCaseScraper:
             f"{start.strftime('%m/%d/%Y')} -> {today.strftime('%m/%d/%Y')}"
         )
 
-        ev_cases = self._search_range(start, today)
+        try:
+            ev_cases = self._search_range(start, today)
+        except _PortalBlockedError as exc:
+            self.last_error = str(exc)
+            log.error(f"Indiana MyCase: {exc}")
+            return []
         log.info(f"Indiana MyCase: {len(ev_cases)} EV case(s) found")
 
         filings: list[Filing] = []
@@ -181,7 +192,8 @@ class IndianaMyCaseScraper:
             resp.raise_for_status()
             return True
         except Exception as exc:
-            log.error(f"Indiana MyCase: session init failed — {exc}")
+            self.last_error = f"session init failed: {exc}"
+            log.error(f"Indiana MyCase: {self.last_error}")
             return False
 
     def _refresh_session(self) -> bool:
@@ -244,6 +256,15 @@ class IndianaMyCaseScraper:
             except Exception as exc:
                 log.warning(f"Search error skip={skip}: {exc}")
                 break
+
+            # The portal answers a blocked/throttled session with HTTP 200 and a
+            # CaptchaKey payload instead of search results — not a 403/exception,
+            # so it would otherwise look like a genuinely empty result set.
+            if "TotalResults" not in data:
+                raise _PortalBlockedError(
+                    f"portal returned non-results payload (CAPTCHA challenge) "
+                    f"at skip={skip}, range={start_str}->{end_str}: {data}"
+                )
 
             total = data.get("TotalResults", 0)
             results = data.get("Results") or []

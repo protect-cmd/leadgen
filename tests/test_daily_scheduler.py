@@ -63,6 +63,7 @@ def test_scheduler_defines_daily_jobs():
     # 13:00 UTC (= 9 PM PHT good-leads deadline); see daily_scheduler header.
     assert [(job.name, job.hour, job.minute, job.script_name) for job in daily_scheduler.SCHEDULED_JOBS] == [
         ("texas", 10, 30, "run_texas.py"),
+        ("indiana_mycase", 10, 45, "run_indiana.py"),
         ("tennessee", 10, 50, "run_tennessee.py"),
         ("arizona", 11, 10, "run_arizona.py"),
         ("ohio_lorain", 11, 20, "run_ohio.py"),

@@ -246,8 +246,13 @@ def test_check_scheduled_scrapers_ok_above_threshold():
 
     def _table_chain(name):
         t = MagicMock()
-        chain = t.select.return_value.eq.return_value.eq.return_value.gte.return_value.order.return_value.limit.return_value
-        chain.execute.return_value = MagicMock(data=rows)
+        # Configure both the county-filtered chain (two .eq()) and the
+        # state-only chain used by statewide scrapers like indiana_mycase
+        # (one .eq()) so both shapes resolve to the same canned data.
+        state_only = t.select.return_value.eq.return_value
+        with_county = state_only.eq.return_value
+        state_only.gte.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=rows)
+        with_county.gte.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=rows)
         return t
 
     client = MagicMock()
@@ -266,8 +271,10 @@ def test_check_scheduled_scrapers_fail_below_60_pct():
 
     def _table_chain(name):
         t = MagicMock()
-        chain = t.select.return_value.eq.return_value.eq.return_value.gte.return_value.order.return_value.limit.return_value
-        chain.execute.return_value = MagicMock(data=rows)
+        state_only = t.select.return_value.eq.return_value
+        with_county = state_only.eq.return_value
+        state_only.gte.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=rows)
+        with_county.gte.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=rows)
         return t
 
     client = MagicMock()
@@ -285,12 +292,16 @@ from scripts.verify_pipeline_health import check_scraper_freshness, _age_days
 
 def _freshness_client(scraped_at):
     """Mock _client whose filings query returns one row with given scraped_at.
-    Pass scraped_at=None to simulate an empty table."""
+    Pass scraped_at=None to simulate an empty table. Configures both the
+    county-filtered chain (two .eq()) and the state-only chain used by
+    statewide scrapers like indiana_mycase (one .eq())."""
     def _table_chain(name):
         t = MagicMock()
-        chain = t.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value
         data = [] if scraped_at is None else [{"scraped_at": scraped_at}]
-        chain.execute.return_value = MagicMock(data=data)
+        state_only = t.select.return_value.eq.return_value
+        with_county = state_only.eq.return_value
+        state_only.order.return_value.limit.return_value.execute.return_value = MagicMock(data=data)
+        with_county.order.return_value.limit.return_value.execute.return_value = MagicMock(data=data)
         return t
 
     client = MagicMock()

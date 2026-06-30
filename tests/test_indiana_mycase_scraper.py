@@ -327,6 +327,37 @@ def test_scraper_returns_empty_when_search_returns_nothing(monkeypatch):
     assert filings == []
 
 
+def test_scraper_sets_last_error_when_session_init_fails(monkeypatch):
+    session = _mock_session(init_raises=True)
+    scraper = IndianaMyCaseScraper(lookback_days=1)
+    monkeypatch.setattr(scraper, "_new_session", lambda: session)
+
+    scraper._scrape_sync()
+
+    assert scraper.last_error is not None
+    assert "session init failed" in scraper.last_error
+
+
+def test_scraper_returns_empty_and_sets_last_error_on_captcha_block(monkeypatch):
+    """A CAPTCHA challenge comes back as HTTP 200 with no TotalResults key —
+    must not be treated as a genuine empty result set."""
+    captcha_payload = {
+        "CaptchaKey": "765E728D-2B57-4C61-92A9-9D475A43B692",
+        "Url": "https://public.courts.in.gov/mycase/Captcha/Render?key=765E728D",
+        "Error": None,
+    }
+    session = _mock_session(search_data=captcha_payload)
+    scraper = IndianaMyCaseScraper(lookback_days=1)
+    monkeypatch.setattr(scraper, "_new_session", lambda: session)
+
+    with patch("scrapers.indiana.mycase.time.sleep"):
+        filings = scraper._scrape_sync()
+
+    assert filings == []
+    assert scraper.last_error is not None
+    assert "CAPTCHA" in scraper.last_error
+
+
 def test_scraper_skips_case_with_no_defendant(monkeypatch):
     no_defendant = {
         "Parties": [_PLAINTIFF_PARTY],

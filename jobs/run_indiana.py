@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 async def main() -> None:
     from pipeline.runner import run
     from scrapers.indiana.mycase import IndianaMyCaseScraper
+    from services import notification_service
 
     log.info("Starting Indiana scrape job")
 
@@ -33,6 +34,13 @@ async def main() -> None:
         log.info(f"=== Indiana / {name} ===")
         try:
             filings = await scraper.scrape()
+            if scraper.last_error:
+                log.error(f"{name}: scrape error: {scraper.last_error}")
+                await notification_service.send_job_error(
+                    job=f"Indiana / {name}",
+                    stage="scrape",
+                    error=scraper.last_error,
+                )
             if not filings:
                 log.info(f"{name}: no filings found")
                 continue

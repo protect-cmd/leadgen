@@ -12,6 +12,19 @@ OH Montgomery, **OH Lorain, OH Butler, OH Barberton(Summit), FL Duval** (added 2
 live-verified address-complete: Butler 100%, Lorain 90%, Barberton 100%, Duval 100%),
 plus ISTS Harris + ISTS Franklin, and Cosner Drake (Harris debt-claim, ingest-only).
 
+**Indiana statewide (MyCase, Tyler Odyssey)** — added 2026-07-01 (PR #64), replaces the
+old name-only Marion-only scraper. `scrapers/indiana/mycase.py`, pure `requests`, all 92
+counties via `CourtItemID=92`. Live-verified: 70 filings / 100% address-complete in a 2-day
+window (~43% of raw EV cases lack defendant data at filing time — court-side data-entry lag,
+not a parser bug). The search endpoint answers a blocked/throttled session with **HTTP 200 +
+a `CaptchaKey` payload** instead of a 403 — indistinguishable from a quiet day unless checked;
+the original PR didn't check for it. Fixed before scheduling: `_search_range` now raises on a
+missing `TotalResults` key, and `last_error`/notification_service alerting was added (the PR
+had neither, despite the contract). Statewide output spans many counties, so
+`SCHEDULED_JOB_COUNTIES`/`verify_pipeline_health.py` was extended to support a
+`(state, None)` "match state only" entry — a single-county mapping would have under-monitored
+it. Scheduled at 10:45 UTC (`indiana_mycase`), early for runway given the per-detail throttle.
+
 ## On `main` but NOT scheduled / parked
 - **FL Hillsborough (HOVER)** — best-quality source but behind a **PerimeterX "Press & Hold"**
   challenge that 403s datacenter IPs *and re-triggers on every page*. Routed via **Bright Data
