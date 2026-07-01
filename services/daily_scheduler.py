@@ -33,6 +33,10 @@ class ScheduledJob:
 # the freshness monitor (scripts/verify_pipeline_health) will alert — move it
 # later (closer to 12:00 UTC) and accept a slightly later AZ readiness.
 SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
+    # Indiana statewide ISTS (MyCase judgment leads). Runtime ~57 min —
+    # scheduled early so it finishes by ~10:30 UTC, before the VDG chain
+    # starts. Writes to ists_judgments; does NOT flow through post_scrape_chain.
+    ScheduledJob("ists_indiana", 9, 30, "run_indiana_ists.py"),
     ScheduledJob("texas", 10, 30, "run_texas.py"),
     # Indiana statewide MyCase (all 92 counties). Throttled (2-4s/detail fetch);
     # placed early with the most runway since raw EV-case volume varies by day.
