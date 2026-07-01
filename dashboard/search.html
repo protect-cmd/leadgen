@@ -117,6 +117,8 @@
       padding: 2px 8px; border-radius: 20px; white-space: nowrap; }
     .detail .track-badge.ists { background: rgba(140,120,255,0.18); color: #c4b5fd; }
     .detail .track-badge.ng { background: rgba(108,176,255,0.16); color: var(--accent); }
+    .detail .track-badge.cd { background: rgba(255,176,102,0.18); color: var(--orange); }
+    .detail .track-badge.gp { background: rgba(110,231,183,0.18); color: var(--green); }
     .dcard { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     .dcard td { padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: top; line-height: 1.4; }
     .dcard tr:last-child td { border-bottom: 0; }
@@ -253,7 +255,7 @@ function renderResults(rows) {
       <div>
         <div class="name">${escapeHtml(row.tenant_name || row.contact_name || '(unknown)')}</div>
         <div class="addr">${escapeHtml(row.property_address || '—')}</div>
-        <div class="meta-line">${escapeHtml(row.case_number || '')} · ${row.track === 'ists' ? 'judgment ' + (row.judgment_date || '—') : 'court ' + (row.court_date || '—')}</div>
+        <div class="meta-line">${escapeHtml(row.case_number || '')} · ${rowDateLabel(row)}</div>
       </div>
       <div class="right">
         <div class="phone">${fmtPhone(row.phone) || '—'}</div>
@@ -264,6 +266,13 @@ function renderResults(rows) {
     resultsEl.appendChild(el);
   });
   activeRowIndex = -1;
+}
+
+function rowDateLabel(row) {
+  if (row.track === 'ists') return 'judgment ' + (row.judgment_date || '—');
+  if (row.track === 'cd') return 'answer due ' + (row.answer_deadline || '—');
+  if (row.track === 'gp') return 'exemption due ' + (row.exemption_deadline || '—');
+  return 'court ' + (row.court_date || '—');
 }
 
 function escapeHtml(s) {
@@ -294,7 +303,10 @@ function relativeTime(iso) {
 // Track-aware field list for the detail card + the copy block. Empty values dropped.
 function leadFields(row) {
   const isIsts = row.track === 'ists';
+  const isCd = row.track === 'cd';
+  const isGp = row.track === 'gp';
   const rentStr = row.estimated_rent ? '$' + Math.round(row.estimated_rent).toLocaleString() : '';
+  const debtStr = row.debt_amount ? '$' + Math.round(row.debt_amount).toLocaleString() : '';
   const loc = (row.state || row.county) ? `${row.state || ''}/${row.county || ''}` : '';
   const f = [
     { k: 'Name', v: row.tenant_name || row.contact_name || '(unknown)' },
@@ -302,11 +314,24 @@ function leadFields(row) {
     { k: 'Address', v: row.property_address || '' },
     { k: 'Case', v: row.case_number || '', mono: true, copy: row.case_number || '' },
   ];
-  if (isIsts) f.push({ k: 'Judgment date', v: row.judgment_date || '' });
-  else { f.push({ k: 'Filed', v: row.filing_date || '' }); f.push({ k: 'Court date', v: row.court_date || '' }); }
+  if (isIsts) {
+    f.push({ k: 'Judgment date', v: row.judgment_date || '' });
+  } else if (isCd) {
+    f.push({ k: 'Filed', v: row.filing_date || '' });
+    f.push({ k: 'Answer deadline', v: row.answer_deadline || '' });
+  } else if (isGp) {
+    f.push({ k: 'Filed', v: row.filing_date || '' });
+    f.push({ k: 'Exemption deadline', v: row.exemption_deadline || '' });
+  } else {
+    f.push({ k: 'Filed', v: row.filing_date || '' });
+    f.push({ k: 'Court date', v: row.court_date || '' });
+  }
   f.push({ k: 'County', v: loc });
-  f.push({ k: isIsts ? 'Landlord/plaintiff' : 'Landlord', v: row.landlord_name || '' });
+  f.push({ k: isIsts ? 'Landlord/plaintiff' : (isCd || isGp) ? 'Creditor' : 'Landlord', v: row.landlord_name || '' });
   if (rentStr) f.push({ k: 'Rent est.', v: rentStr });
+  if (debtStr) f.push({ k: 'Debt amount', v: debtStr });
+  if (isGp && row.garnishment_type) f.push({ k: 'Garnishment type', v: row.garnishment_type });
+  if (isGp && row.garnishee_name) f.push({ k: 'Garnishee', v: row.garnishee_name });
   if (row.dnc_status) f.push({ k: 'DNC', v: row.dnc_status, pill: row.dnc_status });
   return f.filter(x => x.v);
 }
@@ -335,10 +360,12 @@ async function renderDetail(row) {
   detailEl.classList.remove('empty');
   const stage = row.bland_status || row.lead_bucket || '—';
   const lastCalled = relativeTime(row.last_called_at);
+  const badgeClass = { ists: 'ists', cd: 'cd', gp: 'gp' }[row.track] || 'ng';
+  const badgeLabel = { ists: 'ISTS · judgment', cd: 'Cosner Drake · debt claim', gp: 'Garnish Proof · garnishment' }[row.track] || 'Vantage';
   detailEl.innerHTML = `
     <div class="detail-head">
       <h2>${escapeHtml(row.tenant_name || row.contact_name || '(unknown)')}</h2>
-      <span class="track-badge ${row.track === 'ists' ? 'ists' : 'ng'}">${row.track === 'ists' ? 'ISTS · judgment' : 'Vantage'}</span>
+      <span class="track-badge ${badgeClass}">${badgeLabel}</span>
     </div>
     ${renderCard(row)}
     <button id="btn-copy" class="copy-btn">Copy details</button>

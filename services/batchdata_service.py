@@ -297,7 +297,7 @@ async def _searchbug_fallback_gated(
     from services.enrichment_cache import get_cache
     from services.name_utils import is_common_surname, parse_name
     from services.searchbug_service import (
-        query_street_address,
+        query_full_street_address,
         search_tenant_detailed,
         SearchBugResult,
     )
@@ -317,7 +317,7 @@ async def _searchbug_fallback_gated(
         if match:
             sb_state = match.group(1).upper()
             sb_postal = match.group(2)
-    query_address = query_street_address(filing.property_address)
+    query_address = query_full_street_address(filing.property_address)
 
     cache = get_cache()
     cap = int(os.environ.get("SEARCHBUG_DAILY_CAP", "100"))
@@ -375,6 +375,7 @@ async def _searchbug_fallback_gated(
     result = await search_tenant_detailed(
         first_name, last_name, sb_city, sb_state, sb_postal,
         address=query_address,
+        strip_unit=False,
     )
     # Only count against the daily cap if we actually hit the wire. If the
     # call just tripped the breaker, we don't want to consume a slot.

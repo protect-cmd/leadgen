@@ -88,6 +88,45 @@ async def send_job_error(
     )
 
 
+async def send_scrape_summary(
+    *,
+    source: str,
+    scraped: int,
+    inserted: int | None = None,
+    duplicates: int | None = None,
+    piped: bool = False,
+    breakdown: list[str] | None = None,
+    priority: int = 0,
+) -> bool:
+    """Uniform Pushover summary for the raw-push scrape jobs (Ohio, Arizona,
+    Franklin). Every scrape notification shares one title shape ("Scrape · X")
+    and one body order (mode → scraped/inserted/duplicates → optional breakdown
+    → enrichment line) so they read identically in the Pushover feed.
+
+    `breakdown` is optional per-source detail (e.g. Ohio's per-court counts).
+    """
+    mode = "pipeline" if piped else "scrape-only"
+    lines = [f"{source} — {mode}", f"Scraped: {scraped}"]
+    if inserted is not None:
+        lines.append(f"Inserted: {inserted}")
+    if duplicates is not None:
+        lines.append(f"Duplicates: {duplicates}")
+    if breakdown:
+        lines.append("")
+        lines.extend(breakdown)
+    lines.append(
+        "Enrichment: pipeline runner called"
+        if piped
+        else "Enrichment: not called (scrape-only)"
+    )
+    return await send_alert(
+        f"Scrape · {source}",
+        "\n".join(lines),
+        priority=priority,
+        tags={"mode": mode},
+    )
+
+
 async def send_run_summary(
     metrics: dict,
     *,

@@ -59,23 +59,45 @@ def test_scheduler_defines_daily_jobs():
     docs/superpowers/specs/2026-05-29-cobb-address-enrichment-rebuild-design.md."""
     from services import daily_scheduler
 
+    # Times shifted earlier 2026-06-28 so the whole chain finishes before
+    # 13:00 UTC (= 9 PM PHT good-leads deadline); see daily_scheduler header.
     assert [(job.name, job.hour, job.minute, job.script_name) for job in daily_scheduler.SCHEDULED_JOBS] == [
-        ("texas", 12, 0, "run_texas.py"),
-        ("tennessee", 12, 20, "run_tennessee.py"),
-        ("arizona", 12, 40, "run_arizona.py"),
-        ("ohio_franklin_raw", 13, 20, "../scripts/push_franklin_filings.py"),
-        ("ohio_hamilton", 13, 40, "run_ohio.py"),
-        ("ohio_montgomery", 13, 45, "run_ohio.py"),
-        ("ists_harris", 13, 50, "run_ists_harris.py"),
-        ("ists_franklin", 13, 55, "run_ists_franklin.py"),
-        ("post_scrape_chain", 14, 10, "../scripts/post_scrape_chain.py"),
+        ("texas", 10, 30, "run_texas.py"),
+        ("indiana_mycase", 10, 45, "run_indiana.py"),
+        ("tennessee", 10, 50, "run_tennessee.py"),
+        ("arizona", 11, 10, "run_arizona.py"),
+        ("ohio_lorain", 11, 20, "run_ohio.py"),
+        ("ohio_butler", 11, 25, "run_ohio.py"),
+        ("ohio_barberton", 11, 35, "run_ohio.py"),
+        ("florida_duval", 11, 40, "run_florida.py"),
+        ("ohio_franklin_raw", 11, 50, "../scripts/push_franklin_filings.py"),
+        ("ohio_hamilton", 12, 10, "run_ohio.py"),
+        ("ohio_montgomery", 12, 15, "run_ohio.py"),
+        ("ists_harris", 12, 20, "run_ists_harris.py"),
+        ("ists_franklin", 12, 25, "run_ists_franklin.py"),
+        ("post_scrape_chain", 12, 40, "../scripts/post_scrape_chain.py"),
+        ("cosner_drake", 12, 50, "run_cd_harris.py"),
+        ("indiana_debt", 12, 55, "run_indiana_debt.py"),
     ]
+    # Every job must start before 13:00 UTC so leads are ready by 9 PM PHT.
+    assert all(j.hour * 60 + j.minute < 13 * 60 for j in daily_scheduler.SCHEDULED_JOBS)
     # arizona raw-persists since Phase 5.2 (enrichment is operator-driven). It
     # must carry --yes-write-supabase or run_arizona discards the scrape.
     az_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "arizona")
     assert "--yes-write-supabase" in az_job.args
     assert "--notify" in az_job.args
     assert "--pipe" not in az_job.args
+
+    # Cosner Drake ingest runs ingest-only with a 2-day lookback, spaced last so
+    # the day's three Harris pulls don't stack and trip Cloudflare.
+    cd_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "cosner_drake")
+    assert cd_job.args == ("--lookback", "2")
+
+    # Indiana MyCase debt ingest: raw insert only, 2-day lookback, spaced after
+    # cosner_drake so the two debt sources don't stack.
+    in_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "indiana_debt")
+    assert in_job.args == ("--lookback-days", "2")
+    assert in_job.hour * 60 + in_job.minute > cd_job.hour * 60 + cd_job.minute
 
 
 def test_tarrant_descheduled():

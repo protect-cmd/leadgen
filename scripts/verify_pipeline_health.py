@@ -218,7 +218,7 @@ def check_schema() -> list[CheckResult]:
 # in the filings table. Note: filings.county is the bare county name
 # ("Davidson", "Cobb"), NOT "Davidson County" — that latter form appears
 # in run_metrics but not in filings. Verified 2026-05-29.
-SCHEDULED_JOB_COUNTIES: dict[str, tuple[str, str] | None] = {
+SCHEDULED_JOB_COUNTIES: dict[str, tuple[str, str | None] | None] = {
     "texas": ("TX", "Harris"),
     # tarrant + georgia_cobb descheduled 2026-05-29 — see daily_scheduler.py
     # and the follow-up specs (2026-05-29-tarrant-rebuild-design.md,
@@ -229,10 +229,22 @@ SCHEDULED_JOB_COUNTIES: dict[str, tuple[str, str] | None] = {
     "ohio_franklin_raw": ("OH", "Franklin"),
     "ohio_hamilton": ("OH", "Hamilton"),
     "ohio_montgomery": ("OH", "Montgomery"),
-    # Non-filings jobs: ISTS writes ists_judgments, the chain is post-scrape
-    # automation. Mapped to None so they're skipped (not flagged as unmapped).
+    "ohio_lorain": ("OH", "Lorain"),
+    "ohio_butler": ("OH", "Butler"),
+    "ohio_barberton": ("OH", "Summit"),     # Barberton Municipal Court is in Summit County
+    "florida_duval": ("FL", "Duval"),
+    # Statewide source (all 92 IN counties) — county=None means "match on
+    # state only" below, since no single county represents its output.
+    "indiana_mycase": ("IN", None),
+    # Non-filings jobs: ISTS writes ists_judgments, Cosner Drake writes
+    # cosner_filings, the chain is post-scrape automation. Mapped to None so the
+    # verifier skips them (it audits the prod `filings` table) instead of
+    # flagging them as unmapped.
     "ists_harris": None,
+    "ists_franklin": None,
     "post_scrape_chain": None,
+    "cosner_drake": None,
+    "indiana_debt": None,
 }
 
 _PASS_RATE_OK = 0.85
@@ -282,12 +294,17 @@ def check_scheduled_scrapers(now: datetime | None = None) -> list[CheckResult]:
         if loc is None:
             continue  # non-filings job (ISTS, post-scrape chain) — nothing to audit here
         state, county = loc
+        label = f"{state}/{county}" if county else f"{state}/statewide"
         try:
-            rows = (
+            query = (
                 client.table("filings")
                 .select("property_address,tenant_name")
                 .eq("state", state)
-                .eq("county", county)
+            )
+            if county:
+                query = query.eq("county", county)
+            rows = (
+                query
                 .gte("scraped_at", cutoff)
                 .order("scraped_at", desc=True)
                 .limit(100)
@@ -297,14 +314,14 @@ def check_scheduled_scrapers(now: datetime | None = None) -> list[CheckResult]:
             )
         except Exception as exc:
             out.append(CheckResult(
-                "scrapers", f"{state}/{county}", "FLAG",
+                "scrapers", label, "FLAG",
                 f"Supabase query failed: {exc!r}",
             ))
             continue
 
         if not rows:
             out.append(CheckResult(
-                "scrapers", f"{state}/{county}", "FLAG",
+                "scrapers", label, "FLAG",
                 f"no filings in the last {PASS_RATE_LOOKBACK_DAYS}d "
                 "(new scraper, paused source, or dark — see freshness check)",
             ))
@@ -312,7 +329,7 @@ def check_scheduled_scrapers(now: datetime | None = None) -> list[CheckResult]:
 
         rate = _compute_pass_rate(rows)
         pct = f"{100 * rate:.0f}%"
-        name = f"{state}/{county} (n={len(rows)})"
+        name = f"{label} (n={len(rows)})"
         if rate >= _PASS_RATE_OK:
             out.append(CheckResult("scrapers", name, "OK", f"pass rate {pct} (>={int(_PASS_RATE_OK*100)}%)"))
         elif rate >= _PASS_RATE_FAIL:
@@ -371,12 +388,17 @@ def check_scraper_freshness(now: datetime | None = None) -> list[CheckResult]:
         if loc is None:
             continue  # already FLAGged by check_scheduled_scrapers
         state, county = loc
+        label = f"{state}/{county}" if county else f"{state}/statewide"
         try:
-            rows = (
+            query = (
                 client.table("filings")
                 .select("scraped_at")
                 .eq("state", state)
-                .eq("county", county)
+            )
+            if county:
+                query = query.eq("county", county)
+            rows = (
+                query
                 .order("scraped_at", desc=True)
                 .limit(1)
                 .execute()
@@ -385,12 +407,12 @@ def check_scraper_freshness(now: datetime | None = None) -> list[CheckResult]:
             )
         except Exception as exc:
             out.append(CheckResult(
-                "scrapers", f"{state}/{county} freshness", "FLAG",
+                "scrapers", f"{label} freshness", "FLAG",
                 f"Supabase query failed: {exc!r}",
             ))
             continue
 
-        name = f"{state}/{county} freshness"
+        name = f"{label} freshness"
         if not rows:
             out.append(CheckResult(
                 "scrapers", name, "FLAG",
@@ -518,6 +540,121 @@ def check_ghl_stage_ids() -> list[CheckResult]:
     return out
 
 
+# Per-business tables beyond the filings-table scrapers. (business label, table,
+# date column used as the freshness proxy, scheduled?). Garnish Proof is a manual
+# spreadsheet import, so its staleness is expected and never alerted on.
+_BUSINESS_TABLES: list[tuple[str, str, str, bool]] = [
+    ("ISTS", "ists_judgments", "judgment_date", True),
+    ("Cosner Drake", "cosner_filings", "filing_date", True),
+    ("Cosner Drake IN Debt", "cd_debt_suits", "filing_date", True),
+    ("Garnish Proof (manual import)", "garnishment_orders", "filing_date", False),
+]
+
+
+def check_business_table_freshness(now: datetime | None = None) -> list[CheckResult]:
+    """Freshness for the non-filings business tables (ISTS/Cosner/GP). The
+    original freshness check only covers the filings table; this extends
+    monitoring to every business so a dark ISTS or Cosner scraper is caught."""
+    now = now or datetime.now(timezone.utc)
+    out: list[CheckResult] = []
+    client = _supabase_client()
+    for label, table, date_col, scheduled in _BUSINESS_TABLES:
+        name = f"{label} freshness"
+        try:
+            rows = (
+                client.table(table).select(date_col)
+                .order(date_col, desc=True).limit(1).execute().data or []
+            )
+        except Exception as exc:
+            out.append(CheckResult("scrapers", name, "FLAG", f"query failed: {exc!r}"))
+            continue
+        if not rows:
+            out.append(CheckResult("scrapers", name, "OK" if not scheduled else "FLAG",
+                                   "no rows yet"))
+            continue
+        age = _age_days(str(rows[0].get(date_col) or ""), now)
+        if age is None:
+            out.append(CheckResult("scrapers", name, "FLAG",
+                                   f"unparseable {date_col}: {rows[0].get(date_col)!r}"))
+            continue
+        detail = f"newest {date_col} {age:.1f}d old"
+        if not scheduled:
+            out.append(CheckResult("scrapers", name, "OK", detail + " (manual source)"))
+        elif age <= FRESHNESS_FLAG_DAYS:
+            out.append(CheckResult("scrapers", name, "OK", detail))
+        elif age <= FRESHNESS_FAIL_DAYS:
+            out.append(CheckResult("scrapers", name, "FLAG",
+                                   detail + f"; no new records in >{FRESHNESS_FLAG_DAYS}d"))
+        else:
+            out.append(CheckResult("scrapers", name, "FAIL",
+                                   detail + f"; appears dark (>{FRESHNESS_FAIL_DAYS}d)"))
+    return out
+
+
+def check_quota_budget(now: datetime | None = None) -> list[CheckResult]:
+    """Report today's per-business quota spend from quota_ledger. Cap exhaustion
+    is a BUDGET-LIMIT status (OK), never a FAIL — a healthy capped day must not
+    page the operator (PLAN.md Phase 9)."""
+    now = now or datetime.now(timezone.utc)
+    today = now.date().isoformat()
+    client = _supabase_client()
+    try:
+        rows = (
+            client.table("quota_ledger").select("business,action")
+            .eq("day", today).in_("status", ["reserved", "committed"])
+            .limit(10000).execute().data or []
+        )
+    except Exception:
+        return [CheckResult("searchbug", "quota_ledger", "OK",
+                            "no quota_ledger (guard off / not yet applied)")]
+    if not rows:
+        return [CheckResult("searchbug", "quota", "OK", "no quota spend today")]
+    counts = Counter((r["business"], r["action"]) for r in rows)
+    return [
+        CheckResult("searchbug", f"quota {biz}/{act}", "OK", f"{n} used today")
+        for (biz, act), n in sorted(counts.items())
+    ]
+
+
+def gather_results() -> list[CheckResult]:
+    """Run every health check and return the combined results. Each check
+    defaults `now` internally, so callers/tests can stub them with no-arg fns."""
+    results: list[CheckResult] = []
+    results.extend(check_env_vars())
+    results.extend(check_schema())
+    results.extend(check_scheduled_scrapers())
+    results.extend(check_scraper_freshness())
+    results.extend(check_business_table_freshness())
+    results.extend(check_searchbug_headroom())
+    results.extend(check_quota_budget())
+    results.extend(check_ghl_stage_ids())
+    return results
+
+
+async def notify_health() -> int:
+    """Run all checks and push a Pushover summary (always) so the operator gets a
+    daily heartbeat; FAILs are listed first as the escalation. Returns the FAIL
+    count. This is what makes monitoring RELIABLE — it runs on a schedule (wired
+    into post_scrape_chain) instead of being a manual one-shot."""
+    from services import notification_service
+
+    results = gather_results()
+    counts = Counter(r.status for r in results)
+    fails = [r for r in results if r.status == "FAIL"]
+    flags = [r for r in results if r.status == "FLAG"]
+    title = (f"Pipeline health: {counts.get('OK', 0)} OK / "
+             f"{counts.get('FLAG', 0)} FLAG / {counts.get('FAIL', 0)} FAIL")
+    if fails or flags:
+        body = "\n".join(f"[{r.status}] {r.name}: {r.detail}" for r in fails + flags)
+    else:
+        body = "All checks OK."
+    try:
+        await notification_service.send_alert(title, body, tags={"job": "pipeline_health"})
+    except Exception:
+        pass  # never let a notification failure crash the post-scrape chain
+    return len(fails)
+
+
 def print_report(results: list[CheckResult]) -> None:
     """Group results by layer and print one section per layer."""
     by_layer: dict[str, list[CheckResult]] = defaultdict(list)
@@ -555,13 +692,7 @@ def main(argv: list[str] | None = None) -> int:
 
     load_dotenv()
 
-    results: list[CheckResult] = []
-    results.extend(check_env_vars())
-    results.extend(check_schema())
-    results.extend(check_scheduled_scrapers())
-    results.extend(check_scraper_freshness())
-    results.extend(check_searchbug_headroom())
-    results.extend(check_ghl_stage_ids())
+    results = gather_results()
     print_report(results)
 
     has_fail = any(r.status == "FAIL" for r in results)

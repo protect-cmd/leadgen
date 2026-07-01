@@ -10,7 +10,7 @@ import httpx
 from supabase import create_client, Client
 from models.filing import Filing
 from models.contact import EnrichedContact, RoutingOutcome
-from pipeline.qualification import QualificationOutcome
+from pipeline.qualification import QualificationOutcome, classify_lead
 
 load_dotenv()
 
@@ -77,6 +77,21 @@ async def is_duplicate(case_number: str) -> bool:
 
 
 async def insert_filing(filing: Filing) -> None:
+    # Classify at insert time so the lead_bucket is never left NULL. The raw-push
+    # scrapers (run_ohio / run_arizona / push_franklin_filings, all invoked with
+    # --yes-write-supabase) insert directly through here WITHOUT going through
+    # pipeline.runner, so without this they'd land lead_bucket=NULL forever ->
+    # is_enrichable=FALSE -> never reach the To-Enrich queue (good_leads_now).
+    # classify_lead is pure-local (no network, no spend). The runner path runs
+    # _classify_and_store again after address normalization; that overwrite is
+    # idempotent, so this is safe for every caller.
+    outcome = classify_lead(
+        state=filing.state,
+        property_address=filing.property_address,
+        filing_date=filing.filing_date,
+        property_type=filing.property_type_hint,
+    )
+
     def _insert() -> None:
         _execute_with_retry(
             _client.table("filings").insert({
@@ -90,6 +105,11 @@ async def insert_filing(filing: Filing) -> None:
                 "county": filing.county,
                 "notice_type": filing.notice_type,
                 "source_url": filing.source_url,
+                "property_zip": outcome.property_zip,
+                "lead_bucket": outcome.lead_bucket,
+                "discard_reason": outcome.discard_reason,
+                "qualification_notes": outcome.qualification_notes,
+                "classified_at": datetime.now(timezone.utc).isoformat(),
             }),
             "insert filing",
         )
@@ -261,13 +281,71 @@ def _ists_search_row(r: dict) -> dict:
     }
 
 
+def _cd_search_row(r: dict) -> dict:
+    """Map a cosner_filings row into the common search-result shape (track='cd').
+    Debt amount is the Cosner Drake-specific field (there is no rent dimension)."""
+    return {
+        "case_number": r.get("case_number"),
+        "track": "cd",
+        "tenant_name": r.get("defendant_name"),
+        "contact_name": r.get("defendant_name"),
+        "property_address": r.get("defendant_address"),
+        "phone": r.get("phone"),
+        "dnc_status": None,
+        "ghl_contact_id": r.get("ghl_contact_id"),
+        "bland_status": "triggered" if r.get("bland_call_id") else None,
+        "landlord_name": r.get("creditor_name"),
+        "estimated_rent": None,
+        "filing_date": r.get("filing_date"),
+        "answer_deadline": r.get("answer_deadline"),
+        "debt_amount": r.get("debt_amount"),
+        "amount_kind": r.get("amount_kind"),
+        "court_date": None,
+        "state": r.get("state"),
+        "county": r.get("county"),
+        "notice_type": "Debt claim",
+        "language_hint": r.get("language_hint"),
+        "last_called_at": r.get("last_called_at"),
+    }
+
+
+def _gp_search_row(r: dict) -> dict:
+    """Map a garnishment_orders row into the common search-result shape (track='gp').
+    Exemption deadline + garnishment type/creditor/garnishee are GP-specific fields."""
+    return {
+        "case_number": r.get("case_number"),
+        "track": "gp",
+        "tenant_name": r.get("debtor_name"),
+        "contact_name": r.get("debtor_name"),
+        "property_address": r.get("debtor_address"),
+        "phone": r.get("phone"),
+        "dnc_status": None,
+        "ghl_contact_id": r.get("ghl_contact_id"),
+        "bland_status": "triggered" if r.get("bland_call_id") else None,
+        "landlord_name": r.get("creditor_name"),
+        "estimated_rent": None,
+        "filing_date": r.get("filing_date"),
+        "exemption_deadline": r.get("exemption_deadline"),
+        "garnishment_type": r.get("garnishment_type"),
+        "garnishee_name": r.get("garnishee_name"),
+        "court_date": None,
+        "state": r.get("state"),
+        "county": r.get("county"),
+        "notice_type": "Garnishment",
+        "language_hint": r.get("language_hint"),
+        "last_called_at": r.get("last_called_at"),
+    }
+
+
 def _merge_search_rows(
     contact_rows: list[dict], filing_rows: list[dict],
-    ists_rows: list[dict], limit: int
+    ists_rows: list[dict], cd_rows: list[dict], gp_rows: list[dict],
+    limit: int
 ) -> list[dict]:
-    """Flatten contact + filing + ISTS-judgment matches into one sorted list,
-    deduped by case_number. Vantage rows win a case_number collision; ISTS rows
-    fill in the judgment-only leads (no lead_contacts/filings row)."""
+    """Flatten contact + filing + ISTS-judgment + Cosner Drake + Garnish Proof
+    matches into one sorted list, deduped by case_number. Vantage rows win a
+    case_number collision; the judgment/debt/garnishment-only tracks fill in
+    leads that have no lead_contacts/filings row."""
     by_case: dict[str, dict] = {}
 
     # Lead-contact-side rows: contact fields top-level, filing fields nested
@@ -301,18 +379,34 @@ def _merge_search_rows(
         if case_no and case_no not in by_case:
             by_case[case_no] = _ists_search_row(r)
 
+    # Cosner Drake debt-claim leads (physically isolated table, own case_number space)
+    for r in cd_rows:
+        case_no = r.get("case_number")
+        if case_no and case_no not in by_case:
+            by_case[case_no] = _cd_search_row(r)
+
+    # Garnish Proof garnishment leads (physically isolated table, own case_number space)
+    for r in gp_rows:
+        case_no = r.get("case_number")
+        if case_no and case_no not in by_case:
+            by_case[case_no] = _gp_search_row(r)
+
     out = list(by_case.values())
     out.sort(key=lambda r: r.get("filing_date") or "", reverse=True)
     return out[:limit]
 
 
 async def search_leads(q: str, limit: int = 20) -> list[dict]:
-    """Unified search across lead_contacts + filings + ists_judgments.
+    """Unified search across lead_contacts + filings + ists_judgments +
+    cosner_filings (Cosner Drake) + garnishment_orders (Garnish Proof).
 
-    Matches substring on name (contact_name + tenant_name + defendant_name),
-    phone (digits of q), case_number, and property_address. Merges results by
-    case_number, sorts by filing_date DESC, returns up to `limit` rows. ISTS
-    judgment leads surface with track='ists' so callbacks can be looked up.
+    Matches substring on name (contact_name + tenant_name + defendant_name +
+    debtor_name), phone (digits of q), case_number, and property/home address.
+    Merges results by case_number, sorts by filing_date DESC, returns up to
+    `limit` rows. ISTS judgment leads surface with track='ists', Cosner Drake
+    with track='cd', Garnish Proof with track='gp' so callbacks and business-
+    specific fields (judgment_date, debt_amount, exemption_deadline) can be
+    looked up.
 
     Returns [] for queries under 2 characters.
     """
@@ -391,15 +485,77 @@ async def search_leads(q: str, limit: int = 20) -> list[dict]:
             or []
         )
 
-        return _merge_search_rows(contact_rows, filing_rows, ists_rows, limit)
+        cd_filters = [
+            f"defendant_name.ilike.%{safe_q}%",
+            f"case_number.ilike.%{safe_q}%",
+            f"defendant_address.ilike.%{safe_q}%",
+        ]
+        if digits_q:
+            cd_filters.append(f"phone.ilike.%{digits_q}%")
+        cd_rows = (
+            _client.table("cosner_filings")
+            .select(
+                "case_number,defendant_name,defendant_address,creditor_name,"
+                "phone,ghl_contact_id,bland_call_id,filing_date,answer_deadline,"
+                "debt_amount,amount_kind,state,county,language_hint,last_called_at"
+            )
+            .or_(",".join(cd_filters))
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+
+        gp_filters = [
+            f"debtor_name.ilike.%{safe_q}%",
+            f"case_number.ilike.%{safe_q}%",
+            f"debtor_address.ilike.%{safe_q}%",
+        ]
+        if digits_q:
+            gp_filters.append(f"phone.ilike.%{digits_q}%")
+        gp_rows = (
+            _client.table("garnishment_orders")
+            .select(
+                "case_number,debtor_name,debtor_address,creditor_name,"
+                "garnishee_name,phone,ghl_contact_id,bland_call_id,filing_date,"
+                "exemption_deadline,garnishment_type,state,county,language_hint,"
+                "last_called_at"
+            )
+            .or_(",".join(gp_filters))
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+
+        return _merge_search_rows(contact_rows, filing_rows, ists_rows, cd_rows, gp_rows, limit)
 
     return await asyncio.to_thread(_query)
 
 
+# Cosner Drake / Garnish Proof leads live in their own physically-isolated
+# tables (no track column, case_number is the PK) rather than lead_contacts.
+_ISOLATED_TRACK_TABLES = {"cd": "cosner_filings", "gp": "garnishment_orders"}
+
+
 async def mark_lead_called(*, case_number: str, track: str) -> str:
-    """UPDATE lead_contacts SET last_called_at = now() and return the
-    resulting timestamp string. Used by the dashboard 'Mark Called' button."""
+    """UPDATE last_called_at = now() and return the resulting timestamp
+    string. Used by the dashboard 'Mark Called' button. Writes to
+    lead_contacts (keyed by case_number+track) except for the cd/gp tracks,
+    which write their own isolated table (keyed by case_number only)."""
     now_iso = datetime.now(timezone.utc).isoformat()
+    isolated_table = _ISOLATED_TRACK_TABLES.get(track)
+
+    if isolated_table:
+        def _update_isolated() -> str:
+            _execute_with_retry(
+                _client.table(isolated_table)
+                .update({"last_called_at": now_iso})
+                .eq("case_number", case_number),
+                "mark lead called (isolated)",
+            )
+            return now_iso
+        return await asyncio.to_thread(_update_isolated)
 
     def _update() -> str:
         _execute_with_retry(
@@ -664,6 +820,28 @@ async def write_run_metrics(metrics: dict) -> None:
 
 
 async def set_bland_status(case_number: str, track: str, status: str, call_id: str | None = None) -> None:
+    isolated_table = _ISOLATED_TRACK_TABLES.get(track)
+    if isolated_table:
+        # cosner_filings / garnishment_orders have no bland_status column (only
+        # bland_call_id + bland_triggered_at) and no track column — case_number
+        # is the PK. "skipped" has no dedicated status column there either, so
+        # it's recorded as skipped_at (added alongside last_called_at in
+        # migration 030 for the search page's Mark Called/Skip actions).
+        def _update_isolated() -> None:
+            payload: dict = {}
+            if status == "skipped":
+                payload["skipped_at"] = datetime.now(timezone.utc).isoformat()
+            if call_id:
+                payload["bland_call_id"] = call_id
+                payload["bland_triggered_at"] = datetime.now(timezone.utc).isoformat()
+            if payload:
+                _execute_with_retry(
+                    _client.table(isolated_table).update(payload).eq("case_number", case_number),
+                    "set bland status (isolated)",
+                )
+        await asyncio.to_thread(_update_isolated)
+        return
+
     col_status = "bland_status" if track == "ec" else "ng_bland_status"
     col_call_id = "bland_call_id" if track == "ec" else "ng_bland_call_id"
     def _update() -> None:

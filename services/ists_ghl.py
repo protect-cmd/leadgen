@@ -204,8 +204,18 @@ async def push_contact(rec: dict, dry_run: bool = False) -> str | None:
     return contact_id
 
 
+# Match the Bland dialer's freshness window. Without this gate push_batch would
+# enroll the entire enriched-but-unpushed backlog (incl. months-old judgments) into
+# GHL/SMS while Bland correctly skips them — exactly what happened 2026-06-30 (136
+# stale March judgments swept into the SMS drip). See feedback_ists_freshness_gate.
+_FRESHNESS_DAYS = 14
+
+
 async def push_batch(limit: int = 50, dry_run: bool = False) -> dict:
-    """Push up to `limit` enriched, unpushed records to GHL ISTS subaccount."""
+    """Push up to `limit` enriched, unpushed, FRESH records to GHL ISTS subaccount."""
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=_FRESHNESS_DAYS)).isoformat()
+
     def _fetch() -> list[dict]:
         return (
             _client.table(_TABLE)
@@ -213,6 +223,7 @@ async def push_batch(limit: int = 50, dry_run: bool = False) -> dict:
                     "judgment_date,judgment_against,plaintiff_name,estimated_rent,state,county,window_tag")
             .not_.is_("phone", "null")
             .is_("ghl_contact_id", "null")
+            .gte("judgment_date", cutoff)
             .limit(limit)
             .execute()
             .data or []

@@ -178,7 +178,7 @@ class TestMiamiDadeScraper:
             "<td>05/07/2026</td>"
             "<td>RE</td>"
             "<td>Acme LLC</td>"
-            "<td>John Doe</td>"
+            "<td>Maria Gonzalez</td>"
             "<td>100 Oak Ave, Miami FL 33101</td>"
             "</tr>"
             "</tbody></table></body></html>"
@@ -191,7 +191,27 @@ class TestMiamiDadeScraper:
         assert f.county == "Miami-Dade"
         assert f.filing_date == date(2026, 5, 7)
         assert f.landlord_name == "Acme LLC"
-        assert f.tenant_name == "John Doe"
+        assert f.tenant_name == "Maria Gonzalez"
+
+    def test_parse_html_results_placeholder_tenant_becomes_unknown(self):
+        """A placeholder defendant (e.g. "John Doe") must not survive as a lead;
+        clean_tenant_name strips it and we fall back to "Unknown", not the raw."""
+        scraper = MiamiDadeScraper(lookback_days=2)
+        html = (
+            "<html><body><table><tbody>"
+            "<tr>"
+            "<td>2026-CC-002</td>"
+            "<td>05/07/2026</td>"
+            "<td>RE</td>"
+            "<td>Acme LLC</td>"
+            "<td>John Doe</td>"
+            "<td>100 Oak Ave, Miami FL 33101</td>"
+            "</tr>"
+            "</tbody></table></body></html>"
+        )
+        result = scraper._parse_html_results(html, date(2026, 5, 9))
+        assert len(result) == 1
+        assert result[0].tenant_name == "Unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -303,12 +323,12 @@ class TestHillsboroughScraper:
         async def fake_close():
             pass
 
-        async def fake_ui(page, start, today):
+        async def fake_search(page, start, today):
             return expected
 
         monkeypatch.setattr(scraper, "_launch_browser", fake_launch)
         monkeypatch.setattr(scraper, "_close_browser", fake_close)
-        monkeypatch.setattr(scraper, "_search_via_ui", fake_ui)
+        monkeypatch.setattr(scraper, "_run_search", fake_search)
 
         filings = await scraper.scrape()
 
@@ -366,23 +386,31 @@ class TestHillsboroughScraper:
         async def fake_close():
             pass
 
-        async def fake_ui(page, start, today):
+        async def fake_search(page, start, today):
             return []
 
         monkeypatch.setattr(scraper, "_launch_browser", fake_launch)
         monkeypatch.setattr(scraper, "_close_browser", fake_close)
-        monkeypatch.setattr(scraper, "_search_via_ui", fake_ui)
+        monkeypatch.setattr(scraper, "_run_search", fake_search)
 
         filings = await scraper.scrape()
         assert filings == []
 
-    def test_cells_to_filing_valid_row(self):
-        """_cells_to_filing produces a Filing from a well-formed row."""
+    def test_grid_row_to_filing_valid_row(self):
+        """_grid_row_to_filing produces a Filing from a results-grid row."""
         scraper = HillsboroughScraper(lookback_days=2)
-        cells = ["2026-CC-777", "05/08/2026", "Tampa Realty LLC", "Sue Renter", "300 Elm St"]
-        filing = scraper._cells_to_filing(cells, date(2026, 5, 9))
+        row = {
+            "case_number": "2026-CC-777",
+            "case_style": "Tampa Realty LLC VS Renter, Sue",
+            "filed": "05/08/2026",
+            "case_type": "LT Residential Eviction",
+        }
+        filing = scraper._grid_row_to_filing(row, date(2026, 5, 9))
         assert filing is not None
         assert filing.case_number == "2026-CC-777"
+        assert filing.landlord_name == "Tampa Realty LLC"
+        assert "Renter" in filing.tenant_name
+        assert filing.filing_date == date(2026, 5, 8)
         assert filing.state == "FL"
         assert filing.county == "Hillsborough"
 

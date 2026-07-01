@@ -63,7 +63,8 @@ def _language_hint(first: str, last: str) -> str:
 _FRESHNESS_DAYS = 14  # only enrich records within this many days of today
 
 
-async def enrich_batch(limit: int = 50, dry_run: bool = False) -> dict:
+async def enrich_batch(limit: int = 50, dry_run: bool = False,
+                       max_found: int | None = None) -> dict:
     """Enrich up to `limit` unenriched ists_judgments records with SearchBug.
 
     Freshness gate: only processes records where judgment_date >= today - 14 days.
@@ -140,7 +141,20 @@ async def enrich_batch(limit: int = 50, dry_run: bool = False) -> dict:
             address=address,
         )
 
-        phone = result.phone if result.status in ("phone_found", "name_mismatch") else None
+        # SearchBug credit depletion: the vendor circuit-breaker returns account_error
+        # with no charge. STOP before stamping enriched_at — otherwise we burn fresh
+        # leads (mark them attempted at 0% hit) and lock them out of future retries.
+        if result.status == "account_error":
+            log.warning("ISTS enrich: SearchBug account_error (credits depleted) — "
+                        "stopping at %d paid hits, not burning remaining leads",
+                        metrics["phone_found"])
+            metrics["depleted"] = True
+            break
+
+        # ists_judgments has no searchbug_status column, so a name_mismatch phone
+        # would be indistinguishable from a clean hit and get auto-dialed by
+        # ists_bland. Never store it — TCPA/wrong-party hold. (We still paid for it.)
+        phone = result.phone if result.status == "phone_found" else None
         now = datetime.now(timezone.utc).isoformat()
 
         def _update(case=case_number, p=phone, h=hint, t=now, rnt=rent):
@@ -164,5 +178,9 @@ async def enrich_batch(limit: int = 50, dry_run: bool = False) -> dict:
         else:
             metrics["errors"] += 1
             log.warning("ISTS enrich: %s %s (%s %s)", result.status, case_number, first, last)
+
+        if max_found and metrics["phone_found"] >= max_found:
+            log.info("ISTS enrich: budget cap reached (%d paid hits)", metrics["phone_found"])
+            break
 
     return metrics

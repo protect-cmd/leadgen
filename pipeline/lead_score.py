@@ -10,12 +10,21 @@ from datetime import date
 
 from services.name_utils import clean_tenant_name, is_common_surname, parse_name
 
-# Weight profiles (rent/match/fresh must sum to 100) + rent floor/cap per track.
+# Weight profiles (w_rent/w_match/w_fresh must sum to 100) + value floor/cap per
+# business. NOTE: `rent`/`rent_floor`/`rent_cap` are really the VALUE-AMOUNT
+# dimension — market rent for eviction businesses, debt amount for Cosner, and
+# unused (w_rent=0) for Garnish Proof which has no amount.
 _PROFILES = {
     "vantage": dict(w_rent=50, w_match=30, w_fresh=20, rent_floor=800.0, rent_cap=3500.0),
     # ISTS: judgments don't time-decay like pre-court filings and cluster near the
     # rent floor, so drop freshness (-> rent+match) and lower the floor for spread.
     "ists":    dict(w_rent=60, w_match=40, w_fresh=0,  rent_floor=1200.0, rent_cap=3500.0),
+    # Cosner (debt x filed): value = debt amount; freshness matters (the ~30-day
+    # Answer window before default judgment). Floor/cap span typical debt-claim sizes.
+    "cosner":  dict(w_rent=50, w_match=30, w_fresh=20, rent_floor=1000.0, rent_cap=25000.0),
+    # Garnish Proof (debt x judgment): no amount dimension, so weight name match +
+    # writ freshness only (freshest writ = most urgent exemption window).
+    "garnish_proof": dict(w_rent=0, w_match=50, w_fresh=50, rent_floor=0.0, rent_cap=1.0),
 }
 _COMMON_SURNAME_FACTOR = 0.55
 

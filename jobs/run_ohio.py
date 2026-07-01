@@ -17,6 +17,7 @@ from scrapers.ohio.barberton import BarbertonMunicipalScraper
 from scrapers.ohio.butler import ButlerCountyAreaCourtScraper
 from scrapers.ohio.franklin import FranklinCountyMunicipalScraper
 from scrapers.ohio.hamilton import HamiltonCountyMunicipalScraper
+from scrapers.ohio.lorain import ElyriaMunicipalScraper
 from scrapers.ohio.montgomery import MontgomeryCountyMunicipalScraper
 from services import notification_service
 
@@ -34,6 +35,7 @@ class OhioRunSummary:
     montgomery_filings: int
     barberton_filings: int
     butler_filings: int
+    lorain_filings: int
     piped: bool
     wrote_supabase: bool = False
 
@@ -45,6 +47,7 @@ class OhioRunSummary:
             + self.montgomery_filings
             + self.barberton_filings
             + self.butler_filings
+            + self.lorain_filings
         )
 
     def to_lines(self) -> list[str]:
@@ -60,6 +63,7 @@ class OhioRunSummary:
             f"Montgomery Municipal (Dayton): {self.montgomery_filings} filings",
             f"Barberton Municipal (Summit): {self.barberton_filings} filings",
             f"Butler Area Courts (Oxford/Hamilton/West Chester): {self.butler_filings} filings",
+            f"Elyria Municipal (Lorain): {self.lorain_filings} filings",
             f"Total: {self.total_filings}",
             runner_line,
         ]
@@ -78,6 +82,7 @@ async def main(
     run_montgomery = not counties or "montgomery" in counties
     run_barberton = not counties or "barberton" in counties or "summit" in counties
     run_butler = not counties or "butler" in counties
+    run_lorain = not counties or "lorain" in counties
 
     log.info("Starting Ohio %s", "pipeline run" if pipe else "scraper-only proof")
 
@@ -121,6 +126,16 @@ async def main(
         except Exception as e:
             log.error("Ohio / Butler: unexpected error: %s", e, exc_info=True)
 
+    lorain_filings: list[Filing] = []
+    if run_lorain:
+        scraper = ElyriaMunicipalScraper(lookback_days=lookback_days)
+        try:
+            lorain_filings = scraper.scrape()
+        except Exception as e:
+            log.error("Ohio / Lorain: unexpected error: %s", e, exc_info=True)
+
+    inserted: int | None = None
+    duplicates: int | None = None
     if yes_write_supabase:
         from services import dedup_service
         all_filings = (
@@ -129,6 +144,7 @@ async def main(
             + montgomery_filings
             + barberton_filings
             + butler_filings
+            + lorain_filings
         )
         inserted = duplicates = 0
         for filing in all_filings:
@@ -162,12 +178,17 @@ async def main(
         from pipeline import runner as pipeline_runner
         await pipeline_runner.run(butler_filings, state="OH", county="Butler")
 
+    if pipe and lorain_filings:
+        from pipeline import runner as pipeline_runner
+        await pipeline_runner.run(lorain_filings, state="OH", county="Lorain")
+
     summary = OhioRunSummary(
         franklin_filings=len(franklin_filings),
         hamilton_filings=len(hamilton_filings),
         montgomery_filings=len(montgomery_filings),
         barberton_filings=len(barberton_filings),
         butler_filings=len(butler_filings),
+        lorain_filings=len(lorain_filings),
         piped=pipe,
         wrote_supabase=yes_write_supabase,
     )
@@ -176,10 +197,15 @@ async def main(
     print(message)
 
     if notify:
-        await notification_service.send_alert(
-            "Ohio run",
-            message,
-            tags={"mode": "pipeline" if pipe else "scraper-only"},
+        # Per-court breakdown (lines between the header and the Total/runner lines).
+        breakdown = summary.to_lines()[1:7]
+        await notification_service.send_scrape_summary(
+            source="Ohio",
+            scraped=summary.total_filings,
+            inserted=inserted,
+            duplicates=duplicates,
+            piped=pipe,
+            breakdown=breakdown,
         )
 
     log.info("Ohio run complete")
@@ -190,7 +216,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Run Ohio eviction scrapers "
-            "(Franklin + Hamilton + Montgomery + Barberton + Butler). "
+            "(Franklin + Hamilton + Montgomery + Barberton + Butler + Lorain). "
             "Default: scraper-only proof. "
             "Use --yes-write-supabase to insert filings into Supabase (no pipeline). "
             "Use --pipe to send filings through the BatchData enrichment pipeline."
@@ -202,7 +228,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         help=(
             "Comma-separated counties to run: "
-            "franklin, hamilton, montgomery, barberton/summit, butler. "
+            "franklin, hamilton, montgomery, barberton/summit, butler, lorain. "
             "Default: all."
         ),
     )

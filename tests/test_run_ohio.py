@@ -55,6 +55,22 @@ class FakeBarbertonScraper:
         return []
 
 
+class FakeButlerScraper:
+    def __init__(self, *, lookback_days: int):
+        self.lookback_days = lookback_days
+
+    def scrape(self) -> list[Filing]:
+        return []
+
+
+class FakeLorainScraper:
+    def __init__(self, *, lookback_days: int):
+        self.lookback_days = lookback_days
+
+    def scrape(self) -> list[Filing]:
+        return [_make_filing("LR-001", "Lorain", "240 4TH ST APT A304, ELYRIA, OH 44035")]
+
+
 class EmptyScraper:
     def __init__(self, *, lookback_days: int):
         pass
@@ -74,6 +90,8 @@ def test_summary_scraper_only_mode():
         hamilton_filings=2,
         montgomery_filings=0,
         barberton_filings=0,
+        butler_filings=0,
+        lorain_filings=0,
         piped=False,
     )
     lines = summary.to_lines()
@@ -93,6 +111,8 @@ def test_summary_pipeline_mode():
         hamilton_filings=3,
         montgomery_filings=0,
         barberton_filings=0,
+        butler_filings=0,
+        lorain_filings=0,
         piped=True,
     )
     lines = summary.to_lines()
@@ -111,6 +131,8 @@ async def test_main_scraper_only_returns_correct_counts(monkeypatch, capsys):
     monkeypatch.setattr(run_ohio, "HamiltonCountyMunicipalScraper", FakeHamiltonScraper)
     monkeypatch.setattr(run_ohio, "MontgomeryCountyMunicipalScraper", FakeMontgomeryScraper)
     monkeypatch.setattr(run_ohio, "BarbertonMunicipalScraper", FakeBarbertonScraper)
+    monkeypatch.setattr(run_ohio, "ButlerCountyAreaCourtScraper", FakeButlerScraper)
+    monkeypatch.setattr(run_ohio, "ElyriaMunicipalScraper", EmptyScraper)
 
     summary = await run_ohio.main(pipe=False)
 
@@ -230,6 +252,8 @@ async def test_both_counties_piped_when_pipe_flag(monkeypatch):
     monkeypatch.setattr(run_ohio, "HamiltonCountyMunicipalScraper", FakeHamiltonScraper)
     monkeypatch.setattr(run_ohio, "MontgomeryCountyMunicipalScraper", FakeMontgomeryScraper)
     monkeypatch.setattr(run_ohio, "BarbertonMunicipalScraper", FakeBarbertonScraper)
+    monkeypatch.setattr(run_ohio, "ButlerCountyAreaCourtScraper", FakeButlerScraper)
+    monkeypatch.setattr(run_ohio, "ElyriaMunicipalScraper", EmptyScraper)
 
     import pipeline.runner as pipeline_runner
     monkeypatch.setattr(pipeline_runner, "run", fake_pipeline_run)

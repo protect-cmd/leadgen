@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from services.name_utils import parse_name
-from services.searchbug_service import query_street_address, search_tenant_detailed
+from services.searchbug_service import query_full_street_address, search_tenant_detailed
 
 
 def split_address(addr: str) -> dict[str, str]:
@@ -127,7 +127,7 @@ async def enrich_row(row: dict[str, str], index: int) -> dict[str, Any]:
         "query_city": addr["city"],
         "query_state": addr["state"],
         "query_zip": addr["zipcode"],
-        "query_address": query_street_address(row["property_address"]),
+        "query_address": query_full_street_address(row["property_address"]),
     }
     if not first or not last:
         return {

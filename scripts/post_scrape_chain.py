@@ -27,8 +27,12 @@ log = logging.getLogger("post_scrape_chain")
 
 
 def _flag() -> None:
+    # Full re-evaluation (not only_null): writes only changed rows but re-checks
+    # every filing, so a stuck is_enrichable=FALSE (raw-push pre-classification, or
+    # any later reclassification) self-heals on the next chain run instead of
+    # needing a manual backfill. See scripts/flag_enrichable.flag().
     from scripts.flag_enrichable import flag
-    res = flag(only_null=True)
+    res = flag()
     log.info("flag_enrichable: %s", res)
 
 
@@ -37,19 +41,39 @@ def _normalize() -> None:
     normalize_main()
 
 
+def _backfill_rent_hud() -> None:
+    """Free, always-on baseline rent for every lead from the HUD SAFMR table
+    (ZIP -> 2BR). Only fills estimated_rent IS NULL, so it never clobbers a
+    Rentometer value. This is what makes non-Texas tracks (e.g. Ohio) rankable —
+    they're raw-pushed and otherwise have no rent signal."""
+    from scripts.backfill_rent_hud import main as hud_main
+    hud_main(["--track", "both", "--write"])
+
+
 def _backfill_rent(cap: int) -> None:
     if cap <= 0:
-        log.info("rent backfill skipped (RENT_BACKFILL_DAILY_CAP=%s)", cap)
+        log.info("rent backfill (Rentometer) skipped (RENT_BACKFILL_DAILY_CAP=%s)", cap)
         return
     from scripts.backfill_rent import main as rent_main
     rent_main(["--track", "both", "--cap", str(cap)])
+
+
+def _health() -> None:
+    """Run the pipeline health checks and push a Pushover summary. This is what
+    makes monitoring reliable: it runs every day at the end of the post-scrape
+    chain instead of being a manual one-shot."""
+    import asyncio
+    from scripts.verify_pipeline_health import notify_health
+    fails = asyncio.run(notify_health())
+    log.info("pipeline health: %s FAIL", fails)
 
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO)
     cap = int(os.getenv("RENT_BACKFILL_DAILY_CAP", "0"))
     steps = (("flag", _flag), ("normalize", _normalize),
-             ("rent", lambda: _backfill_rent(cap)))
+             ("rent_hud", _backfill_rent_hud),
+             ("rent", lambda: _backfill_rent(cap)), ("health", _health))
     failed = 0
     for name, fn in steps:
         try:

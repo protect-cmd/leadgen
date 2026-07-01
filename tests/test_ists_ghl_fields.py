@@ -28,6 +28,45 @@ class _Client:
         return _Resp()
 
 
+class _Query:
+    def __init__(self):
+        self.calls = []
+
+    def select(self, value):
+        self.calls.append(("select", value))
+        return self
+
+    @property
+    def not_(self):
+        self.calls.append(("not_",))
+        return self
+
+    def is_(self, column, value):
+        self.calls.append(("is_", column, value))
+        return self
+
+    def gte(self, column, value):
+        self.calls.append(("gte", column, value))
+        return self
+
+    def limit(self, value):
+        self.calls.append(("limit", value))
+        return self
+
+    def execute(self):
+        self.calls.append(("execute",))
+        return type("Resp", (), {"data": []})()
+
+
+class _SB:
+    def __init__(self, query):
+        self.query = query
+
+    def table(self, name):
+        self.query.calls.append(("table", name))
+        return self.query
+
+
 @pytest.mark.asyncio
 async def test_ists_push_contact_populates_rent_case_landlord_judgment(monkeypatch):
     from services import ists_ghl
@@ -84,3 +123,20 @@ async def test_ists_push_contact_uses_window_2_when_record_is_w2(monkeypatch):
     assert "W2" in tags and "W1" not in tags
     cf = {c["id"]: c["field_value"] for c in captured["payload"]["customFields"]}
     assert cf[ists_ghl._FIELD_IDS["situation"]] == "Judgment entered — Window 2"
+
+
+@pytest.mark.asyncio
+async def test_ists_push_batch_applies_judgment_freshness_gate(monkeypatch):
+    from datetime import date, timedelta
+
+    from services import ists_ghl
+
+    query = _Query()
+    monkeypatch.setattr(ists_ghl, "_client", _SB(query))
+    monkeypatch.setattr(ists_ghl, "_FRESHNESS_DAYS", 14)
+
+    await ists_ghl.push_batch(limit=7, dry_run=True)
+
+    cutoff = (date.today() - timedelta(days=14)).isoformat()
+    assert ("gte", "judgment_date", cutoff) in query.calls
+    assert ("limit", 7) in query.calls

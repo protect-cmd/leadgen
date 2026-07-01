@@ -38,6 +38,25 @@ SELECTOR_SUBMIT = "input#submitBtn"                # type="button", needs JS cli
 COURT_ALL = "300"
 FORMAT_CSV = "csv"
 
+
+def query_dates(today: date, lookback_days: int) -> list[date]:
+    """Business days to query individually, newest first.
+
+    The Harris JP portal returns ONLY the fdate (start-date) day's batch even
+    when a wider range is submitted — so a single range query silently drops
+    every day except the anchor. We instead enumerate each weekday in
+    [today - lookback_days, today] and query them one at a time; downstream
+    dedup absorbs the overlap when runs cover the same day twice. Weekends are
+    skipped (JP courts don't file then); holidays like Juneteenth just return
+    an empty extract, which is harmless.
+    """
+    days: list[date] = []
+    for offset in range(0, lookback_days + 1):
+        d = today - timedelta(days=offset)
+        if d.weekday() < 5:  # Mon–Fri
+            days.append(d)
+    return days
+
 # ---------------------------------------------------------------------------
 # Confirmed CSV field names (verified 2026-05-01)
 # Note: several headers have trailing spaces — strip when reading
@@ -68,75 +87,107 @@ class HarrisCountyScraper(BaseScraper):
     present.
     """
 
-    def __init__(self, headless: bool = True, lookback_days: int = 1):
+    def __init__(self, headless: bool = True, lookback_days: int = 1,
+                 casetype: str = "eviction", extract_text: str | None = None):
         super().__init__(headless=headless)
         self.lookback_days = lookback_days
+        # casetype: the JP "Case Type" to pull (e.g. "eviction" for Vantage,
+        # "debt claim" for Cosner Drake). Used for both the form dropdown and
+        # the per-row Case Type filter.
+        self.casetype = casetype.strip().lower()
+        # extract_text: when set, the "Extract" dropdown is selected by exact
+        # option text (e.g. "cases filed"); otherwise the first non-placeholder
+        # option is used (the legacy eviction behavior).
+        self.extract_text = extract_text
 
     async def scrape(self) -> list[Filing]:
         page = await self._launch_browser()
         filings: list[Filing] = []
+        seen: set[str] = set()
 
         today = court_today(COURT_TIMEZONE)
-        start = today - timedelta(days=self.lookback_days)
-        start_str = start.strftime("%m/%d/%Y")
-        end_str = today.strftime("%m/%d/%Y")
+        days = query_dates(today, self.lookback_days)
+        if not days:
+            log.info("Harris County: no weekdays in lookback window — nothing to query")
+            await self._close_browser()
+            return filings
 
         try:
-            log.info(f"Harris County: fetching extract {start_str} → {end_str}")
+            log.info(
+                f"Harris County: querying {len(days)} day(s) individually "
+                f"({days[-1].strftime('%m/%d/%Y')} … {days[0].strftime('%m/%d/%Y')}) "
+                "— portal returns one fdate-day batch per request"
+            )
             await page.goto(PORTAL_URL, wait_until="networkidle")
 
             # Step 1 — select Civil
             await page.click(SELECTOR_RADIO_CIVIL)
             await page.wait_for_timeout(800)
 
-            # Step 2 — pick extract type (first non-placeholder option after CV loads)
+            # Step 2 — pick extract type. When extract_text is set, match it by
+            # exact option text (e.g. "cases filed"); otherwise take the first
+            # non-placeholder option (legacy eviction behavior).
             extract_opts = await page.eval_on_selector_all(
                 f"{SELECTOR_EXTRACT} option",
                 "els => els.map(o => ({value: o.value, text: o.innerText}))",
             )
-            eviction_val = next(
-                (o["value"] for o in extract_opts if o["value"] != "0"),
-                None,
-            )
-            if not eviction_val:
-                raise RuntimeError("No extract options loaded after selecting Civil")
-            await page.select_option(SELECTOR_EXTRACT, value=eviction_val)
+            if self.extract_text:
+                want = self.extract_text.strip().lower()
+                extract_val = next(
+                    (o["value"] for o in extract_opts
+                     if o["text"].strip().lower() == want),
+                    None,
+                )
+                if not extract_val:
+                    raise RuntimeError(f"Extract option {self.extract_text!r} not found")
+            else:
+                extract_val = next(
+                    (o["value"] for o in extract_opts if o["value"] != "0"),
+                    None,
+                )
+                if not extract_val:
+                    raise RuntimeError("No extract options loaded after selecting Civil")
+            await page.select_option(SELECTOR_EXTRACT, value=extract_val)
             await page.wait_for_timeout(600)
 
             # Step 3 — All Courts
             await page.select_option(SELECTOR_COURT, value=COURT_ALL)
             await page.wait_for_timeout(400)
 
-            # Step 4 — Case type: pick first available (Eviction only extract)
+            # Step 4 — Case type: match the configured casetype by option text.
             casetype_opts = await page.eval_on_selector_all(
                 f"{SELECTOR_CASETYPE} option",
                 "els => els.map(o => ({value: o.value, text: o.innerText}))",
             )
             ct_val = next(
-                (o["value"] for o in casetype_opts if o["text"].strip().lower() == "eviction"),
+                (o["value"] for o in casetype_opts
+                 if o["text"].strip().lower() == self.casetype),
                 "0",
             )
             if ct_val == "0":
-                raise RuntimeError("Eviction case type option not found")
+                raise RuntimeError(f"Case type {self.casetype!r} option not found")
             await page.select_option(SELECTOR_CASETYPE, value=ct_val)
             await page.wait_for_timeout(300)
 
-            # Step 5 — CSV format
+            # Step 5 — CSV format (form dropdowns persist across submits, so set once)
             await page.select_option(SELECTOR_FORMAT, value=FORMAT_CSV)
 
-            # Step 6 — date range
-            await page.fill(SELECTOR_FDATE, start_str)
-            await page.fill(SELECTOR_TDATE, end_str)
-
-            # Step 7 — submit (type="button", must use click not form submit)
-            # 5min timeout: the portal can be very slow generating large CSV exports,
-            # especially mid-day. Previous 60s timeout was too aggressive.
-            async with page.expect_download(timeout=300_000) as dl_info:
-                await page.click(SELECTOR_SUBMIT)
-
-            download: Download = await dl_info.value
-            csv_text = await self._read_download(download)
-            filings = self._parse_csv(csv_text)
+            # Step 6/7 — one fdate-anchored download per day, deduped by case number
+            for day in days:
+                day_str = day.strftime("%m/%d/%Y")
+                try:
+                    day_filings = await self._download_day(page, day_str)
+                except Exception as e:  # one bad day shouldn't lose the rest
+                    log.error(f"Harris {day_str}: download failed — {e}")
+                    continue
+                added = 0
+                for f in day_filings:
+                    if f.case_number in seen:
+                        continue
+                    seen.add(f.case_number)
+                    filings.append(f)
+                    added += 1
+                log.info(f"Harris {day_str}: {len(day_filings)} rows, {added} new")
 
         except Exception as e:
             log.error(f"Harris County scrape failed: {e}", exc_info=True)
@@ -147,6 +198,20 @@ class HarrisCountyScraper(BaseScraper):
         return filings
 
     # ------------------------------------------------------------------
+
+    async def _download_day(self, page, day_str: str) -> list[Filing]:
+        """Fill fdate=tdate=day, submit, and parse the single-day extract.
+
+        5min timeout: the portal can be very slow generating CSV exports,
+        especially mid-day.
+        """
+        await page.fill(SELECTOR_FDATE, day_str)
+        await page.fill(SELECTOR_TDATE, day_str)
+        async with page.expect_download(timeout=300_000) as dl_info:
+            await page.click(SELECTOR_SUBMIT)
+        download: Download = await dl_info.value
+        csv_text = await self._read_download(download)
+        return self._parse_csv(csv_text)
 
     @staticmethod
     async def _read_download(download: Download) -> str:
@@ -163,8 +228,8 @@ class HarrisCountyScraper(BaseScraper):
 
         for row in reader:
             try:
-                # The extract may include non-eviction civil cases
-                if row.get(F_CASE_TYPE, "").strip().lower() != "eviction":
+                # The extract may include other civil case types — keep only ours
+                if row.get(F_CASE_TYPE, "").strip().lower() != self.casetype:
                     continue
 
                 case_number = row[F_CASE_NUMBER].strip()
@@ -184,7 +249,13 @@ class HarrisCountyScraper(BaseScraper):
                 hearing_raw = row.get(F_HEARING_DATE, "").strip()
                 court_date = self._parse_date(hearing_raw) if hearing_raw else None
 
-                notice_type = row.get(F_CAUSE, "Forcible Detainer").strip()
+                # Cause of Action when present; otherwise fall back to the Case
+                # Type so non-eviction extracts (e.g. Debt Claim) aren't mislabeled.
+                notice_type = (
+                    row.get(F_CAUSE, "").strip()
+                    or row.get(F_CASE_TYPE, "").strip()
+                    or "Forcible Detainer"
+                )
 
                 claim_amount = self._parse_claim_amount(
                     row.get(F_CLAIM_AMOUNT, "").strip()
