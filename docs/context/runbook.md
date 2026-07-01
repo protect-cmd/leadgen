@@ -9,10 +9,11 @@ whole chain finishes before 13:00. `services/daily_scheduler.py::SCHEDULED_JOBS`
 
 ```
 10:30 texas (Harris)        11:35 ohio_barberton(Summit)   12:20 ists_harris
-10:50 tennessee (Davidson)  11:40 florida_duval            12:25 ists_franklin
-11:10 arizona (Maricopa)    11:50 ohio_franklin_raw        12:40 post_scrape_chain (+health/Pushover)
-11:20 ohio_lorain           12:10 ohio_hamilton            12:50 cosner_drake
-11:25 ohio_butler           12:15 ohio_montgomery
+10:45 indiana_mycase        11:40 florida_duval            12:25 ists_franklin
+10:50 tennessee (Davidson)  11:50 ohio_franklin_raw        12:40 post_scrape_chain (+health/Pushover)
+11:10 arizona (Maricopa)    12:10 ohio_hamilton            12:45 cosner_sarasota
+11:20 ohio_lorain           12:15 ohio_montgomery          12:50 cosner_drake
+11:25 ohio_butler                                          12:55 indiana_debt
 ```
 Test `test_daily_scheduler` asserts every job starts < 13:00 UTC. `post_scrape_chain` =
 flag_enrichable (full re-eval, self-healing) → normalize_court_date → **rent_hud** (free HUD

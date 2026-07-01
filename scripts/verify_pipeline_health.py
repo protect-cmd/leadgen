@@ -243,6 +243,7 @@ SCHEDULED_JOB_COUNTIES: dict[str, tuple[str, str | None] | None] = {
     "ists_harris": None,
     "ists_franklin": None,
     "post_scrape_chain": None,
+    "cosner_sarasota": None,
     "cosner_drake": None,
     "indiana_debt": None,
 }
