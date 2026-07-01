@@ -14,7 +14,7 @@ CourtItemID 92 = Indiana statewide (all counties).
 
 Clients:
   VDG  — mode="filings"   — new EV filings in the last N days (default)
-  ISTS — mode="judgments" — EV cases with a judgment entry (TBD — stub only)
+  ISTS — mode="judgments" — EV cases with a judgment entry
 
 Pagination note: TotalResults is capped at 1001 by the portal. If we hit
 the cap, the date window is bisected recursively until each sub-window
@@ -62,6 +62,21 @@ _DEFENDANT_CODE = 2   # Party Connection: Tenant
 _PLAINTIFF_CODE = 3   # Party Connection: Landlord
 
 _EV_CASE_TYPE   = "EV - Evictions (Small Claims Docket)"
+
+# Judgment event description substrings for Indiana Odyssey EV cases.
+# Verified against real portal data (probe --inspect-events, 2026-07-01).
+# Actual event strings observed:
+#   'Final Partial Judgment entered'      — caught by "judgment"
+#   'Agreed Judgment Filed'               — caught by "judgment"
+#   'Prejudgment Order For Possession'    — caught by both "judgment" and "order for possession"
+#   'Order for Writ'                      — caught by "order for writ"
+#   'Writ for Property Issued'            — caught by "writ for property"
+_JUDGMENT_KEYWORDS = frozenset({
+    "judgment",           # Final Partial Judgment entered, Agreed Judgment Filed, Prejudgment Order For Possession
+    "order for possession",  # Prejudgment Order For Possession (belt-and-suspenders with "judgment")
+    "order for writ",     # Order for Writ (post-judgment execution step)
+    "writ for property",  # Writ for Property Issued (final execution)
+})
 
 _PAGE_SIZE          = 200
 _RESULTS_CAP        = 1001
@@ -137,6 +152,7 @@ class IndianaMyCaseScraper:
         self.mode = mode
         self._session: requests.Session | None = None
         self.last_error: str | None = None
+        self.notice_type: str = NOTICE_TYPE
 
     # ── Public interface ──────────────────────────────────────────────── #
 
@@ -343,6 +359,7 @@ class IndianaMyCaseScraper:
         if self.mode == "judgments" and not self._has_judgment(events):
             return None
 
+        j_date      = self._judgment_date(events) if self.mode == "judgments" else None
         filing_date = self._parse_date(file_date) if file_date else court_today(COURT_TIMEZONE)
         county      = self._extract_county(court_name)
 
@@ -355,9 +372,10 @@ class IndianaMyCaseScraper:
             court_date=hearing_dt,
             state=STATE,
             county=county,
-            notice_type=NOTICE_TYPE,
+            notice_type=self.notice_type,
             source_url=f"{_BASE_URL}#/vw/CaseSummary/{case_token}",
             claim_amount=None,
+            judgment_date=j_date,
         )
 
     # ── Party parsing ─────────────────────────────────────────────────── #
@@ -427,17 +445,41 @@ class IndianaMyCaseScraper:
     @staticmethod
     def _has_judgment(events: list[dict]) -> bool:
         """
-        ISTS mode stub — checks for common judgment description keywords.
-        Update once a real closed EV case is inspected.
+        Returns True if any event description matches a known Indiana judgment keyword.
+
+        Based on standard Tyler Technologies Odyssey event description patterns.
+        See _JUDGMENT_KEYWORDS for the full list.
         """
-        _KEYWORDS = {"judgment", "default judgment", "order", "final judgment"}
         for event in events:
             desc = (event.get("Description") or "").lower()
-            if any(kw in desc for kw in _KEYWORDS):
+            if any(kw in desc for kw in _JUDGMENT_KEYWORDS):
                 return True
         return False
 
+    @staticmethod
+    def _judgment_date(events: list[dict]) -> date | None:
+        """
+        Returns the EventDate of the first matching judgment event, or None.
+
+        Complements _has_judgment() — call after confirming a judgment exists.
+        EventDate is always present on Indiana Odyssey events (verified 2026-07-01).
+        """
+        for event in events:
+            desc = (event.get("Description") or "").lower()
+            if any(kw in desc for kw in _JUDGMENT_KEYWORDS):
+                raw = event.get("EventDate") or ""
+                if raw:
+                    try:
+                        return IndianaMyCaseScraper._parse_date(raw)
+                    except ValueError:
+                        pass
+        return None
+
     # ── Helpers ───────────────────────────────────────────────────────── #
+
+    # Indiana court names: "Lake Superior Court, Division 4", "Marion County",
+    # "Tippecanoe Superior Court 7", "Pike Township", etc.
+    # Strip everything from the first "Superior/Circuit/County/Township" keyword onwards.
 
     # Indiana court names: "Lake Superior Court, Division 4", "Marion County",
     # "Tippecanoe Superior Court 7", "Pike Township", etc.

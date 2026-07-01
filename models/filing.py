@@ -18,3 +18,4 @@ class Filing(BaseModel):
     # avoiding unnecessary BatchData calls for data we already have.
     claim_amount: float | None = None       # rent from CSV (TX)
     property_type_hint: str | None = None   # "residential" | "commercial" from CSV (TX)
+    judgment_date: date | None = None       # date judgment was entered (ISTS only)
