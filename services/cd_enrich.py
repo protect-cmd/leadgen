@@ -61,7 +61,8 @@ def _language_hint(last: str) -> str:
     return "spanish_likely" if _SPANISH_SURNAME_RE.search(last) else "english_likely"
 
 
-async def enrich_batch(limit: int = 50, dry_run: bool = False) -> dict:
+async def enrich_batch(limit: int = 50, dry_run: bool = False,
+                       max_found: int | None = None) -> dict:
     cutoff = (date.today() - timedelta(days=CD_FRESHNESS_DAYS)).isoformat()
 
     def _fetch() -> list[dict]:
@@ -118,6 +119,15 @@ async def enrich_batch(limit: int = 50, dry_run: bool = False) -> dict:
             first_name=first, last_name=last,
             city=city, state=state, postal=zip_, address=address,
         )
+        # SearchBug credit depletion: vendor circuit-breaker returns account_error with
+        # no charge. STOP before stamping enriched_at so we don't burn fresh leads.
+        if result.status == "account_error":
+            log.warning("CD enrich: SearchBug account_error (credits depleted) — "
+                        "stopping at %d paid hits, not burning remaining leads",
+                        metrics["phone_found"])
+            metrics["depleted"] = True
+            break
+
         phone = result.phone if result.status in ("phone_found", "name_mismatch") else None
         now = datetime.now(timezone.utc).isoformat()
 
@@ -147,5 +157,9 @@ async def enrich_batch(limit: int = 50, dry_run: bool = False) -> dict:
         else:
             metrics["errors"] += 1
             log.warning("CD enrich: %s %s (%s %s)", result.status, case_number, first, last)
+
+        if max_found and metrics["phone_found"] >= max_found:
+            log.info("CD enrich: budget cap reached (%d paid hits)", metrics["phone_found"])
+            break
 
     return metrics

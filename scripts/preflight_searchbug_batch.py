@@ -16,7 +16,7 @@ load_dotenv()
 
 from supabase import create_client
 from services.name_utils import parse_name, is_common_surname
-from services.searchbug_service import query_street_address
+from services.searchbug_service import query_full_street_address
 
 client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
 
@@ -104,7 +104,7 @@ def fetch_prior_artifacts() -> set[str]:
 
 def normalized_query(row: dict) -> str:
     first, last = parse_name(row.get("tenant_name") or "")
-    street = query_street_address(row.get("property_address") or "")
+    street = query_full_street_address(row.get("property_address") or "")
     return f"{first}|{last}|{street}|{row.get('property_zip') or ''}".lower()
 
 
@@ -130,7 +130,8 @@ def evaluate(row: dict, *, ng_phone_cases: set[str], prior: set[str],
         return "bad_name"
     if row["case_number"] in ng_phone_cases:
         return "existing_ng_phone"
-    if is_common_surname(last):
+    street = query_full_street_address(addr)
+    if is_common_surname(last) and not (street and (row.get("property_zip") or "")):
         return "surname_gate"
     if row["case_number"] in prior:
         return "prior_query"
@@ -179,7 +180,7 @@ def main():
     print(f"  Approved pool across all green sources: {len(pool)}")
     for src, r in pool[:10]:
         first, last = parse_name(r["tenant_name"])
-        addr = query_street_address(r["property_address"])
+        addr = query_full_street_address(r["property_address"])
         print(f"    {src[0]}/{src[1]} | {r['case_number']} | "
               f"{first} {last} | {addr} | {r.get('property_zip')}")
 

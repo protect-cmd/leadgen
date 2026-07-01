@@ -56,7 +56,7 @@ async def _fetch_filings(client, state: str, county: str, limit: int) -> list[di
 def _parse_address_fields(row: dict) -> tuple[str, str, str, str]:
     """Return (city, state, postal, street) as would be sent to SearchBug."""
     import re
-    from services.searchbug_service import query_street_address
+    from services.searchbug_service import query_full_street_address
 
     addr = row.get("property_address") or ""
     parts = [p.strip() for p in addr.split(",")]
@@ -68,7 +68,7 @@ def _parse_address_fields(row: dict) -> tuple[str, str, str, str]:
         if m:
             state = m.group(1).upper()
             postal = m.group(2)
-    street = query_street_address(addr)
+    street = query_full_street_address(addr)
     return city, state, postal, street
 
 

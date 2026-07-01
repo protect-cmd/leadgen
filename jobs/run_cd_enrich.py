@@ -23,7 +23,8 @@ log = logging.getLogger("cd.enrich")
 async def main(args: argparse.Namespace) -> None:
     if args.dry_run:
         log.info("=== DRY RUN — no SearchBug calls, no DB writes ===")
-    metrics = await enrich_batch(limit=args.limit, dry_run=args.dry_run)
+    metrics = await enrich_batch(limit=args.limit, dry_run=args.dry_run,
+                                 max_found=args.max_found)
     log.info("CD enrich metrics: %s", metrics)
 
 
@@ -31,4 +32,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Cosner Drake SearchBug enrichment")
     ap.add_argument("--dry-run", action="store_true", help="Print only; no SearchBug/DB writes")
     ap.add_argument("--limit", type=int, default=50, help="Max filings to enrich (default 50)")
+    ap.add_argument("--max-found", type=int, default=None,
+                    help="Stop after N paid phone hits (SearchBug $ budget cap)")
     asyncio.run(main(ap.parse_args()))

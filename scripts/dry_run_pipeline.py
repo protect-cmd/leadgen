@@ -74,7 +74,7 @@ async def _dry_run_one(
     from pipeline.qualification import classify_lead
     from pipeline import gates
     from services.name_utils import infer_property_type, parse_name
-    from services.searchbug_service import query_street_address
+    from services.searchbug_service import query_full_street_address
     from pipeline.qualification import extract_property_zip
     from services import llm_recovery_service
 
@@ -178,7 +178,7 @@ async def _dry_run_one(
 
     # In-run query dedup
     _first, _last = parse_name(filing.tenant_name)
-    _street = query_street_address(filing.property_address)
+    _street = query_full_street_address(filing.property_address)
     _zip = extract_property_zip(filing.property_address) or ""
     if not gates.gate_query_dedup(_first, _last, _street, _zip, seen_queries):
         counts["gate_duplicate_in_run"] += 1

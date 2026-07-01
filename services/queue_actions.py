@@ -71,6 +71,15 @@ def _summary(results: list[dict]) -> dict:
     return dict(Counter(r["status"] for r in results))
 
 
+def _is_searchbug_paid_hit(status: str | None) -> bool:
+    """Conservative SearchBug budget accounting.
+
+    SearchBug documents no charge when information is not found; match-like
+    outcomes may still be billable even when we reject them for outreach.
+    """
+    return status in {"phone_found", "name_mismatch", "ambiguous", "no_phone"}
+
+
 def _fetch_one(sb, table: str, case_number: str, select: str) -> dict | None:
     rows = (
         sb.table(table)
@@ -217,21 +226,21 @@ async def enrich_vantage_case(sb, case_number: str) -> dict:
         "case_number": case_number,
         "status": status,
         "phone_found": bool(contact.phone),
+        "paid_hit": _is_searchbug_paid_hit(status),
         "dnc_status": dnc_status,
     }
 
 
 async def enrich_ists_case(sb, case_number: str) -> dict:
-    from services import dnc_service
-    from services.ists_enrich import _language_hint, _parse_address_parts, _split_name
-    from services.searchbug_service import search_tenant_detailed
+    from services import batchdata_service, dnc_service
+    from services.ists_enrich import _language_hint, _split_name
 
     row = await asyncio.to_thread(
         _fetch_one,
         sb,
         "ists_judgments",
         case_number,
-        "case_number,defendant_name,property_address,state,county,phone",
+        "case_number,defendant_name,property_address,state,county,phone,judgment_date,estimated_rent",
     )
     if not row:
         return {"case_number": case_number, "status": "no_record"}
@@ -241,17 +250,18 @@ async def enrich_ists_case(sb, case_number: str) -> dict:
     first, last = _split_name(row.get("defendant_name") or "")
     if not first or not last:
         return {"case_number": case_number, "status": "invalid_name"}
-    city, state, zip_ = _parse_address_parts(row.get("property_address") or "")
+
+    filing = _filing_from_ists(row)
     hint = _language_hint(first, last)
-    result = await search_tenant_detailed(
-        first_name=first,
-        last_name=last,
-        city=city,
-        state=state or row.get("state") or "",
-        postal=zip_,
-        address=row.get("property_address") or "",
+    contact = await batchdata_service.enrich_tenant(
+        filing,
+        property_info=None,
+        lookup_property_if_missing=False,
     )
-    phone = result.phone if result.status == "phone_found" else None
+    status = contact.searchbug_status or "skipped"
+    # ISTS has no persisted SearchBug review lane yet. Accept only exact
+    # phone_found matches as usable; name_mismatch/ambiguous stay non-fireable.
+    phone = contact.phone if status == "phone_found" else None
     dnc_status = dnc_service.verdict(phone) if phone else None
     payload = {
         "enriched_at": datetime.now(timezone.utc).isoformat(),
@@ -271,8 +281,9 @@ async def enrich_ists_case(sb, case_number: str) -> dict:
     await asyncio.to_thread(_store)
     return {
         "case_number": case_number,
-        "status": result.status,
+        "status": status,
         "phone_found": bool(phone),
+        "paid_hit": _is_searchbug_paid_hit(status),
         "dnc_status": dnc_status,
     }
 

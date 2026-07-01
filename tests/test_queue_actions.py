@@ -2,7 +2,11 @@ import pytest
 from fastapi import HTTPException
 
 from dashboard.main import _case_numbers_required
-from services.queue_actions import limited_case_numbers, rent_cases_track
+from services.queue_actions import (
+    _is_searchbug_paid_hit,
+    limited_case_numbers,
+    rent_cases_track,
+)
 
 
 class Result:
@@ -63,6 +67,15 @@ def test_limited_case_numbers_dedupes_and_caps():
 
     assert cases == ["A", "B"]
     assert capped is True
+
+
+def test_searchbug_paid_hit_accounting_is_conservative():
+    assert _is_searchbug_paid_hit("phone_found") is True
+    assert _is_searchbug_paid_hit("name_mismatch") is True
+    assert _is_searchbug_paid_hit("ambiguous") is True
+    assert _is_searchbug_paid_hit("no_phone") is True
+    assert _is_searchbug_paid_hit("no_records") is False
+    assert _is_searchbug_paid_hit("skipped") is False
 
 
 def test_case_numbers_required_rejects_empty_payload():
@@ -210,6 +223,7 @@ async def test_enrich_vantage_reports_skipped_when_searchbug_not_called(monkeypa
     assert payload["summary"] == {"skipped": 1}
     assert payload["results"][0]["status"] == "skipped"
     assert payload["results"][0]["phone_found"] is False
+    assert payload["results"][0]["paid_hit"] is False
 
 
 @pytest.mark.asyncio
@@ -240,3 +254,82 @@ async def test_rent_cases_track_updates_ists_judgments(monkeypatch):
 
     assert payload["summary"] == {"rent_found": 1}
     assert sb.updates == [("ists_judgments", "ISTS1", {"estimated_rent": 1650.0})]
+
+
+@pytest.mark.asyncio
+async def test_enrich_ists_uses_guarded_searchbug_path(monkeypatch):
+    from models.contact import EnrichedContact
+    from services.queue_actions import enrich_cases_track
+
+    sb = FakeSupabase({
+        "ists_judgments": {
+            "ISTS1": {
+                "case_number": "ISTS1",
+                "defendant_name": "Jamie Tenant",
+                "property_address": "200 Oak St, Nashville, TN 37209",
+                "judgment_date": "2026-06-09",
+                "state": "TN",
+                "county": "Davidson",
+                "estimated_rent": 1650.0,
+                "phone": None,
+            }
+        }
+    })
+
+    async def fake_enrich_tenant(filing, **kwargs):
+        assert filing.tenant_name == "Jamie Tenant"
+        assert kwargs["lookup_property_if_missing"] is False
+        return EnrichedContact(
+            filing=filing,
+            track="ng",
+            phone="5551234567",
+            searchbug_status="phone_found",
+        )
+
+    monkeypatch.setattr("services.batchdata_service.enrich_tenant", fake_enrich_tenant)
+    monkeypatch.setattr("services.dnc_service.verdict", lambda phone: "callable")
+
+    payload = await enrich_cases_track(sb, ["ISTS1"], track="ists", cap=25)
+
+    assert payload["summary"] == {"phone_found": 1}
+    assert payload["results"][0]["dnc_status"] == "callable"
+    assert payload["results"][0]["paid_hit"] is True
+    assert sb.rows["ists_judgments"]["ISTS1"]["phone"] == "5551234567"
+
+
+@pytest.mark.asyncio
+async def test_enrich_ists_does_not_store_name_mismatch_phone(monkeypatch):
+    from models.contact import EnrichedContact
+    from services.queue_actions import enrich_cases_track
+
+    sb = FakeSupabase({
+        "ists_judgments": {
+            "ISTS1": {
+                "case_number": "ISTS1",
+                "defendant_name": "Jamie Tenant",
+                "property_address": "200 Oak St, Nashville, TN 37209",
+                "judgment_date": "2026-06-09",
+                "state": "TN",
+                "county": "Davidson",
+                "estimated_rent": 1650.0,
+                "phone": None,
+            }
+        }
+    })
+
+    async def fake_enrich_tenant(filing, **kwargs):
+        return EnrichedContact(
+            filing=filing,
+            track="ng",
+            phone="5559990000",
+            searchbug_status="name_mismatch",
+        )
+
+    monkeypatch.setattr("services.batchdata_service.enrich_tenant", fake_enrich_tenant)
+
+    payload = await enrich_cases_track(sb, ["ISTS1"], track="ists", cap=25)
+
+    assert payload["summary"] == {"name_mismatch": 1}
+    assert payload["results"][0]["phone_found"] is False
+    assert payload["results"][0]["paid_hit"] is True
+    assert sb.rows["ists_judgments"]["ISTS1"].get("phone") is None

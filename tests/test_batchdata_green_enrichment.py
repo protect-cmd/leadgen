@@ -220,8 +220,13 @@ async def test_green_unitized_address_uses_city_state_zip_tail(mock_cache, monke
     assert args[2] == "Nashville"
     assert args[3] == "TN"
     assert args[4] == "37209"
-    assert kwargs["address"] == "6680 Charlotte Pike"
+    assert kwargs["address"] == "6680 Charlotte Pike UNIT H2"
+    assert kwargs["strip_unit"] is False
     assert result.phone == "5559998888"
+    assert mock_cache.get(
+        "alajanae", "byrd", "nashville", "tn",
+        postal="37209", query_address="6680 Charlotte Pike UNIT H2",
+    ) == ("5559998888", None)
 
 
 @pytest.mark.asyncio

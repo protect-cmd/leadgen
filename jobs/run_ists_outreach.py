@@ -32,7 +32,8 @@ async def main(args: argparse.Namespace) -> None:
     # Step 1: SearchBug enrichment
     if not args.ghl_only and not args.bland_only:
         log.info("--- Step 1: SearchBug enrichment (limit=%d) ---", limit)
-        enrich_metrics = await enrich_batch(limit=limit, dry_run=dry)
+        enrich_metrics = await enrich_batch(limit=limit, dry_run=dry,
+                                            max_found=args.max_found)
         log.info("Enrich metrics: %s", enrich_metrics)
         if args.enrich_only:
             return
@@ -60,6 +61,8 @@ if __name__ == "__main__":
                     help="Print what would happen; no API writes")
     ap.add_argument("--limit", type=int, default=50,
                     help="Max records per step (default 50)")
+    ap.add_argument("--max-found", type=int, default=None,
+                    help="Stop enrichment after N paid phone hits (SearchBug $ budget cap)")
     ap.add_argument("--enrich-only", action="store_true",
                     help="Run SearchBug enrichment only")
     ap.add_argument("--ghl-only", action="store_true",
