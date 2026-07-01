@@ -41,6 +41,10 @@ _UNIT_SUFFIX_RE = re.compile(
     r"\s+(?:APT\.?|APARTMENT|UNIT|STE\.?|SUITE|#)\s*#?\s*[A-Z0-9-]+(?:\s.*)?$",
     re.IGNORECASE,
 )
+_UNIT_COMPONENT_RE = re.compile(
+    r"^(?:APT\.?|APARTMENT|UNIT|STE\.?|SUITE|#)\s*#?\s*[A-Z0-9-]+(?:\s.*)?$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -139,6 +143,15 @@ def query_street_address(raw_address: str | None) -> str:
     return _UNIT_SUFFIX_RE.sub("", street).strip(" ,")
 
 
+def query_full_street_address(raw_address: str | None) -> str:
+    """Return SearchBug's street-address input preserving unit identifiers."""
+    parts = [p.strip() for p in (raw_address or "").replace("\u00a0", " ").split(",")]
+    street_parts = parts[:1]
+    if len(parts) >= 4 and _UNIT_COMPONENT_RE.search(parts[1]):
+        street_parts.append(parts[1])
+    return re.sub(r"\s+", " ", " ".join(street_parts)).strip(" ,")
+
+
 async def search_tenant(
     first_name: str,
     last_name: str,
@@ -161,6 +174,8 @@ async def search_tenant_detailed(
     state: str,
     postal: str = "",
     address: str = "",
+    *,
+    strip_unit: bool = False,
 ) -> SearchBugResult:
     """SearchBug People Search with structured miss/error reasons."""
     global _account_error_tripped
@@ -190,7 +205,7 @@ async def search_tenant_detailed(
     }
     if postal:
         payload["ZIP"] = postal
-    street_address = query_street_address(address)
+    street_address = query_street_address(address) if strip_unit else query_full_street_address(address)
     if street_address:
         payload["ADDRESS"] = street_address
 

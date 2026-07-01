@@ -47,6 +47,12 @@ _EXEMPTION_WINDOW_DAYS = int(os.getenv("GP_EXEMPTION_WINDOW_DAYS", "20"))
 C_CASE = "Case Number"
 C_NAME = "Defendant  Name"
 C_ADDR = "Defendant Street Address"
+# Newer exports split the address into Street/City/State/Zip columns. We
+# reassemble them into "STREET, CITY, STATE ZIP" so gp_enrich's comma-parser can
+# feed SearchBug a full city/state/zip (street-only queries match far worse).
+C_CITY = "City"
+C_STATE = "State "  # trailing space in the sheet header
+C_ZIP = "Zip"
 C_CREDITOR = "Plaintiff (Creditor)"
 C_GARNISHEE = "Garnishee"
 C_WRIT_FILED = "Writ of Garnishment Filed Date"
@@ -83,12 +89,26 @@ def _to_date(v) -> date | None:
         return None
 
 
+def _build_address(row: dict) -> str:
+    """Reassemble 'STREET, CITY, STATE ZIP' from split columns. Falls back to a
+    single combined Street field (older export schema) when City/State/Zip are
+    absent, so both spreadsheet layouts import cleanly."""
+    street = _clean(row.get(C_ADDR))
+    city = _clean(row.get(C_CITY))
+    state = _clean(row.get(C_STATE))
+    zip_ = _clean(row.get(C_ZIP))
+    if city or state or zip_:
+        state_zip = " ".join(p for p in (state, zip_) if p)
+        return ", ".join(p for p in (street, city, state_zip) if p)
+    return street
+
+
 def _to_record(row: dict, *, county: str = DEFAULT_COUNTY) -> GarnishmentRecord | None:
     """Map one spreadsheet row (dict keyed by header) to a GarnishmentRecord, or
     None if the row lacks the essentials (case number + name + street address)."""
     case_number = _clean(row.get(C_CASE))
     debtor_name = _clean(row.get(C_NAME))
-    debtor_address = _clean(row.get(C_ADDR))
+    debtor_address = _build_address(row)
     if not (case_number and debtor_name and debtor_address):
         return None
 

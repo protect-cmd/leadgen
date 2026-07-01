@@ -32,7 +32,7 @@ _client: Client = create_client(
 )
 
 _TABLE = "garnishment_orders"
-GP_FRESHNESS_DAYS = 30  # vacate window — only enrich judgments still actionable
+GP_FRESHNESS_DAYS = int(os.getenv("GP_FRESHNESS_DAYS", "30"))  # vacate window — only enrich judgments still actionable
 
 _SPANISH_SURNAME_RE = re.compile(
     r"(ez|os|as|ia|io|ón|on|ar|er|ado|eda|ero|era|illo|ito|ita|uez|quez|ndo)$",

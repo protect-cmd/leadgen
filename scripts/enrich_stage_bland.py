@@ -215,6 +215,26 @@ async def main_async(argv=None) -> int:
             print(f"  #{enriched:3} {r['county']:8} {phone:11} ON-DNC (skip)", flush=True)
             continue
 
+        # name_mismatch / ambiguous = wrong-party risk -> GHL review stage only,
+        # NEVER auto-dial (TCPA). Routed before the dial block below.
+        if ng.searchbug_status in ("name_mismatch", "ambiguous"):
+            ec = EnrichedContact(filing=to_filing(r), track="ng", phone=phone, email=ng.email,
+                                 secondary_address=ng.secondary_address, estimated_rent=ng.estimated_rent,
+                                 property_type=ng.property_type, language_hint=ng.language_hint,
+                                 searchbug_status=ng.searchbug_status)
+            if runner.GHL_NG_REVIEW_STAGE_ID:
+                try:
+                    ghl_id = await ghl_service.create_contact(
+                        ec, ["Review-NameMismatch"] + _language_tags(ec),
+                        runner.GHL_NG_REVIEW_STAGE_ID)
+                    await update_ghl_id(r["case_number"], ghl_id, "ng")
+                    print(f"  #{enriched:3} {r['county']:8} {phone:11} {ng.searchbug_status} -> REVIEW GHL={ghl_id} (no Bland)", flush=True)
+                except Exception as e:
+                    print(f"  #{enriched:3} {r['case_number']} REVIEW push FAILED: {e!r}", flush=True)
+            else:
+                print(f"  #{enriched:3} {r['county']:8} {phone:11} {ng.searchbug_status} (no review stage set; held, no Bland)", flush=True)
+            continue
+
         # callable -> stage GHL + dial Bland
         ec = EnrichedContact(filing=to_filing(r), track="ng", phone=phone, email=ng.email,
                              secondary_address=ng.secondary_address, estimated_rent=ng.estimated_rent,

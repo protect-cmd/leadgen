@@ -406,7 +406,7 @@ async def _enrich_one(
     Logic lifted verbatim from the former run() loop body (PLAN.md Phase 2)."""
     from pipeline import gates as _gates
     from services.name_utils import parse_name as _parse_name
-    from services.searchbug_service import query_street_address as _qsa
+    from services.searchbug_service import query_full_street_address as _qsa
     from pipeline.qualification import extract_property_zip as _ezip
 
     language_hint = language_service.language_hint_for_name(filing.tenant_name)

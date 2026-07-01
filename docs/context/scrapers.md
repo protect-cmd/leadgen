@@ -53,3 +53,15 @@ Tarrant TX (Bright Data tunnel failing), Cobb GA (geocoder/4% gate pass) — see
   street addresses ([[glossary]] quality floor).
 - Raw-push scrapers (`--yes-write-supabase`) classify on insert (lead_bucket) and get a free HUD
   rent baseline in `post_scrape_chain`, so their leads rank like runner-based ones ([[decisions]] D-010).
+
+## Diagnostics — identify a block before climbing the bypass ladder
+`scrapers/antibot.py` turns the skill's "identify the vendor first" / silent-block rules into
+callable tools (pure, no network, no new deps):
+- `detect_vendor(status_code, headers, cookies, body_text)` → `cloudflare|perimeterx|akamai|
+  datadome|kasada|None` from the fingerprint cheat-sheet (CF-Ray, `_px*`, `_abck`, datadome,
+  bare-429/kpsdk). Names the vendor *fronting* a host (a 200 with CF-Ray is normal, not a block).
+- `looks_blocked(...)` → True only for a blocking status or an active challenge body
+  ("Just a moment…", "Press & Hold"). Use it to turn a silent `0 filings` into a real `last_error`.
+- CLI: `python scripts/probe_portal.py <host|url> [...]` = the "Verify, don't ask step 1"
+  reachability + vendor probe from your egress IP. UNREACHABLE/timeout ⇒ IP-reputation block
+  (retry on US residential / Bright Data); `BLOCKED by <vendor>` ⇒ which ladder rung you need.
