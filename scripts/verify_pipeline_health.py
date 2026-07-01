@@ -242,6 +242,7 @@ SCHEDULED_JOB_COUNTIES: dict[str, tuple[str, str | None] | None] = {
     # flagging them as unmapped.
     "ists_harris": None,
     "ists_franklin": None,
+    "ists_indiana": None,
     "post_scrape_chain": None,
     "cosner_drake": None,
     "indiana_debt": None,
