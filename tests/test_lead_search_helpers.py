@@ -24,9 +24,11 @@ def _empty_chain():
     return c
 
 
-def _route(contact, filing, ists=None):
+def _route(contact, filing, ists=None, cd=None, gp=None):
     chains = {"lead_contacts": contact, "filings": filing,
-              "ists_judgments": ists if ists is not None else _empty_chain()}
+              "ists_judgments": ists if ists is not None else _empty_chain(),
+              "cosner_filings": cd if cd is not None else _empty_chain(),
+              "garnishment_orders": gp if gp is not None else _empty_chain()}
     return lambda name: chains[name]
 
 
@@ -183,6 +185,72 @@ async def test_search_leads_includes_ists_judgments_by_phone():
 
 
 @pytest.mark.asyncio
+async def test_search_leads_includes_cosner_drake_debt_claims():
+    """A Cosner Drake debt-claim lead (cosner_filings, no lead_contacts/filings
+    row) is findable and surfaces with track='cd', debt_amount, and the
+    defendant mapped to tenant_name."""
+    cd_rows = [{
+        "case_number": "CD-1001", "defendant_name": "Juan Alvarez",
+        "defendant_address": "100 Oak St, Houston, TX 77002",
+        "creditor_name": "Midland Credit Mgmt", "phone": "7135551212",
+        "ghl_contact_id": None, "bland_call_id": None,
+        "filing_date": "2026-06-20", "answer_deadline": "2026-07-20",
+        "debt_amount": 4321.50, "amount_kind": "debt_claim_total",
+        "state": "TX", "county": "Harris", "language_hint": "spanish_likely",
+    }]
+    client = MagicMock()
+    contact_chain = _empty_chain()
+    filing_chain = MagicMock()
+    filing_chain.select.return_value.or_.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
+    cd_chain = MagicMock()
+    cd_chain.select.return_value.or_.return_value.limit.return_value.execute.return_value = MagicMock(data=cd_rows)
+    client.table.side_effect = _route(contact_chain, filing_chain, cd=cd_chain)
+    with patch("services.dedup_service._client", client):
+        result = await search_leads("7135551212")
+    assert len(result) == 1
+    row = result[0]
+    assert row["case_number"] == "CD-1001"
+    assert row["track"] == "cd"
+    assert row["tenant_name"] == "Juan Alvarez"
+    assert row["debt_amount"] == 4321.50
+    assert row["answer_deadline"] == "2026-07-20"
+    assert row["landlord_name"] == "Midland Credit Mgmt"
+
+
+@pytest.mark.asyncio
+async def test_search_leads_includes_garnish_proof_orders():
+    """A Garnish Proof garnishment lead (garnishment_orders, no lead_contacts/
+    filings row) is findable and surfaces with track='gp', exemption_deadline,
+    and the debtor mapped to tenant_name."""
+    gp_rows = [{
+        "case_number": "GP-2002", "debtor_name": "Maria Suarez",
+        "debtor_address": "200 Palm Ave, Miami, FL 33101",
+        "creditor_name": "Cap One Bank", "garnishee_name": "Publix Inc",
+        "phone": "3055551212", "ghl_contact_id": None, "bland_call_id": "b123",
+        "filing_date": "2026-06-25", "exemption_deadline": "2026-07-15",
+        "garnishment_type": "wage", "state": "FL", "county": "Miami-Dade",
+        "language_hint": None,
+    }]
+    client = MagicMock()
+    contact_chain = _empty_chain()
+    filing_chain = MagicMock()
+    filing_chain.select.return_value.or_.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
+    gp_chain = MagicMock()
+    gp_chain.select.return_value.or_.return_value.limit.return_value.execute.return_value = MagicMock(data=gp_rows)
+    client.table.side_effect = _route(contact_chain, filing_chain, gp=gp_chain)
+    with patch("services.dedup_service._client", client):
+        result = await search_leads("3055551212")
+    assert len(result) == 1
+    row = result[0]
+    assert row["case_number"] == "GP-2002"
+    assert row["track"] == "gp"
+    assert row["tenant_name"] == "Maria Suarez"
+    assert row["exemption_deadline"] == "2026-07-15"
+    assert row["garnishment_type"] == "wage"
+    assert row["bland_status"] == "triggered"
+
+
+@pytest.mark.asyncio
 async def test_add_lead_note_inserts_with_default_author():
     """A note is INSERTed with the caller-default author and the right fields."""
     client = MagicMock()
@@ -249,3 +317,61 @@ async def test_mark_lead_called_updates_timestamp():
     assert isinstance(ts, str) and "T" in ts
     update_arg = client.table.return_value.update.call_args.args[0]
     assert "last_called_at" in update_arg
+
+
+@pytest.mark.asyncio
+async def test_mark_lead_called_routes_cd_to_cosner_filings():
+    """cd track has no lead_contacts row — writes last_called_at directly to
+    cosner_filings, keyed by case_number only (no track column there)."""
+    client = MagicMock()
+    chain = client.table.return_value.update.return_value.eq.return_value
+    chain.execute.return_value = MagicMock(data=[{"case_number": "CD-1"}])
+    with patch("services.dedup_service._client", client):
+        ts = await mark_lead_called(case_number="CD-1", track="cd")
+    assert isinstance(ts, str) and "T" in ts
+    client.table.assert_called_once_with("cosner_filings")
+    update_arg = client.table.return_value.update.call_args.args[0]
+    assert "last_called_at" in update_arg
+
+
+@pytest.mark.asyncio
+async def test_mark_lead_called_routes_gp_to_garnishment_orders():
+    """gp track writes last_called_at directly to garnishment_orders."""
+    client = MagicMock()
+    chain = client.table.return_value.update.return_value.eq.return_value
+    chain.execute.return_value = MagicMock(data=[{"case_number": "GP-1"}])
+    with patch("services.dedup_service._client", client):
+        await mark_lead_called(case_number="GP-1", track="gp")
+    client.table.assert_called_once_with("garnishment_orders")
+
+
+@pytest.mark.asyncio
+async def test_set_bland_status_skip_routes_cd_to_skipped_at():
+    """Skipping a Cosner Drake lead writes skipped_at to cosner_filings (no
+    bland_status column exists there)."""
+    from services.dedup_service import set_bland_status
+    client = MagicMock()
+    chain = client.table.return_value.update.return_value.eq.return_value
+    chain.execute.return_value = MagicMock(data=[{"case_number": "CD-1"}])
+    with patch("services.dedup_service._client", client):
+        await set_bland_status("CD-1", "cd", "skipped")
+    client.table.assert_called_once_with("cosner_filings")
+    update_arg = client.table.return_value.update.call_args.args[0]
+    assert "skipped_at" in update_arg
+    assert "bland_status" not in update_arg
+
+
+@pytest.mark.asyncio
+async def test_set_bland_status_triggered_routes_gp_to_bland_call_id():
+    """Triggering a Garnish Proof lead writes bland_call_id + bland_triggered_at
+    to garnishment_orders."""
+    from services.dedup_service import set_bland_status
+    client = MagicMock()
+    chain = client.table.return_value.update.return_value.eq.return_value
+    chain.execute.return_value = MagicMock(data=[{"case_number": "GP-1"}])
+    with patch("services.dedup_service._client", client):
+        await set_bland_status("GP-1", "gp", "triggered", call_id="b123")
+    client.table.assert_called_once_with("garnishment_orders")
+    update_arg = client.table.return_value.update.call_args.args[0]
+    assert update_arg["bland_call_id"] == "b123"
+    assert "bland_triggered_at" in update_arg
