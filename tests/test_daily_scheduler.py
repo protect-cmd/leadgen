@@ -76,6 +76,7 @@ def test_scheduler_defines_daily_jobs():
         ("ists_harris", 12, 20, "run_ists_harris.py"),
         ("ists_franklin", 12, 25, "run_ists_franklin.py"),
         ("post_scrape_chain", 12, 40, "../scripts/post_scrape_chain.py"),
+        ("cosner_sarasota", 12, 45, "run_cd_sarasota.py"),
         ("cosner_drake", 12, 50, "run_cd_harris.py"),
         ("indiana_debt", 12, 55, "run_indiana_debt.py"),
     ]
@@ -92,6 +93,10 @@ def test_scheduler_defines_daily_jobs():
     # the day's three Harris pulls don't stack and trip Cloudflare.
     cd_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "cosner_drake")
     assert cd_job.args == ("--lookback", "2")
+
+    sarasota_job = next(j for j in daily_scheduler.SCHEDULED_JOBS if j.name == "cosner_sarasota")
+    assert sarasota_job.args == ("--lookback", "2")
+    assert sarasota_job.hour * 60 + sarasota_job.minute < cd_job.hour * 60 + cd_job.minute
 
     # Indiana MyCase debt ingest: raw insert only, 2-day lookback, spaced after
     # cosner_drake so the two debt sources don't stack.

@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 import os
 import re
+from io import BytesIO
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-import fitz
+import pdfplumber
 from playwright.async_api import async_playwright
 
 from models.cosner import CosnerFiling
@@ -16,7 +17,7 @@ log = logging.getLogger(__name__)
 
 # Sarasota County ClerkNet 3.0 — Small Claims debt filings for Cosner Drake.
 #
-# Portal mechanics are identical to sarasota.py (VDG eviction scraper):
+# Portal mechanics are similar to other ClerkNet 3.0 civil searches:
 #   - Court Type: Civil (value=1)
 #   - Case Type: Small Claims (value=21, index=9)
 #   - Telerik ClientState patches required before submit (same quirk as evictions)
@@ -57,6 +58,7 @@ _CASE_TYPE_INDEX     = 9
 FL_ANSWER_WINDOW_DAYS = 30
 
 _REQUEST_DELAY = float(os.getenv("SARASOTA_CD_REQUEST_DELAY", "2.0"))
+_MAX_SEARCH_WINDOW_DAYS = 28
 
 # Regex for defendant address block in Summons PDF text (embedded, not OCR).
 # The summons lists defendant below "- vs -" in this format:
@@ -65,7 +67,7 @@ _REQUEST_DELAY = float(os.getenv("SARASOTA_CD_REQUEST_DELAY", "2.0"))
 #   CITY, FL ZIP[-4]
 #   DEFENDANT
 _SUMMONS_ADDR_RE = re.compile(
-    r"-\s*vs\s*-.*?(?:\n[^\n]*){1,5}\n([^\n]+)\n(\d+[^\n]+)\n([^\n]+,\s*FL\s+\d{5}(?:-\d{4})?)\s*\nDEFENDANT",
+    r"-\s*vs\s*-.*?\n(?P<street>\d[^\n]+)\n(?P<city>[^\n]+,\s*FL\s+\d{5}(?:-\d{4})?)\s*\nDEFENDANT",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -73,7 +75,7 @@ _SUMMONS_ADDR_RE = re.compile(
 # Examples: "owes Plaintiff the principal balance of $1,696.17"
 #           "judgment against Defendant in the amount of $3,450.00"
 _AMOUNT_RE = re.compile(
-    r"(?:principal\s+balance|amount\s+of)\s+\$\s*([\d,]+\.?\d*)",
+    r"(?:principal\s+balance\s+of|amount\s+of)\s+\$\s*([\d,]+\.?\d*)",
     re.IGNORECASE,
 )
 
@@ -157,6 +159,17 @@ class SarasotaCosnerScraper:
     # ------------------------------------------------------------------ #
 
     async def _search(self, page, start: date, today: date) -> list[CosnerFiling]:
+        filings: list[CosnerFiling] = []
+        for window_start, window_end in _date_windows(start, today):
+            log.info(
+                "Sarasota Cosner: searching %s through %s",
+                window_start.isoformat(),
+                window_end.isoformat(),
+            )
+            filings.extend(await self._search_range(page, window_start, window_end))
+        return filings
+
+    async def _search_range(self, page, start: date, today: date) -> list[CosnerFiling]:
         await page.goto(SEARCH_URL, wait_until="domcontentloaded", timeout=30_000)
         await page.wait_for_timeout(1_500)
 
@@ -406,6 +419,8 @@ class SarasotaCosnerScraper:
             await page.evaluate("(href) => { window.location.href = href; }", href)
         download = await dl_info.value
         path = await download.path()
+        if not path:
+            raise RuntimeError(f"Sarasota Cosner: PDF download path missing for {case_number}: {href}")
         with open(path, "rb") as f:
             return f.read()
 
@@ -416,15 +431,14 @@ class SarasotaCosnerScraper:
 
 def _parse_summons_address(pdf_bytes: bytes) -> str | None:
     """Extract defendant address from an embedded-text Summons PDF."""
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    text = ""
-    for pg in doc:
-        text += pg.get_text()
+    text = _extract_pdf_text(pdf_bytes)
+    if not text:
+        return None
 
     m = _SUMMONS_ADDR_RE.search(text)
     if m:
-        street = m.group(2).strip()
-        city_state_zip = m.group(3).strip()
+        street = _clean_address_line(m.group("street"))
+        city_state_zip = _clean_address_line(m.group("city"))
         return f"{street}, {city_state_zip}"
 
     return None
@@ -432,10 +446,9 @@ def _parse_summons_address(pdf_bytes: bytes) -> str | None:
 
 def _parse_claim_amount(pdf_bytes: bytes) -> tuple[float | None, str | None]:
     """Extract principal debt amount from Statement of Claim embedded text."""
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    text = ""
-    for pg in doc:
-        text += pg.get_text()
+    text = _extract_pdf_text(pdf_bytes)
+    if not text:
+        return None, None
 
     m = _AMOUNT_RE.search(text)
     if m:
@@ -447,6 +460,15 @@ def _parse_claim_amount(pdf_bytes: bytes) -> tuple[float | None, str | None]:
     return None, None
 
 
+def _extract_pdf_text(pdf_bytes: bytes) -> str:
+    try:
+        with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
+            return "\n".join(page.extract_text() or "" for page in pdf.pages)
+    except Exception as exc:
+        log.warning("Sarasota Cosner: PDF text extraction failed: %s", exc)
+        return ""
+
+
 def _clean_party(raw: str) -> str | None:
     """Extract first party name from grid cell like 'MIDLAND CREDIT MANAGEMENT INC (Plaintiff)'."""
     if not raw:
@@ -456,6 +478,10 @@ def _clean_party(raw: str) -> str | None:
     return name or None
 
 
+def _clean_address_line(raw: str) -> str:
+    return re.sub(r"\s+\)+\s*$", "", raw.strip())
+
+
 def _parse_date(s: str | None) -> date | None:
     if not s:
         return None
@@ -463,3 +489,15 @@ def _parse_date(s: str | None) -> date | None:
         return datetime.strptime(s.strip(), "%m/%d/%Y").date()
     except ValueError:
         return None
+
+
+def _date_windows(start: date, end: date) -> list[tuple[date, date]]:
+    if start > end:
+        return []
+    windows: list[tuple[date, date]] = []
+    cur = start
+    while cur <= end:
+        window_end = min(cur + timedelta(days=_MAX_SEARCH_WINDOW_DAYS - 1), end)
+        windows.append((cur, window_end))
+        cur = window_end + timedelta(days=1)
+    return windows

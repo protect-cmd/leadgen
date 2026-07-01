@@ -103,6 +103,9 @@ SCHEDULED_JOBS: tuple[ScheduledJob, ...] = (
     # Ordered chain: flag_enrichable -> normalize_court_date -> backfill_rent
     # (rent OFF unless RENT_BACKFILL_DAILY_CAP is set).
     ScheduledJob("post_scrape_chain", 12, 40, "../scripts/post_scrape_chain.py"),
+    # Cosner Drake Sarasota ClerkNet 3.0 Small Claims filings. Ingest-only into
+    # cosner_filings; SearchBug enrichment stays manual (run_cd_enrich).
+    ScheduledJob("cosner_sarasota", 12, 45, "run_cd_sarasota.py", args=("--lookback", "2")),
     # Cosner Drake — Harris JP "Cases Filed / Debt Claim" filings. Third Harris
     # pull of the day (after texas 12:00 and ists_harris 13:50); spaced last so
     # the Harris requests don't stack and trip Cloudflare. Ingest-only (scrape ->

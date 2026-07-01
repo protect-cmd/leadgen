@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -22,7 +23,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pipeline.gates import gate_address, gate_name
 from scrapers.florida.sarasota_cosner import SarasotaCosnerScraper
-from services import cd_store
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("cd.sarasota")
@@ -75,6 +75,8 @@ async def main(dry_run: bool, lookback: int) -> None:
         log.info("dry-run: %d filings NOT written", len(selected))
         return
 
+    from services import cd_store
+
     existing = await cd_store.existing_case_numbers([cf.case_number for cf in selected])
     new = [cf for cf in selected if cf.case_number not in existing]
     for cf in new:
@@ -85,7 +87,7 @@ async def main(dry_run: bool, lookback: int) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--lookback", type=int, default=3,
-                    help="day lookback window (default 3)")
+    ap.add_argument("--lookback", type=int, default=int(os.getenv("SARASOTA_CD_LOOKBACK", "2")),
+                    help="day lookback window (default: SARASOTA_CD_LOOKBACK or 2)")
     args = ap.parse_args()
     asyncio.run(main(args.dry_run, args.lookback))

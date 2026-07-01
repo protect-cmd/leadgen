@@ -10,7 +10,16 @@ verify with a live `scrape()` before scheduling. See `.claude/skills/reviewing-s
 Texas/Harris, Tennessee/Davidson, Arizona/Maricopa, OH Franklin (raw push), OH Hamilton,
 OH Montgomery, **OH Lorain, OH Butler, OH Barberton(Summit), FL Duval** (added 2026-06-28,
 live-verified address-complete: Butler 100%, Lorain 90%, Barberton 100%, Duval 100%),
-plus ISTS Harris + ISTS Franklin, and Cosner Drake (Harris debt-claim, ingest-only).
+plus ISTS Harris + ISTS Franklin, and Cosner Drake (Harris debt-claim + Sarasota FL
+Small Claims, ingest-only).
+
+**FL Sarasota ClerkNet Small Claims (Cosner Drake)** — added 2026-07-01 (PR #69),
+`scrapers/florida/sarasota_cosner.py` + `jobs/run_cd_sarasota.py`, scheduled at
+12:45 UTC with a 2-day lookback. Live-verified from US VPN: 13 filings in the
+2026-06-30..2026-07-01 window, 12/13 address-complete (92%), 11/13 enrichable
+(84%). ClerkNet silently returns empty results for broad searches, so the scraper
+chunks date ranges into 28-day windows. Address comes from Summons Issued PDFs;
+debt amount is opportunistic from Statement of Claim PDFs.
 
 **Indiana statewide (MyCase, Tyler Odyssey)** — added 2026-07-01 (PR #64), replaces the
 old name-only Marion-only scraper. `scrapers/indiana/mycase.py`, pure `requests`, all 92
