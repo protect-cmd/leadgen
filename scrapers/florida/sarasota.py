@@ -96,6 +96,50 @@ _ADDR_RE_DESCRIBED = re.compile(
     r"(?:property\s+described[\s\n]+as(?:\s+follows)?[:\s]*[\n\r\s]*)(.+?(?:FL|Florida)\s+\d{5})",
     re.IGNORECASE,
 )
+# Multi-line variant: property name/apt on line(s) before the street+FL zip.
+# Handles: "described as:\n<PROPERTY NAME>\n<STREET>\n<CITY, FL ZIP>"
+_ADDR_RE_DESCRIBED_ML = re.compile(
+    r"described\s+as[:\s]*\n(?:[^\n]*\n){0,2}(\d[^\n]+)\n([^\n]+(?:FL|Florida)\s+\d{5}[^\n]*)",
+    re.IGNORECASE,
+)
+# Checkbox form: "PLAINTIFF VS. DEFENDANT\n<P NAME ADDR> | <D NAME ADDR>"
+# Defendant's address (= rental property) is the last FL-zip segment after the pipe.
+_ADDR_RE_HEADER = re.compile(
+    r"PLAINTIFF\s+VS\.\s+DEFENDANT[^\n]*\n([^\n]+FL\s+\d{5}[^\n]*)",
+    re.IGNORECASE,
+)
+# Pro-se Florida court form — two sub-variants:
+# A) Street on line above "Address" label:
+#    "<STREET>\nAddress[:]?\n<CITY, ZIP>\nCity, State, Zip Code"
+# B) Address inline after colon:
+#    "Address: <STREET>\n<CITY, ZIP>\nCity, State, Zip Code"
+# OCR often misreads "FL" as "Ft", "Fu", "Fi" — use zip as anchor.
+_ADDR_RE_LABEL = re.compile(
+    r"(\d[^\n]+)\s*\nAddress:?[^\n]*\n+([^\n]+\b\d{5}[^\n]*)\s*\nCity,?\s*State",
+    re.IGNORECASE,
+)
+_ADDR_RE_LABEL_INLINE = re.compile(
+    r"Address:\s*([^\n]+\d[^\n]*)\n+([^\n]+\b\d{5}[^\n]*)\s*\nCity,?\s*State",
+    re.IGNORECASE,
+)
+
+
+def _normalize_city_zip(raw: str) -> str:
+    """Normalize OCR city/state/zip: fix common FL misreads, collapse whitespace."""
+    s = re.sub(r"\s+", " ", raw).strip().rstrip(".,")
+    # Fix OCR misreads of "FL": Ft, Fu, Fi, F|, Fl → FL
+    s = re.sub(r"\bF[tTuUiI|l]\.?\b", "FL", s)
+    s = re.sub(r"\bFlorida\b", "FL", s, flags=re.IGNORECASE)
+    # Ensure space between FL and zip if missing: "FL.34232" → "FL 34232"
+    s = re.sub(r"\bFL\.?\s*(\d{5})", r"FL \1", s)
+    return s
+
+
+def _post_normalize(addr: str) -> str:
+    """Final cleanup on any extracted address: fix FL. / FL spacing issues."""
+    addr = re.sub(r"\bFL\.?\s*(\d{5})", r"FL \1", addr)
+    addr = re.sub(r"\s+", " ", addr).strip()
+    return addr
 
 
 class SarasotaScraper(BaseScraper):
@@ -439,12 +483,20 @@ class SarasotaScraper(BaseScraper):
     @staticmethod
     def _ocr_address(pdf_bytes: bytes) -> str | None:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        pg = doc[0]
         mat = fitz.Matrix(300 / 72, 300 / 72)
-        pix = pg.get_pixmap(matrix=mat)
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        text = pytesseract.image_to_string(img, lang="eng")
-        return SarasotaScraper._parse_address(text)
+        # Page 0 is often just the clerk's filing stamp; the complaint form
+        # with the property address is on subsequent pages. Combine all pages.
+        parts: list[str] = []
+        for pg in doc:
+            embedded = pg.get_text().strip()
+            if embedded:
+                parts.append(embedded)
+            else:
+                pix = pg.get_pixmap(matrix=mat)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                parts.append(pytesseract.image_to_string(img, lang="eng"))
+        addr = SarasotaScraper._parse_address("\n".join(parts))
+        return _post_normalize(addr) if addr else None
 
     @staticmethod
     def _parse_address(ocr_text: str) -> str | None:
@@ -471,6 +523,42 @@ class SarasotaScraper(BaseScraper):
             addr = re.sub(r"\bFlorida\b", "FL", raw, flags=re.IGNORECASE)
             addr = re.sub(r"\s+", " ", addr).strip()
             return addr or None
+
+        # Pattern 3B: multi-line "described as" with property name before street
+        m3b = _ADDR_RE_DESCRIBED_ML.search(ocr_text)
+        if m3b:
+            street = re.sub(r"\s+", " ", m3b.group(1)).strip().rstrip(".,")
+            city_zip = re.sub(r"\s+", " ", m3b.group(2)).strip().rstrip(".,")
+            city_zip = re.sub(r"\bFlorida\b", "FL", city_zip, flags=re.IGNORECASE)
+            return f"{street}, {city_zip}"
+
+        # Pattern 4: checkbox form "PLAINTIFF VS. DEFENDANT\n<P NAME ADDR> | <D NAME ADDR>"
+        # Defendant's address (= rental property) is the last FL-zip segment.
+        m4 = _ADDR_RE_HEADER.search(ocr_text)
+        if m4:
+            line = m4.group(1)
+            parts = line.split("|")
+            for seg in reversed(parts):
+                seg = seg.strip()
+                if re.search(r"\bFL\s+\d{5}", seg, re.IGNORECASE):
+                    addr_m = re.search(r"(\d+\s+\S.+FL\s+\d{5}(?:-\d{4})?)", seg, re.IGNORECASE)
+                    if addr_m:
+                        return re.sub(r"\s+", " ", addr_m.group(1)).strip().rstrip(".,")
+                    return re.sub(r"\s+", " ", seg).strip() or None
+
+        # Pattern 5A: pro-se form "<STREET>\nAddress\n\n<CITY, ZIP>\nCity, State, Zip Code"
+        m5 = _ADDR_RE_LABEL.search(ocr_text)
+        if m5:
+            street = re.sub(r"\s+", " ", m5.group(1)).strip().rstrip(".,")
+            city_zip = _normalize_city_zip(m5.group(2))
+            return f"{street}, {city_zip}"
+
+        # Pattern 5B: pro-se form "Address: <STREET>\n<CITY, ZIP>\nCity, State, Zip Code"
+        m6 = _ADDR_RE_LABEL_INLINE.search(ocr_text)
+        if m6:
+            street = re.sub(r"\s+", " ", m6.group(1)).strip().rstrip(".,")
+            city_zip = _normalize_city_zip(m6.group(2))
+            return f"{street}, {city_zip}"
 
         return None
 
